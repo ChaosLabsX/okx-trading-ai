@@ -2,12 +2,16 @@ name: Crypto Signal Checker
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
-  workflow_dispatch:
+    - cron: '*/5 * * * *'   # every 5 minutes
+  workflow_dispatch:          # also allows manual trigger from GitHub
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   check-signals:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -20,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: Restore signal state
+      - name: Restore signal state (deduplication cache)
         uses: actions/cache/restore@v4
         with:
           path: signal_cache.json
