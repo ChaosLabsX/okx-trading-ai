@@ -15,6 +15,7 @@ const state = {
   newsTimer: null,
   isRefreshing: false,
   notifiedSignals: {},  // {symbol: lastNotifiedLabel} — prevents duplicate alerts
+  usdtBalance: 0,       // free USDT from OKX sync
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -37,10 +38,13 @@ function loadSettings() {
   if (keys.news)           CONFIG.NEWS_API_KEY    = keys.news;
   if (keys.okxKey)         CONFIG.OKX_API_KEY     = keys.okxKey;
   if (keys.okxSecret)      CONFIG.OKX_SECRET_KEY  = keys.okxSecret;
-  if (keys.okxPassphrase)  CONFIG.OKX_PASSPHRASE  = keys.okxPassphrase;
+  if (keys.okxPassphrase)  CONFIG.OKX_PASSPHRASE      = keys.okxPassphrase;
+  if (keys.tgToken)        CONFIG.TELEGRAM_BOT_TOKEN  = keys.tgToken;
+  if (keys.tgChatId)       CONFIG.TELEGRAM_CHAT_ID    = keys.tgChatId;
   const prefs = LS.get('prefs', {});
-  if (prefs.riskProfile)     CONFIG.RISK_PROFILE          = prefs.riskProfile;
-  if (prefs.refreshInterval) CONFIG.AUTO_REFRESH_INTERVAL = parseInt(prefs.refreshInterval);
+  if (prefs.riskProfile)      CONFIG.RISK_PROFILE          = prefs.riskProfile;
+  if (prefs.refreshInterval)  CONFIG.AUTO_REFRESH_INTERVAL = parseInt(prefs.refreshInterval);
+  if (prefs.tradingCapital)   CONFIG.TRADING_CAPITAL       = parseFloat(prefs.tradingCapital);
 }
 
 function saveSettings() {
@@ -50,10 +54,13 @@ function saveSettings() {
     okxKey:        el('settingsOkxKey').value.trim(),
     okxSecret:     el('settingsOkxSecret').value.trim(),
     okxPassphrase: el('settingsOkxPassphrase').value.trim(),
+    tgToken:       el('settingsTgToken').value.trim(),
+    tgChatId:      el('settingsTgChatId').value.trim(),
   });
   LS.set('prefs', {
     riskProfile:     el('settingsRiskProfile').value,
     refreshInterval: el('settingsRefreshInterval').value,
+    tradingCapital:  el('settingsTradingCapital').value,
   });
   loadSettings();
   toast('Settings saved', 'success');
@@ -68,9 +75,12 @@ function populateSettingsForm() {
   if (keys.news)          el('settingsNewsKey').value        = keys.news;
   if (keys.okxKey)        el('settingsOkxKey').value         = keys.okxKey;
   if (keys.okxSecret)     el('settingsOkxSecret').value      = keys.okxSecret;
-  if (keys.okxPassphrase) el('settingsOkxPassphrase').value  = keys.okxPassphrase;
+  if (keys.okxPassphrase) el('settingsOkxPassphrase').value = keys.okxPassphrase;
+  if (keys.tgToken)       el('settingsTgToken').value       = keys.tgToken;
+  if (keys.tgChatId)      el('settingsTgChatId').value      = keys.tgChatId;
   if (prefs.riskProfile)     el('settingsRiskProfile').value     = prefs.riskProfile;
   if (prefs.refreshInterval) el('settingsRefreshInterval').value = prefs.refreshInterval;
+  if (prefs.tradingCapital)  el('settingsTradingCapital').value  = prefs.tradingCapital;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -144,18 +154,24 @@ async function fetchAllData() {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  NOTIFICATIONS
+//  TELEGRAM ALERTS
 // ═══════════════════════════════════════════════════════════
-async function requestNotificationPermission() {
-  if (!('Notification' in window)) return;
-  if (Notification.permission === 'default') {
-    await Notification.requestPermission();
-  }
+async function sendTelegramAlert(message) {
+  if (!CONFIG.TELEGRAM_BOT_TOKEN || !CONFIG.TELEGRAM_CHAT_ID) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id:    CONFIG.TELEGRAM_CHAT_ID,
+        text:       message,
+        parse_mode: 'HTML',
+      }),
+    });
+  } catch {}
 }
 
 function checkSignalAlerts() {
-  if (!('Notification' in window) || Notification.permission !== 'granted') return;
-
   for (const sym of state.scannerSymbols) {
     const sig   = state.indicators[sym]?.signal;
     const price = state.tickers[sym]?.price;
@@ -167,12 +183,15 @@ function checkSignalAlerts() {
     if (isAlert && !alreadyNotified) {
       const coin  = sym.replace('-USDT', '');
       const emoji = sig.label === 'STRONG BUY' ? '🟢' : '🔴';
-      const body  = `${fmtCrypto(price)} · ${sig.reasons.join(' · ')}`;
-      new Notification(`${emoji} ${sig.label}: ${coin}`, { body, icon: '', silent: false });
+      const msg   = `${emoji} <b>${sig.label}: ${coin}</b>\n`
+                  + `💰 Price: ${fmtCrypto(price)}\n`
+                  + `📊 ${sig.reasons.join('\n📊 ')}\n`
+                  + `⏰ ${new Date().toLocaleTimeString()}`;
+      sendTelegramAlert(msg);
       state.notifiedSignals[sym] = sig.label;
     }
 
-    // Reset so it can notify again if signal returns
+    // Reset when signal drops back to neutral so future alerts can fire again
     if (!isAlert && state.notifiedSignals[sym]) {
       delete state.notifiedSignals[sym];
     }
@@ -228,6 +247,7 @@ async function syncPortfolioFromOKX() {
 
       if (d.ccy === 'USDT') {
         usdtBal = bal;
+        state.usdtBalance = bal;
         continue;
       }
 
@@ -768,14 +788,30 @@ async function runAiAnalysis() {
 }
 
 function buildSystemPrompt() {
+  const availableCapital = state.usdtBalance > 0 ? state.usdtBalance : CONFIG.TRADING_CAPITAL;
+  const capital = availableCapital > 0
+    ? `Available USDT to trade: $${availableCapital.toLocaleString('en-US', { maximumFractionDigits: 2 })}${state.usdtBalance > 0 ? ' (live from OKX)' : ' (manually set)'}`
+    : 'Available USDT: unknown — user has not synced OKX balance or set trading capital';
+  const riskPct = CONFIG.RISK_PROFILE === 'conservative' ? 10 : CONFIG.RISK_PROFILE === 'aggressive' ? 30 : 20;
+  const positionSize = availableCapital > 0
+    ? `Suggested position size per trade: $${(availableCapital * riskPct / 100).toFixed(2)} USDT (${riskPct}% of capital for ${CONFIG.RISK_PROFILE} risk — never exceed 30%)`
+    : 'Position size: suggest a % of capital since exact amount is unknown';
+
   return `You are an expert cryptocurrency trading advisor specializing in technical analysis for OKX spot markets. The user is a retail trader who wants clear, actionable guidance.
 
 Rules:
 - Be direct and concise. Use ### headings and bullet points.
 - Always tag recommendations: [BUY], [SELL], or [HOLD]
-- For every BUY or SELL, give: Entry price (or range), Take Profit target (+%), Stop Loss (-%)
-- Confidence level: High / Medium / Low
+- For every BUY or SELL, give:
+  • Entry price (exact or range)
+  • How much USDT to spend (based on their capital and risk profile)
+  • How many coins that buys at entry price
+  • Take Profit target (+%)
+  • Stop Loss (-%)
+  • Confidence level: High / Medium / Low
 - Risk profile: ${CONFIG.RISK_PROFILE}
+- ${capital}
+- ${positionSize}
 - Platform: OKX Spot Trading (not futures/leverage)
 
 Always end your response with this exact line:
@@ -810,6 +846,10 @@ function buildPrompt(type, custom) {
   const newsLines = state.news.slice(0, 5).map(n => `- [${n.sentiment.toUpperCase()}] ${n.title}`).join('\n');
   const sentiment = calcNewsSentiment();
 
+  const capitalLine = CONFIG.TRADING_CAPITAL > 0
+    ? `Trading capital: $${CONFIG.TRADING_CAPITAL} USDT`
+    : 'Trading capital: not specified (user has not set it in Settings)';
+
   const ctx = `
 ## LIVE TECHNICAL DATA (OKX Spot, ${CONFIG.CANDLE_BAR} candles)
 ${techData || 'No market data loaded.'}
@@ -823,6 +863,7 @@ Overall news sentiment: ${sentiment}% bullish
 
 ## SESSION INFO
 Risk profile: ${CONFIG.RISK_PROFILE}
+${capitalLine}
 Time: ${new Date().toUTCString()}
 `;
 
@@ -992,10 +1033,6 @@ function clearAllData() {
 function openModal(id)  { el(id).classList.add('open'); }
 function closeModal(id) { el(id).classList.remove('open'); }
 
-function updateClock() {
-  el('headerTime').textContent = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
 // ═══════════════════════════════════════════════════════════
 //  UTILITIES
 // ═══════════════════════════════════════════════════════════
@@ -1105,10 +1142,10 @@ async function init() {
   loadPortfolio();
   loadScannerSymbols();
   wireEvents();
-  requestNotificationPermission();
-
-  updateClock();
-  setInterval(updateClock, 1000);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  }
 
   // Show skeleton while loading
   renderPortfolio();

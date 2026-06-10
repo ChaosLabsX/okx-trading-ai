@@ -4,6 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TradingAI — Crypto Signals</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="icon" type="image/png" sizes="96x96" href="favicon-96x96.png" />
+  <link rel="icon" type="image/x-icon" href="favicon.ico" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+  <link rel="manifest" href="site.webmanifest" />
+  <meta name="theme-color" content="#13161e" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="TradingAI" />
   <link rel="stylesheet" href="style.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -14,13 +23,8 @@
 <header class="header">
   <div class="header-left">
     <span class="logo">▲ TradingAI</span>
-    <span class="market-status">
-      <span class="status-dot open"></span>
-      <span>Crypto — 24/7 Open</span>
-    </span>
   </div>
   <div class="header-right">
-    <span class="header-time" id="headerTime"></span>
     <button class="btn-icon" id="refreshBtn" title="Refresh all data">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
     </button>
@@ -262,6 +266,23 @@
       </div>
 
       <div class="settings-section">
+        <h4 class="settings-heading">Telegram Alerts <span class="badge-optional">Optional</span></h4>
+        <p class="settings-desc">Get a Telegram message every time a <strong>STRONG BUY</strong> or <strong>STRONG SELL</strong> appears — even when your phone screen is off.</p>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Bot Token</label>
+            <input type="password" id="settingsTgToken" class="form-input" placeholder="123456:ABCdef..." />
+            <span class="field-hint">From @BotFather on Telegram</span>
+          </div>
+          <div class="form-group">
+            <label>Chat ID</label>
+            <input type="text" id="settingsTgChatId" class="form-input" placeholder="123456789" />
+            <span class="field-hint">Message @userinfobot to get your ID</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-section">
         <h4 class="settings-heading">OKX Account Sync <span class="badge-optional">Optional</span></h4>
         <p class="settings-desc">Automatically import your real OKX holdings into the portfolio. Create a <strong>Read Only</strong> API key on OKX — the app cannot place orders, only read balances.</p>
         <div class="form-group">
@@ -291,6 +312,11 @@
               <option value="moderate" selected>Moderate — balanced risk/reward</option>
               <option value="aggressive">Aggressive — high risk, high reward</option>
             </select>
+          </div>
+          <div class="form-group">
+            <label>Trading Capital (USDT)</label>
+            <input type="number" id="settingsTradingCapital" class="form-input" placeholder="e.g. 500" min="0" step="any" />
+            <span class="field-hint">Your total USDT budget for trading — used by AI to calculate how much to buy per trade</span>
           </div>
           <div class="form-group">
             <label>Auto-Refresh Interval</label>

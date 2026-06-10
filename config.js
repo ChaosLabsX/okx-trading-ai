@@ -12,6 +12,10 @@ const CONFIG = {
   OKX_SECRET_KEY: '',
   OKX_PASSPHRASE: '',
 
+  // Telegram Bot — for STRONG BUY / STRONG SELL alerts
+  TELEGRAM_BOT_TOKEN: '',
+  TELEGRAM_CHAT_ID: '',
+
   // CryptoCompare News — free, no key needed
   CRYPTOCOMPARE_URL: 'https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=popular',
 
@@ -36,5 +40,6 @@ const CONFIG = {
   ],
 
   RISK_PROFILE: 'moderate',   // conservative | moderate | aggressive
+  TRADING_CAPITAL: 0,         // total USDT you trade with — used for position sizing
   CURRENCY_SYMBOL: '$',
 };
