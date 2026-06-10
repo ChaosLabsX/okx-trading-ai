@@ -19,10 +19,6 @@ const CONFIG = {
   // CryptoCompare News — free, no key needed
   CRYPTOCOMPARE_URL: 'https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=popular',
 
-  // NewsAPI — optional, broader coverage (free at newsapi.org)
-  NEWS_API_KEY: '',
-  NEWS_API_URL: 'https://newsapi.org/v2/everything',
-
   // Refresh timing
   AUTO_REFRESH_INTERVAL: 60_000,       // 1 minute (crypto moves fast)
   NEWS_REFRESH_INTERVAL: 10 * 60_000,  // 10 minutes

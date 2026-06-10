@@ -26,7 +26,7 @@ const LS = {
     try { const v = localStorage.getItem(key); return v !== null ? JSON.parse(v) : fallback; }
     catch { return fallback; }
   },
-  set(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch {} },
+  set(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch { } },
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -34,33 +34,31 @@ const LS = {
 // ═══════════════════════════════════════════════════════════
 function loadSettings() {
   const keys = LS.get('apiKeys', {});
-  if (keys.claude)         CONFIG.CLAUDE_API_KEY  = keys.claude;
-  if (keys.news)           CONFIG.NEWS_API_KEY    = keys.news;
-  if (keys.okxKey)         CONFIG.OKX_API_KEY     = keys.okxKey;
-  if (keys.okxSecret)      CONFIG.OKX_SECRET_KEY  = keys.okxSecret;
-  if (keys.okxPassphrase)  CONFIG.OKX_PASSPHRASE      = keys.okxPassphrase;
-  if (keys.tgToken)        CONFIG.TELEGRAM_BOT_TOKEN  = keys.tgToken;
-  if (keys.tgChatId)       CONFIG.TELEGRAM_CHAT_ID    = keys.tgChatId;
+  if (keys.claude) CONFIG.CLAUDE_API_KEY = keys.claude;
+  if (keys.okxKey) CONFIG.OKX_API_KEY = keys.okxKey;
+  if (keys.okxSecret) CONFIG.OKX_SECRET_KEY = keys.okxSecret;
+  if (keys.okxPassphrase) CONFIG.OKX_PASSPHRASE = keys.okxPassphrase;
+  if (keys.tgToken) CONFIG.TELEGRAM_BOT_TOKEN = keys.tgToken;
+  if (keys.tgChatId) CONFIG.TELEGRAM_CHAT_ID = keys.tgChatId;
   const prefs = LS.get('prefs', {});
-  if (prefs.riskProfile)      CONFIG.RISK_PROFILE          = prefs.riskProfile;
-  if (prefs.refreshInterval)  CONFIG.AUTO_REFRESH_INTERVAL = parseInt(prefs.refreshInterval);
-  if (prefs.tradingCapital)   CONFIG.TRADING_CAPITAL       = parseFloat(prefs.tradingCapital);
+  if (prefs.riskProfile) CONFIG.RISK_PROFILE = prefs.riskProfile;
+  if (prefs.refreshInterval) CONFIG.AUTO_REFRESH_INTERVAL = parseInt(prefs.refreshInterval);
+  if (prefs.tradingCapital) CONFIG.TRADING_CAPITAL = parseFloat(prefs.tradingCapital);
 }
 
 function saveSettings() {
   LS.set('apiKeys', {
-    claude:        el('settingsClaudeKey').value.trim(),
-    news:          el('settingsNewsKey').value.trim(),
-    okxKey:        el('settingsOkxKey').value.trim(),
-    okxSecret:     el('settingsOkxSecret').value.trim(),
+    claude: el('settingsClaudeKey').value.trim(),
+    okxKey: el('settingsOkxKey').value.trim(),
+    okxSecret: el('settingsOkxSecret').value.trim(),
     okxPassphrase: el('settingsOkxPassphrase').value.trim(),
-    tgToken:       el('settingsTgToken').value.trim(),
-    tgChatId:      el('settingsTgChatId').value.trim(),
+    tgToken: el('settingsTgToken').value.trim(),
+    tgChatId: el('settingsTgChatId').value.trim(),
   });
   LS.set('prefs', {
-    riskProfile:     el('settingsRiskProfile').value,
+    riskProfile: el('settingsRiskProfile').value,
     refreshInterval: el('settingsRefreshInterval').value,
-    tradingCapital:  el('settingsTradingCapital').value,
+    tradingCapital: el('settingsTradingCapital').value,
   });
   loadSettings();
   toast('Settings saved', 'success');
@@ -69,18 +67,17 @@ function saveSettings() {
 }
 
 function populateSettingsForm() {
-  const keys  = LS.get('apiKeys', {});
+  const keys = LS.get('apiKeys', {});
   const prefs = LS.get('prefs', {});
-  if (keys.claude)        el('settingsClaudeKey').value      = keys.claude;
-  if (keys.news)          el('settingsNewsKey').value        = keys.news;
-  if (keys.okxKey)        el('settingsOkxKey').value         = keys.okxKey;
-  if (keys.okxSecret)     el('settingsOkxSecret').value      = keys.okxSecret;
+  if (keys.claude) el('settingsClaudeKey').value = keys.claude;
+  if (keys.okxKey) el('settingsOkxKey').value = keys.okxKey;
+  if (keys.okxSecret) el('settingsOkxSecret').value = keys.okxSecret;
   if (keys.okxPassphrase) el('settingsOkxPassphrase').value = keys.okxPassphrase;
-  if (keys.tgToken)       el('settingsTgToken').value       = keys.tgToken;
-  if (keys.tgChatId)      el('settingsTgChatId').value      = keys.tgChatId;
-  if (prefs.riskProfile)     el('settingsRiskProfile').value     = prefs.riskProfile;
+  if (keys.tgToken) el('settingsTgToken').value = keys.tgToken;
+  if (keys.tgChatId) el('settingsTgChatId').value = keys.tgChatId;
+  if (prefs.riskProfile) el('settingsRiskProfile').value = prefs.riskProfile;
   if (prefs.refreshInterval) el('settingsRefreshInterval').value = prefs.refreshInterval;
-  if (prefs.tradingCapital)  el('settingsTradingCapital').value  = prefs.tradingCapital;
+  if (prefs.tradingCapital) el('settingsTradingCapital').value = prefs.tradingCapital;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -92,19 +89,19 @@ async function fetchOKXTicker(instId) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const d = await res.json();
   if (d.code !== '0' || !d.data?.length) throw new Error('No data');
-  const t      = d.data[0];
-  const last   = parseFloat(t.last);
-  const open   = parseFloat(t.open24h);
+  const t = d.data[0];
+  const last = parseFloat(t.last);
+  const open = parseFloat(t.open24h);
   const change = last - open;
   return {
-    price:         last,
+    price: last,
     change,
     changePercent: open ? (change / open) * 100 : 0,
-    high24h:       parseFloat(t.high24h),
-    low24h:        parseFloat(t.low24h),
-    vol24h:        parseFloat(t.vol24h),
-    volUSDT:       parseFloat(t.volCcy24h),
-    source:        'OKX',
+    high24h: parseFloat(t.high24h),
+    low24h: parseFloat(t.low24h),
+    vol24h: parseFloat(t.vol24h),
+    volUSDT: parseFloat(t.volCcy24h),
+    source: 'OKX',
   };
 }
 
@@ -116,11 +113,11 @@ async function fetchOKXCandles(instId) {
   if (d.code !== '0' || !d.data?.length) throw new Error('No candles');
   // OKX returns newest-first — reverse to chronological order
   return d.data.reverse().map(c => ({
-    open:  parseFloat(c[1]),
-    high:  parseFloat(c[2]),
-    low:   parseFloat(c[3]),
+    open: parseFloat(c[1]),
+    high: parseFloat(c[2]),
+    low: parseFloat(c[3]),
     close: parseFloat(c[4]),
-    vol:   parseFloat(c[5]),
+    vol: parseFloat(c[5]),
   }));
 }
 
@@ -130,12 +127,12 @@ async function fetchSymbolData(symbol) {
       fetchOKXTicker(symbol),
       fetchOKXCandles(symbol),
     ]);
-    state.tickers[symbol]    = ticker;
+    state.tickers[symbol] = ticker;
     state.indicators[symbol] = computeIndicators(candles, ticker.price);
   } catch (err) {
     // Keep stale data if any; otherwise use demo
     if (!state.tickers[symbol]) {
-      state.tickers[symbol]    = mockTicker(symbol);
+      state.tickers[symbol] = mockTicker(symbol);
       state.indicators[symbol] = buildIndicatorsFromMock(symbol);
     }
     console.warn(`[${symbol}] fetch failed — using cached/demo data:`, err.message);
@@ -163,17 +160,17 @@ async function sendTelegramAlert(message) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id:    CONFIG.TELEGRAM_CHAT_ID,
-        text:       message,
+        chat_id: CONFIG.TELEGRAM_CHAT_ID,
+        text: message,
         parse_mode: 'HTML',
       }),
     });
-  } catch {}
+  } catch { }
 }
 
 function checkSignalAlerts() {
   for (const sym of state.scannerSymbols) {
-    const sig   = state.indicators[sym]?.signal;
+    const sig = state.indicators[sym]?.signal;
     const price = state.tickers[sym]?.price;
     if (!sig || !price) continue;
 
@@ -181,12 +178,12 @@ function checkSignalAlerts() {
     const alreadyNotified = state.notifiedSignals[sym] === sig.label;
 
     if (isAlert && !alreadyNotified) {
-      const coin  = sym.replace('-USDT', '');
+      const coin = sym.replace('-USDT', '');
       const emoji = sig.label === 'STRONG BUY' ? '🟢' : '🔴';
-      const msg   = `${emoji} <b>${sig.label}: ${coin}</b>\n`
-                  + `💰 Price: ${fmtCrypto(price)}\n`
-                  + `📊 ${sig.reasons.join('\n📊 ')}\n`
-                  + `⏰ ${new Date().toLocaleTimeString()}`;
+      const msg = `${emoji} <b>${sig.label}: ${coin}</b>\n`
+        + `💰 Price: ${fmtCrypto(price)}\n`
+        + `📊 ${sig.reasons.join('\n📊 ')}\n`
+        + `⏰ ${new Date().toLocaleTimeString()}`;
       sendTelegramAlert(msg);
       state.notifiedSignals[sym] = sig.label;
     }
@@ -214,16 +211,16 @@ async function fetchOKXBalance() {
   if (!CONFIG.OKX_API_KEY || !CONFIG.OKX_SECRET_KEY || !CONFIG.OKX_PASSPHRASE) {
     throw new Error('OKX API credentials missing — add them in Settings first.');
   }
-  const path      = '/api/v5/account/balance';
+  const path = '/api/v5/account/balance';
   const timestamp = new Date().toISOString();
-  const sign      = await hmacSHA256base64(CONFIG.OKX_SECRET_KEY, timestamp + 'GET' + path);
+  const sign = await hmacSHA256base64(CONFIG.OKX_SECRET_KEY, timestamp + 'GET' + path);
   const res = await fetch(CONFIG.OKX_BASE + path, {
     headers: {
-      'OK-ACCESS-KEY':        CONFIG.OKX_API_KEY,
-      'OK-ACCESS-SIGN':       sign,
-      'OK-ACCESS-TIMESTAMP':  timestamp,
+      'OK-ACCESS-KEY': CONFIG.OKX_API_KEY,
+      'OK-ACCESS-SIGN': sign,
+      'OK-ACCESS-TIMESTAMP': timestamp,
       'OK-ACCESS-PASSPHRASE': CONFIG.OKX_PASSPHRASE,
-      'Content-Type':         'application/json',
+      'Content-Type': 'application/json',
     },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -234,7 +231,7 @@ async function fetchOKXBalance() {
 
 async function syncPortfolioFromOKX() {
   const btn = el('okxSyncBtn');
-  btn.disabled    = true;
+  btn.disabled = true;
   btn.textContent = 'Syncing…';
 
   try {
@@ -278,7 +275,7 @@ async function syncPortfolioFromOKX() {
 
     // Show free USDT cash in summary bar
     if (usdtBal > 0) {
-      el('usdtBalance').textContent   = '$' + usdtBal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      el('usdtBalance').textContent = '$' + usdtBal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       el('usdtBalanceItem').style.display = '';
     }
 
@@ -291,7 +288,7 @@ async function syncPortfolioFromOKX() {
   } catch (err) {
     toast('OKX sync failed: ' + err.message, 'error');
   } finally {
-    btn.disabled    = false;
+    btn.disabled = false;
     btn.textContent = '⟳ Sync OKX';
   }
 }
@@ -301,13 +298,13 @@ async function syncPortfolioFromOKX() {
 // ═══════════════════════════════════════════════════════════
 const DEMO_BASE_PRICES = {
   'BTC-USDT': 67500, 'ETH-USDT': 3420, 'SOL-USDT': 175, 'BNB-USDT': 615,
-  'XRP-USDT': 0.62,  'DOGE-USDT': 0.165, 'ADA-USDT': 0.48, 'AVAX-USDT': 38,
+  'XRP-USDT': 0.62, 'DOGE-USDT': 0.165, 'ADA-USDT': 0.48, 'AVAX-USDT': 38,
   'MATIC-USDT': 0.72, 'DOT-USDT': 8.4,
 };
 
 function mockTicker(symbol) {
-  const seed   = symbol.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-  const base   = DEMO_BASE_PRICES[symbol] || ((seed % 500) + 1);
+  const seed = symbol.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  const base = DEMO_BASE_PRICES[symbol] || ((seed % 500) + 1);
   const chgPct = ((seed % 21) - 10) * 0.4;
   return {
     price: base, change: base * chgPct / 100, changePercent: chgPct,
@@ -319,11 +316,11 @@ function mockTicker(symbol) {
 
 function buildIndicatorsFromMock(symbol) {
   const seed = symbol.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-  const rsi  = 20 + (seed % 60);
+  const rsi = 20 + (seed % 60);
   const macdBull = (seed % 3) === 0;
-  const bbPct    = (seed % 100) / 100;
+  const bbPct = (seed % 100) / 100;
   const mockMacd = { trend: macdBull ? 'bullish' : 'bearish', bullishCross: macdBull && (seed % 5 === 0), bearishCross: !macdBull && (seed % 5 === 0), macd: macdBull ? 0.002 : -0.002, signal: 0 };
-  const mockBB   = { pctB: bbPct, upper: 1, middle: 0.97, lower: 0.94 };
+  const mockBB = { pctB: bbPct, upper: 1, middle: 0.97, lower: 0.94 };
   return { rsi, macd: mockMacd, bb: mockBB, signal: generateSignal(rsi, mockMacd, mockBB), source: 'Demo' };
 }
 
@@ -342,7 +339,7 @@ function calcRSI(closes, period = 14) {
   avgLoss /= period;
   for (let i = period + 1; i < closes.length; i++) {
     const d = closes[i] - closes[i - 1];
-    avgGain = (avgGain * (period - 1) + Math.max(d, 0))  / period;
+    avgGain = (avgGain * (period - 1) + Math.max(d, 0)) / period;
     avgLoss = (avgLoss * (period - 1) + Math.max(-d, 0)) / period;
   }
   if (avgLoss === 0) return 100;
@@ -350,7 +347,7 @@ function calcRSI(closes, period = 14) {
 }
 
 function emaArray(vals, period) {
-  const k   = 2 / (period + 1);
+  const k = 2 / (period + 1);
   const out = [vals[0]];
   for (let i = 1; i < vals.length; i++) out.push(vals[i] * k + out[i - 1] * (1 - k));
   return out;
@@ -358,16 +355,16 @@ function emaArray(vals, period) {
 
 function calcMACD(closes) {
   if (closes.length < 35) return null;
-  const ema12    = emaArray(closes, 12);
-  const ema26    = emaArray(closes, 26);
+  const ema12 = emaArray(closes, 12);
+  const ema26 = emaArray(closes, 26);
   const macdLine = ema12.map((v, i) => v - ema26[i]).slice(25);
-  const sigLine  = emaArray(macdLine, 9);
-  const n        = macdLine.length - 1;
+  const sigLine = emaArray(macdLine, 9);
+  const n = macdLine.length - 1;
   return {
-    macd:        macdLine[n],
-    signal:      sigLine[n],
-    histogram:   macdLine[n] - sigLine[n],
-    trend:       macdLine[n] > sigLine[n] ? 'bullish' : 'bearish',
+    macd: macdLine[n],
+    signal: sigLine[n],
+    histogram: macdLine[n] - sigLine[n],
+    trend: macdLine[n] > sigLine[n] ? 'bullish' : 'bearish',
     bullishCross: n > 0 && macdLine[n - 1] < sigLine[n - 1] && macdLine[n] >= sigLine[n],
     bearishCross: n > 0 && macdLine[n - 1] > sigLine[n - 1] && macdLine[n] <= sigLine[n],
   };
@@ -376,8 +373,8 @@ function calcMACD(closes) {
 function calcBB(closes, period = 20) {
   if (closes.length < period) return null;
   const slice = closes.slice(-period);
-  const mean  = slice.reduce((a, b) => a + b, 0) / period;
-  const std   = Math.sqrt(slice.reduce((a, b) => a + (b - mean) ** 2, 0) / period);
+  const mean = slice.reduce((a, b) => a + b, 0) / period;
+  const std = Math.sqrt(slice.reduce((a, b) => a + (b - mean) ** 2, 0) / period);
   const upper = mean + 2 * std;
   const lower = mean - 2 * std;
   const price = closes[closes.length - 1];
@@ -386,9 +383,9 @@ function calcBB(closes, period = 20) {
 
 function computeIndicators(candles) {
   const closes = candles.map(c => c.close);
-  const rsi    = calcRSI(closes);
-  const macd   = calcMACD(closes);
-  const bb     = calcBB(closes);
+  const rsi = calcRSI(closes);
+  const macd = calcMACD(closes);
+  const bb = calcBB(closes);
   return { rsi, macd, bb, signal: generateSignal(rsi, macd, bb) };
 }
 
@@ -403,7 +400,7 @@ function generateSignal(rsi, macd, bb) {
 
   // ── RSI ──
   if (rsi !== null) {
-    if      (rsi <= 20) { score += 3; reasons.push(`RSI ${rsi.toFixed(0)} — extremely oversold`); }
+    if (rsi <= 20) { score += 3; reasons.push(`RSI ${rsi.toFixed(0)} — extremely oversold`); }
     else if (rsi <= 30) { score += 2; reasons.push(`RSI ${rsi.toFixed(0)} — oversold`); }
     else if (rsi <= 40) { score += 1; reasons.push(`RSI ${rsi.toFixed(0)} — below neutral`); }
     else if (rsi >= 80) { score -= 3; reasons.push(`RSI ${rsi.toFixed(0)} — extremely overbought`); }
@@ -413,26 +410,26 @@ function generateSignal(rsi, macd, bb) {
 
   // ── MACD ──
   if (macd !== null) {
-    if      (macd.bullishCross) { score += 2; reasons.push('MACD bullish crossover'); }
+    if (macd.bullishCross) { score += 2; reasons.push('MACD bullish crossover'); }
     else if (macd.bearishCross) { score -= 2; reasons.push('MACD bearish crossover'); }
     else if (macd.trend === 'bullish') score += 0.5;
-    else                               score -= 0.5;
+    else score -= 0.5;
   }
 
   // ── Bollinger Bands ──
   if (bb !== null) {
-    if      (bb.pctB <= 0.05) { score += 2; reasons.push('Price at lower Bollinger Band'); }
+    if (bb.pctB <= 0.05) { score += 2; reasons.push('Price at lower Bollinger Band'); }
     else if (bb.pctB <= 0.20) { score += 1; reasons.push('Price near lower BB'); }
     else if (bb.pctB >= 0.95) { score -= 2; reasons.push('Price at upper Bollinger Band'); }
     else if (bb.pctB >= 0.80) { score -= 1; reasons.push('Price near upper BB'); }
   }
 
   let label, cls;
-  if      (score >= 4)  { label = 'STRONG BUY';  cls = 'sig-sbuy';  }
-  else if (score >= 2)  { label = 'BUY';          cls = 'sig-buy';   }
-  else if (score > -2)  { label = 'HOLD';         cls = 'sig-hold';  }
-  else if (score > -4)  { label = 'SELL';         cls = 'sig-sell';  }
-  else                  { label = 'STRONG SELL';  cls = 'sig-ssell'; }
+  if (score >= 4) { label = 'STRONG BUY'; cls = 'sig-sbuy'; }
+  else if (score >= 2) { label = 'BUY'; cls = 'sig-buy'; }
+  else if (score > -2) { label = 'HOLD'; cls = 'sig-hold'; }
+  else if (score > -4) { label = 'SELL'; cls = 'sig-sell'; }
+  else { label = 'STRONG SELL'; cls = 'sig-ssell'; }
 
   return { score, label, cls, reasons };
 }
@@ -445,7 +442,7 @@ function renderScanner() {
   let symbols = [...state.scannerSymbols];
 
   // Filter
-  if (state.scannerFilter === 'buy')  symbols = symbols.filter(s => (state.indicators[s]?.signal.score ?? 0) >= 2);
+  if (state.scannerFilter === 'buy') symbols = symbols.filter(s => (state.indicators[s]?.signal.score ?? 0) >= 2);
   if (state.scannerFilter === 'sell') symbols = symbols.filter(s => (state.indicators[s]?.signal.score ?? 0) <= -2);
   if (state.scannerFilter === 'hold') symbols = symbols.filter(s => { const sc = state.indicators[s]?.signal.score ?? 0; return sc > -2 && sc < 2; });
 
@@ -453,7 +450,7 @@ function renderScanner() {
   symbols.sort((a, b) => {
     if (state.scannerSort === 'signal') return (state.indicators[b]?.signal.score ?? 0) - (state.indicators[a]?.signal.score ?? 0);
     if (state.scannerSort === 'change') return (state.tickers[b]?.changePercent ?? 0) - (state.tickers[a]?.changePercent ?? 0);
-    if (state.scannerSort === 'price')  return (state.tickers[b]?.price ?? 0) - (state.tickers[a]?.price ?? 0);
+    if (state.scannerSort === 'price') return (state.tickers[b]?.price ?? 0) - (state.tickers[a]?.price ?? 0);
     return a.localeCompare(b);
   });
 
@@ -464,29 +461,29 @@ function renderScanner() {
   }
 
   tbody.innerHTML = symbols.map(sym => {
-    const t   = state.tickers[sym];
+    const t = state.tickers[sym];
     const ind = state.indicators[sym];
     const sig = ind?.signal;
 
-    const price  = t?.price ?? 0;
+    const price = t?.price ?? 0;
     const chgPct = t?.changePercent ?? 0;
-    const rsi    = ind?.rsi ?? null;
-    const macd   = ind?.macd ?? null;
-    const bb     = ind?.bb ?? null;
+    const rsi = ind?.rsi ?? null;
+    const macd = ind?.macd ?? null;
+    const bb = ind?.bb ?? null;
     const isDemo = t?.source === 'Demo';
 
-    const chgCls  = chgPct >= 0 ? 'pos' : 'neg';
-    const rsiCls  = rsi === null ? '' : rsi <= 30 ? 'rsi-low' : rsi >= 70 ? 'rsi-high' : 'rsi-mid';
+    const chgCls = chgPct >= 0 ? 'pos' : 'neg';
+    const rsiCls = rsi === null ? '' : rsi <= 30 ? 'rsi-low' : rsi >= 70 ? 'rsi-high' : 'rsi-mid';
     const macdTxt = macd
       ? (macd.bullishCross ? '↑ Cross' : macd.bearishCross ? '↓ Cross'
         : macd.trend === 'bullish' ? '↑ Bull' : '↓ Bear')
       : '—';
     const macdCls = macd ? (macd.trend === 'bullish' || macd.bullishCross ? 'pos' : 'neg') : '';
-    const bbPct   = bb ? (bb.pctB * 100).toFixed(0) + '%' : '—';
-    const bbCls   = bb ? (bb.pctB <= 0.2 ? 'pos' : bb.pctB >= 0.8 ? 'neg' : '') : '';
-    const inPort  = state.portfolio.some(p => p.symbol === sym);
-    const reason  = sig?.reasons?.join(' · ') || 'Neutral — no strong signal';
-    const coin    = sym.replace('-USDT', '').replace('-BTC', '');
+    const bbPct = bb ? (bb.pctB * 100).toFixed(0) + '%' : '—';
+    const bbCls = bb ? (bb.pctB <= 0.2 ? 'pos' : bb.pctB >= 0.8 ? 'neg' : '') : '';
+    const inPort = state.portfolio.some(p => p.symbol === sym);
+    const reason = sig?.reasons?.join(' · ') || 'Neutral — no strong signal';
+    const coin = sym.replace('-USDT', '').replace('-BTC', '');
     const tooltip = escHtml(reason);
 
     return `<tr class="scanner-row ${sig?.cls ?? ''}">
@@ -524,7 +521,7 @@ function updateBestPickBanner() {
   }
   if (!best || best.sig.score < 2) { banner.style.display = 'none'; return; }
   const coin = best.sym.replace('-USDT', '');
-  const t    = state.tickers[best.sym];
+  const t = state.tickers[best.sym];
   banner.style.display = 'flex';
   banner.innerHTML = `
     <span class="bp-label">Top Pick</span>
@@ -559,22 +556,22 @@ function renderPortfolio() {
   let totalValue = 0, totalCost = 0, totalDayPnl = 0;
 
   const rows = state.portfolio.map(pos => {
-    const t       = state.tickers[pos.symbol];
-    const price   = t?.price ?? 0;
-    const chgPct  = t?.changePercent ?? 0;
-    const value   = price * pos.amount;
-    const cost    = pos.avgBuyPrice * pos.amount;
-    const pnl     = value - cost;
-    const pnlPct  = cost ? (pnl / cost) * 100 : 0;
-    const dayPnl  = t ? t.change * pos.amount : 0;
+    const t = state.tickers[pos.symbol];
+    const price = t?.price ?? 0;
+    const chgPct = t?.changePercent ?? 0;
+    const value = price * pos.amount;
+    const cost = pos.avgBuyPrice * pos.amount;
+    const pnl = value - cost;
+    const pnlPct = cost ? (pnl / cost) * 100 : 0;
+    const dayPnl = t ? t.change * pos.amount : 0;
 
-    totalValue   += value;
-    totalCost    += cost;
-    totalDayPnl  += dayPnl;
+    totalValue += value;
+    totalCost += cost;
+    totalDayPnl += dayPnl;
 
     const chgCls = chgPct >= 0 ? 'pos' : 'neg';
     const pnlCls = pnl >= 0 ? 'pos' : 'neg';
-    const coin   = pos.symbol.replace('-USDT', '');
+    const coin = pos.symbol.replace('-USDT', '');
 
     return `<tr>
       <td><div class="sym-cell"><span class="coin-icon">${coin}</span></div></td>
@@ -597,18 +594,18 @@ function renderPortfolio() {
 }
 
 function updateSummaryBar(totalValue = 0, totalCost = 0, totalDayPnl = 0) {
-  const totalPnl    = totalValue - totalCost;
+  const totalPnl = totalValue - totalCost;
   const totalPnlPct = totalCost ? (totalPnl / totalCost) * 100 : 0;
 
   el('totalPortfolioValue').textContent = totalValue ? fmtMoney(totalValue) : '—';
 
   const dayEl = el('totalDayPnl');
   dayEl.textContent = totalDayPnl ? (totalDayPnl >= 0 ? '+' : '') + fmtMoney(totalDayPnl) : '—';
-  dayEl.className   = 'summary-value ' + (totalDayPnl >= 0 ? 'pos' : 'neg');
+  dayEl.className = 'summary-value ' + (totalDayPnl >= 0 ? 'pos' : 'neg');
 
   const pnlEl = el('totalPnl');
   pnlEl.textContent = totalPnl ? `${totalPnl >= 0 ? '+' : ''}${fmtMoney(totalPnl)} (${totalPnlPct >= 0 ? '+' : ''}${totalPnlPct.toFixed(2)}%)` : '—';
-  pnlEl.className   = 'summary-value ' + (totalPnl >= 0 ? 'pos' : 'neg');
+  pnlEl.className = 'summary-value ' + (totalPnl >= 0 ? 'pos' : 'neg');
 
   el('lastUpdated').textContent = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
@@ -622,10 +619,10 @@ function updateSummaryBar(totalValue = 0, totalCost = 0, totalDayPnl = 0) {
   if (best && best.sig.score >= 2) {
     const coin = best.sym.replace('-USDT', '');
     topEl.textContent = `${coin} — ${best.sig.label}`;
-    topEl.className   = 'summary-value pos';
+    topEl.className = 'summary-value pos';
   } else if (best) {
     topEl.textContent = 'No strong signal';
-    topEl.className   = 'summary-value';
+    topEl.className = 'summary-value';
   }
 }
 
@@ -649,39 +646,39 @@ async function fetchNews(topic = '') {
       const d = await res.json();
       if (d.Data?.length) {
         state.news = d.Data.slice(0, CONFIG.MAX_NEWS_ARTICLES).map(a => ({
-          title:     a.title,
-          summary:   a.body ? a.body.substring(0, 160) + '…' : '',
-          source:    a.source_info?.name || a.source || 'CryptoCompare',
-          url:       a.url,
-          age:       timeAgo(new Date(a.published_on * 1000)),
+          title: a.title,
+          summary: a.body ? a.body.substring(0, 160) + '…' : '',
+          source: a.source_info?.name || a.source || 'CryptoCompare',
+          url: a.url,
+          age: timeAgo(new Date(a.published_on * 1000)),
           sentiment: guessSentiment(a.title + ' ' + (a.body || '')),
         }));
         return;
       }
     }
-  } catch {}
+  } catch { }
 
   // Fallback: NewsAPI (if key provided)
   if (CONFIG.NEWS_API_KEY) {
     try {
       const query = topic || 'bitcoin ethereum crypto';
-      const url   = `${CONFIG.NEWS_API_URL}?q=${encodeURIComponent(query)}&language=en&pageSize=${CONFIG.MAX_NEWS_ARTICLES}&sortBy=publishedAt&apiKey=${CONFIG.NEWS_API_KEY}`;
-      const res   = await fetch(url);
+      const url = `${CONFIG.NEWS_API_URL}?q=${encodeURIComponent(query)}&language=en&pageSize=${CONFIG.MAX_NEWS_ARTICLES}&sortBy=publishedAt&apiKey=${CONFIG.NEWS_API_KEY}`;
+      const res = await fetch(url);
       if (res.ok) {
         const d = await res.json();
         if (d.articles?.length) {
           state.news = d.articles.map(a => ({
-            title:     a.title,
-            summary:   a.description || '',
-            source:    a.source?.name || 'NewsAPI',
-            url:       a.url,
-            age:       timeAgo(new Date(a.publishedAt)),
+            title: a.title,
+            summary: a.description || '',
+            source: a.source?.name || 'NewsAPI',
+            url: a.url,
+            age: timeAgo(new Date(a.publishedAt)),
             sentiment: guessSentiment(a.title + ' ' + (a.description || '')),
           }));
           return;
         }
       }
-    } catch {}
+    } catch { }
   }
 
   // Last resort: demo news
@@ -689,7 +686,7 @@ async function fetchNews(topic = '') {
 }
 
 function guessSentiment(text) {
-  const t   = text.toLowerCase();
+  const t = text.toLowerCase();
   const pos = /\b(surge|rally|gain|bull|beat|growth|profit|rise|jump|soar|record|optimis|strong|upgrade|breakout|accumulate|adoption|ath|all.time.high|partnership|launch)\b/.test(t);
   const neg = /\b(drop|fall|crash|bear|miss|loss|decline|plunge|slump|warning|risk|down|weak|downgrade|recession|hack|exploit|ban|regulation|fear|liquidat|sell.off|collapse)\b/.test(t);
   if (pos && !neg) return 'pos';
@@ -735,10 +732,10 @@ function renderNews() {
   `).join('');
 
   const score = calcNewsSentiment();
-  el('sentimentFill').style.width      = score + '%';
+  el('sentimentFill').style.width = score + '%';
   el('sentimentFill').style.background = score >= 60 ? 'var(--green)' : score <= 40 ? 'var(--red)' : 'var(--amber)';
-  el('sentimentScore').textContent     = score + '% bullish';
-  el('sentimentScore').style.color     = score >= 60 ? 'var(--green)' : score <= 40 ? 'var(--red)' : 'var(--amber)';
+  el('sentimentScore').textContent = score + '% bullish';
+  el('sentimentScore').style.color = score >= 60 ? 'var(--green)' : score <= 40 ? 'var(--red)' : 'var(--amber)';
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -746,7 +743,7 @@ function renderNews() {
 // ═══════════════════════════════════════════════════════════
 async function runAiAnalysis() {
   const contextType = el('aiContextSelect').value;
-  const customText  = el('aiCustomInput').value.trim();
+  const customText = el('aiCustomInput').value.trim();
 
   if (contextType === 'custom' && !customText) {
     toast('Enter a question for the AI', 'error'); return;
@@ -820,7 +817,7 @@ Always end your response with this exact line:
 
 function buildPrompt(type, custom) {
   const techData = state.scannerSymbols.map(sym => {
-    const t   = state.tickers[sym];
+    const t = state.tickers[sym];
     const ind = state.indicators[sym];
     if (!t) return null;
     const sig = ind?.signal;
@@ -837,10 +834,10 @@ function buildPrompt(type, custom) {
 
   const portData = state.portfolio.length
     ? state.portfolio.map(pos => {
-        const t      = state.tickers[pos.symbol];
-        const pnlPct = t ? ((t.price - pos.avgBuyPrice) / pos.avgBuyPrice * 100).toFixed(1) : '?';
-        return `${pos.symbol}: ${pos.amount} coins @ $${pos.avgBuyPrice} avg cost | Now: ${t ? fmtCrypto(t.price) : '?'} | P&L: ${pnlPct}%`;
-      }).join('\n')
+      const t = state.tickers[pos.symbol];
+      const pnlPct = t ? ((t.price - pos.avgBuyPrice) / pos.avgBuyPrice * 100).toFixed(1) : '?';
+      return `${pos.symbol}: ${pos.amount} coins @ $${pos.avgBuyPrice} avg cost | Now: ${t ? fmtCrypto(t.price) : '?'} | P&L: ${pnlPct}%`;
+    }).join('\n')
     : 'No positions tracked yet.';
 
   const newsLines = state.news.slice(0, 5).map(n => `- [${n.sentiment.toUpperCase()}] ${n.title}`).join('\n');
@@ -867,10 +864,10 @@ ${capitalLine}
 Time: ${new Date().toUTCString()}
 `;
 
-  if (type === 'market')    return `Give me the best crypto trading opportunities RIGHT NOW based on the technical data.\n\nSpecifically:\n1. Top 2-3 [BUY] opportunities — entry price, take profit %, stop loss %, and why\n2. Any coins I should [SELL] or avoid buying\n3. Overall market direction (bull/bear/sideways)\n4. How long do these signals typically take to play out?\n\n${ctx}`;
+  if (type === 'market') return `Give me the best crypto trading opportunities RIGHT NOW based on the technical data.\n\nSpecifically:\n1. Top 2-3 [BUY] opportunities — entry price, take profit %, stop loss %, and why\n2. Any coins I should [SELL] or avoid buying\n3. Overall market direction (bull/bear/sideways)\n4. How long do these signals typically take to play out?\n\n${ctx}`;
   if (type === 'portfolio') return `Review my portfolio and give me specific guidance.\n\nFor each of my holdings:\n1. [HOLD], [BUY MORE], or [SELL] — with reasoning\n2. Suggested take profit level if I should exit\n3. Stop loss level to protect against big drops\n\nAlso identify the best new buying opportunity from the scanner.\n\n${ctx}`;
-  if (type === 'risk')      return `Perform a risk analysis of my current situation.\n\n1. What is the biggest risk right now in the overall market?\n2. For each of my holdings — what is the worst-case downside scenario?\n3. Suggested stop-loss levels for each position\n4. Should I reduce exposure to anything?\n5. Am I too concentrated in one coin?\n\n${ctx}`;
-  if (type === 'custom')    return `${custom}\n\n${ctx}`;
+  if (type === 'risk') return `Perform a risk analysis of my current situation.\n\n1. What is the biggest risk right now in the overall market?\n2. For each of my holdings — what is the worst-case downside scenario?\n3. Suggested stop-loss levels for each position\n4. Should I reduce exposure to anything?\n5. Am I too concentrated in one coin?\n\n${ctx}`;
+  if (type === 'custom') return `${custom}\n\n${ctx}`;
   return `Analyze my trading situation.\n\n${ctx}`;
 }
 
@@ -885,8 +882,8 @@ function showAiThinking() {
 
 function renderAiResponse(text) {
   el('aiResponseArea').innerHTML = `<div class="ai-response">${markdownToHtml(text)}</div>`;
-  el('aiFooter').style.display   = 'flex';
-  el('aiTimestamp').textContent  = 'Generated ' + new Date().toLocaleTimeString();
+  el('aiFooter').style.display = 'flex';
+  el('aiTimestamp').textContent = 'Generated ' + new Date().toLocaleTimeString();
 }
 
 function renderAiError(msg) {
@@ -919,13 +916,13 @@ function markdownToHtml(text) {
 //  ADD POSITION
 // ═══════════════════════════════════════════════════════════
 async function handleAddPosition() {
-  const raw         = el('newSymbol').value.trim().toUpperCase();
-  const amount      = parseFloat(el('newAmount').value);
+  const raw = el('newSymbol').value.trim().toUpperCase();
+  const amount = parseFloat(el('newAmount').value);
   const avgBuyPrice = parseFloat(el('newAvgCost').value);
-  const symbol      = raw.includes('-') ? raw : raw + '-USDT';
+  const symbol = raw.includes('-') ? raw : raw + '-USDT';
 
-  if (!raw)                             { toast('Enter a coin symbol', 'error'); return; }
-  if (isNaN(amount) || amount <= 0)     { toast('Enter a valid amount', 'error'); return; }
+  if (!raw) { toast('Enter a coin symbol', 'error'); return; }
+  if (isNaN(amount) || amount <= 0) { toast('Enter a valid amount', 'error'); return; }
   if (isNaN(avgBuyPrice) || avgBuyPrice <= 0) { toast('Enter a valid buy price', 'error'); return; }
   if (state.portfolio.some(p => p.symbol === symbol)) { toast(`${symbol} already in portfolio`, 'error'); return; }
 
@@ -975,26 +972,26 @@ function restartAutoRefresh() {
   clearInterval(state.refreshTimer);
   clearInterval(state.newsTimer);
   if (CONFIG.AUTO_REFRESH_INTERVAL > 0) {
-    state.refreshTimer = setInterval(refreshAll,           CONFIG.AUTO_REFRESH_INTERVAL);
-    state.newsTimer    = setInterval(() => refreshNews(),  CONFIG.NEWS_REFRESH_INTERVAL);
+    state.refreshTimer = setInterval(refreshAll, CONFIG.AUTO_REFRESH_INTERVAL);
+    state.newsTimer = setInterval(() => refreshNews(), CONFIG.NEWS_REFRESH_INTERVAL);
   }
 }
 
 // ═══════════════════════════════════════════════════════════
 //  PERSISTENCE
 // ═══════════════════════════════════════════════════════════
-function loadPortfolio()      { state.portfolio     = LS.get('portfolio', CONFIG.DEFAULT_PORTFOLIO); }
-function savePortfolio()      { LS.set('portfolio',   state.portfolio); }
-function loadScannerSymbols() { state.scannerSymbols = LS.get('scanner',  CONFIG.DEFAULT_SCANNER); }
-function saveScannerSymbols() { LS.set('scanner',     state.scannerSymbols); }
+function loadPortfolio() { state.portfolio = LS.get('portfolio', CONFIG.DEFAULT_PORTFOLIO); }
+function savePortfolio() { LS.set('portfolio', state.portfolio); }
+function loadScannerSymbols() { state.scannerSymbols = LS.get('scanner', CONFIG.DEFAULT_SCANNER); }
+function saveScannerSymbols() { LS.set('scanner', state.scannerSymbols); }
 
 // ═══════════════════════════════════════════════════════════
 //  EXPORT / IMPORT
 // ═══════════════════════════════════════════════════════════
 function exportData() {
   const blob = new Blob([JSON.stringify({ portfolio: state.portfolio, scanner: state.scannerSymbols }, null, 2)], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
-  const a    = Object.assign(document.createElement('a'), { href: url, download: `crypto-advisor-${new Date().toISOString().slice(0, 10)}.json` });
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), { href: url, download: `crypto-advisor-${new Date().toISOString().slice(0, 10)}.json` });
   a.click();
   URL.revokeObjectURL(url);
   toast('Exported', 'success');
@@ -1006,7 +1003,7 @@ function importData(file) {
     try {
       const data = JSON.parse(e.target.result);
       if (data.portfolio) { state.portfolio = data.portfolio; savePortfolio(); }
-      if (data.scanner)   { state.scannerSymbols = data.scanner; saveScannerSymbols(); }
+      if (data.scanner) { state.scannerSymbols = data.scanner; saveScannerSymbols(); }
       toast('Imported successfully', 'success');
       closeModal('settingsModal');
       refreshAll();
@@ -1018,7 +1015,7 @@ function importData(file) {
 function clearAllData() {
   if (!confirm('Reset all portfolio data and settings? This cannot be undone.')) return;
   localStorage.clear();
-  state.portfolio      = [];
+  state.portfolio = [];
   state.scannerSymbols = [...CONFIG.DEFAULT_SCANNER];
   savePortfolio();
   saveScannerSymbols();
@@ -1030,7 +1027,7 @@ function clearAllData() {
 // ═══════════════════════════════════════════════════════════
 //  MODALS + CLOCK
 // ═══════════════════════════════════════════════════════════
-function openModal(id)  { el(id).classList.add('open'); }
+function openModal(id) { el(id).classList.add('open'); }
 function closeModal(id) { el(id).classList.remove('open'); }
 
 // ═══════════════════════════════════════════════════════════
@@ -1040,22 +1037,22 @@ function el(id) { return document.getElementById(id); }
 
 function fmtCrypto(n) {
   if (n >= 10000) return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (n >= 1000)  return '$' + n.toFixed(2);
-  if (n >= 1)     return '$' + n.toFixed(4);
-  if (n >= 0.01)  return '$' + n.toFixed(5);
+  if (n >= 1000) return '$' + n.toFixed(2);
+  if (n >= 1) return '$' + n.toFixed(4);
+  if (n >= 0.01) return '$' + n.toFixed(5);
   return '$' + n.toFixed(7);
 }
 
 function fmtMoney(n) {
   if (Math.abs(n) >= 1_000_000) return '$' + (n / 1_000_000).toFixed(2) + 'M';
-  if (Math.abs(n) >= 1_000)     return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (Math.abs(n) >= 1_000) return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return '$' + n.toFixed(2);
 }
 
 function timeAgo(date) {
   const s = (Date.now() - date.getTime()) / 1000;
-  if (s < 60)    return Math.round(s) + 's ago';
-  if (s < 3600)  return Math.round(s / 60) + 'm ago';
+  if (s < 60) return Math.round(s) + 's ago';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
   if (s < 86400) return Math.round(s / 3600) + 'h ago';
   return Math.round(s / 86400) + 'd ago';
 }
@@ -1079,11 +1076,11 @@ function wireEvents() {
 
   // Portfolio
   el('okxSyncBtn').addEventListener('click', syncPortfolioFromOKX);
-  el('addPositionBtn').addEventListener('click',      () => openModal('addPositionModal'));
+  el('addPositionBtn').addEventListener('click', () => openModal('addPositionModal'));
   el('portfolioRefreshBtn').addEventListener('click', refreshAll);
-  el('confirmAddPosition').addEventListener('click',  handleAddPosition);
-  el('newSymbol').addEventListener('keydown',  e => { if (e.key === 'Enter') el('newAmount').focus(); });
-  el('newAmount').addEventListener('keydown',  e => { if (e.key === 'Enter') el('newAvgCost').focus(); });
+  el('confirmAddPosition').addEventListener('click', handleAddPosition);
+  el('newSymbol').addEventListener('keydown', e => { if (e.key === 'Enter') el('newAmount').focus(); });
+  el('newAmount').addEventListener('keydown', e => { if (e.key === 'Enter') el('newAvgCost').focus(); });
   el('newAvgCost').addEventListener('keydown', e => { if (e.key === 'Enter') handleAddPosition(); });
 
   // Scanner
@@ -1098,7 +1095,7 @@ function wireEvents() {
     fetchSymbolData(sym).then(() => renderScanner());
     toast(`Added ${sym} to scanner`, 'success');
   });
-  el('scannerAddInput').addEventListener('keydown',  e => { if (e.key === 'Enter') el('scannerAddBtn').click(); });
+  el('scannerAddInput').addEventListener('keydown', e => { if (e.key === 'Enter') el('scannerAddBtn').click(); });
   el('scannerSortSelect').addEventListener('change', () => { state.scannerSort = el('scannerSortSelect').value; renderScanner(); });
 
   document.querySelectorAll('.filter-chip').forEach(chip => {
@@ -1142,9 +1139,9 @@ async function init() {
   loadPortfolio();
   loadScannerSymbols();
   wireEvents();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => { });
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+    navigator.serviceWorker.register('./sw.js').catch(() => { });
   }
 
   // Show skeleton while loading
