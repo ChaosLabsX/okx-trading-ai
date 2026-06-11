@@ -801,41 +801,52 @@ function removePosition(symbol) {
 //  RENDER — NEWS
 // ═══════════════════════════════════════════════════════════
 async function fetchNews(topic = '') {
-  // Try multiple RSS feeds via rss2json until one works
+  // Fetch RSS feeds via allorigins.win CORS proxy, parse with DOMParser
   const feeds = [
-    { rss: 'https://news.bitcoin.com/feed/',      source: 'Bitcoin.com'    },
-    { rss: 'https://cryptobriefing.com/feed/',    source: 'CryptoBriefing' },
-    { rss: 'https://coinjournal.net/feed/',       source: 'CoinJournal'    },
+    { rss: 'https://cointelegraph.com/rss',                      source: 'CoinTelegraph' },
+    { rss: 'https://decrypt.co/feed',                            source: 'Decrypt'       },
+    { rss: 'https://www.coindesk.com/arc/outboundfeeds/rss/',    source: 'CoinDesk'      },
   ];
 
   for (const feed of feeds) {
     try {
-      const url = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed.rss)}&count=20`;
+      const url = `https://api.allorigins.win/get?url=${encodeURIComponent(feed.rss)}`;
       const res = await fetch(url);
       if (!res.ok) continue;
-      const d = await res.json();
-      if (d.status !== 'ok' || !d.items?.length) continue;
+      const data = await res.json();
+      if (!data.contents) continue;
 
-      let items = d.items;
-      if (topic) {
-        const t = topic.toLowerCase();
-        items = items.filter(a => (a.title + ' ' + (a.description || '')).toLowerCase().includes(t));
-      }
+      const xml = new DOMParser().parseFromString(data.contents, 'text/xml');
+      const items = Array.from(xml.querySelectorAll('item'));
       if (!items.length) continue;
 
-      state.news = items.slice(0, CONFIG.MAX_NEWS_ARTICLES).map(a => ({
-        title: a.title,
-        summary: a.description ? a.description.replace(/<[^>]*>/g, '').substring(0, 160) + '…' : '',
-        source: feed.source,
-        url: a.link,
-        age: timeAgo(new Date(a.pubDate)),
-        sentiment: guessSentiment(a.title + ' ' + (a.description || '')),
+      const getText = (el, tag) => el.querySelector(tag)?.textContent?.trim() || '';
+
+      let articles = items.map(item => ({
+        title:       getText(item, 'title'),
+        link:        getText(item, 'link'),
+        description: getText(item, 'description').replace(/<[^>]*>/g, ''),
+        pubDate:     getText(item, 'pubDate'),
+      })).filter(a => a.title);
+
+      if (topic) {
+        const t = topic.toLowerCase();
+        articles = articles.filter(a => (a.title + ' ' + a.description).toLowerCase().includes(t));
+      }
+      if (!articles.length) continue;
+
+      state.news = articles.slice(0, CONFIG.MAX_NEWS_ARTICLES).map(a => ({
+        title:     a.title,
+        summary:   a.description.substring(0, 160) + (a.description.length > 160 ? '…' : ''),
+        source:    feed.source,
+        url:       a.link,
+        age:       a.pubDate ? timeAgo(new Date(a.pubDate)) : 'recently',
+        sentiment: guessSentiment(a.title + ' ' + a.description),
       }));
       return;
     } catch { }
   }
 
-  // Fallback: demo news
   state.news = getDemoNews();
 }
 
@@ -997,9 +1008,11 @@ function buildPrompt(type, custom) {
   const newsLines = state.news.slice(0, 5).map(n => `- [${n.sentiment.toUpperCase()}] ${n.title}`).join('\n');
   const sentiment = calcNewsSentiment();
 
-  const capitalLine = CONFIG.TRADING_CAPITAL > 0
-    ? `Trading capital: $${CONFIG.TRADING_CAPITAL} USDT`
-    : 'Trading capital: not specified (user has not set it in Settings)';
+  const capitalLine = state.usdtBalance > 0
+    ? `Available USDT balance (live from OKX): $${state.usdtBalance.toFixed(2)} — base ALL position sizes on this exact amount`
+    : CONFIG.TRADING_CAPITAL > 0
+      ? `Trading capital (manually set): $${CONFIG.TRADING_CAPITAL} USDT`
+      : 'Trading capital: unknown — do not suggest specific dollar amounts, suggest percentages only';
 
   const ctx = `
 ## LIVE TECHNICAL DATA (OKX Spot, ${CONFIG.CANDLE_BAR} candles)
@@ -1336,6 +1349,10 @@ async function loadAppData() {
   renderScanner();
   refreshNews();
   restartAutoRefresh();
+  // Auto-sync OKX balance silently if credentials are available
+  if (CONFIG.OKX_API_KEY && CONFIG.OKX_SECRET_KEY && CONFIG.OKX_PASSPHRASE) {
+    syncPortfolioFromOKX().catch(() => {});
+  }
 }
 
 async function init() {
