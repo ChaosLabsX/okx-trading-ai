@@ -16,6 +16,10 @@ const CONFIG = {
   TELEGRAM_BOT_TOKEN: '',
   TELEGRAM_CHAT_ID: '',
 
+  // Supabase — encrypted cloud settings storage (pre-configured, no manual setup needed)
+  SUPABASE_URL: 'https://trbfhtopkcupzeqmrnom.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRyYmZodG9wa2N1cHplcW1ybm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExNDI1NDYsImV4cCI6MjA5NjcxODU0Nn0.6XKKIJIotc4lRVL_akt7P63woJiB8NyOVaUotQmmpHQ',
+
   // CryptoCompare News — free, no key needed
   CRYPTOCOMPARE_URL: 'https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=popular',
 

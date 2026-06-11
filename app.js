@@ -14,8 +14,9 @@ const state = {
   refreshTimer: null,
   newsTimer: null,
   isRefreshing: false,
-  notifiedSignals: {},  // {symbol: lastNotifiedLabel} — prevents duplicate alerts
-  usdtBalance: 0,       // free USDT from OKX sync
+  notifiedSignals: {},   // {symbol: lastNotifiedLabel} — prevents duplicate alerts
+  usdtBalance: 0,        // free USDT from OKX sync
+  sessionPassword: null, // set after successful cloud unlock
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -47,6 +48,10 @@ function loadSettings() {
 }
 
 function saveSettings() {
+  LS.set('supabaseCfg', {
+    url: el('settingsSbUrl').value.trim(),
+    key: el('settingsSbKey').value.trim(),
+  });
   LS.set('apiKeys', {
     claude: el('settingsClaudeKey').value.trim(),
     okxKey: el('settingsOkxKey').value.trim(),
@@ -67,17 +72,20 @@ function saveSettings() {
 }
 
 function populateSettingsForm() {
-  const keys = LS.get('apiKeys', {});
+  const sbCfg = getSupabaseCfg();
+  const keys  = LS.get('apiKeys', {});
   const prefs = LS.get('prefs', {});
-  if (keys.claude) el('settingsClaudeKey').value = keys.claude;
-  if (keys.okxKey) el('settingsOkxKey').value = keys.okxKey;
-  if (keys.okxSecret) el('settingsOkxSecret').value = keys.okxSecret;
-  if (keys.okxPassphrase) el('settingsOkxPassphrase').value = keys.okxPassphrase;
-  if (keys.tgToken) el('settingsTgToken').value = keys.tgToken;
-  if (keys.tgChatId) el('settingsTgChatId').value = keys.tgChatId;
-  if (prefs.riskProfile) el('settingsRiskProfile').value = prefs.riskProfile;
+  el('settingsSbUrl').value = sbCfg.url;
+  el('settingsSbKey').value = sbCfg.key;
+  if (keys.claude)        el('settingsClaudeKey').value       = keys.claude;
+  if (keys.okxKey)        el('settingsOkxKey').value          = keys.okxKey;
+  if (keys.okxSecret)     el('settingsOkxSecret').value       = keys.okxSecret;
+  if (keys.okxPassphrase) el('settingsOkxPassphrase').value   = keys.okxPassphrase;
+  if (keys.tgToken)       el('settingsTgToken').value         = keys.tgToken;
+  if (keys.tgChatId)      el('settingsTgChatId').value        = keys.tgChatId;
+  if (prefs.riskProfile)     el('settingsRiskProfile').value     = prefs.riskProfile;
   if (prefs.refreshInterval) el('settingsRefreshInterval').value = prefs.refreshInterval;
-  if (prefs.tradingCapital) el('settingsTradingCapital').value = prefs.tradingCapital;
+  if (prefs.tradingCapital)  el('settingsTradingCapital').value  = prefs.tradingCapital;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -147,6 +155,161 @@ async function fetchAllData() {
   // Fetch in batches of 4 to stay within OKX rate limits
   for (let i = 0; i < symbols.length; i += 4) {
     await Promise.allSettled(symbols.slice(i, i + 4).map(fetchSymbolData));
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  CRYPTO UTILITIES  (Web Crypto API — AES-GCM + PBKDF2)
+// ═══════════════════════════════════════════════════════════
+function randomHex(bytes) {
+  return Array.from(crypto.getRandomValues(new Uint8Array(bytes)))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hashPassword(password, salt) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password + salt));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function deriveKey(password, salt) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: new TextEncoder().encode(salt), iterations: 100_000, hash: 'SHA-256' },
+    base,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptJSON(obj, password, salt) {
+  const key = await deriveKey(password, salt);
+  const iv  = crypto.getRandomValues(new Uint8Array(12));
+  const buf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(obj)));
+  return {
+    encrypted: btoa(String.fromCharCode(...new Uint8Array(buf))),
+    iv:        btoa(String.fromCharCode(...iv)),
+  };
+}
+
+async function decryptJSON(encB64, ivB64, password, salt) {
+  const key       = await deriveKey(password, salt);
+  const encrypted = Uint8Array.from(atob(encB64), c => c.charCodeAt(0));
+  const iv        = Uint8Array.from(atob(ivB64),  c => c.charCodeAt(0));
+  const buf       = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encrypted);
+  return JSON.parse(new TextDecoder().decode(buf));
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SUPABASE  (encrypted cloud settings storage)
+// ═══════════════════════════════════════════════════════════
+function getSupabaseCfg() {
+  const stored = LS.get('supabaseCfg', {});
+  return {
+    url: stored.url || CONFIG.SUPABASE_URL  || '',
+    key: stored.key || CONFIG.SUPABASE_ANON_KEY || '',
+  };
+}
+
+function isSupabaseConfigured() {
+  const { url, key } = getSupabaseCfg();
+  return !!(url && key);
+}
+
+function sbHeaders(extra = {}) {
+  return {
+    'apikey':        getSupabaseCfg().key,
+    'Authorization': `Bearer ${getSupabaseCfg().key}`,
+    'Content-Type':  'application/json',
+    ...extra,
+  };
+}
+
+async function saveToCloud(password) {
+  if (!isSupabaseConfigured()) throw new Error('Supabase not configured — add URL and Anon Key in Settings.');
+  const payload = {
+    claude: CONFIG.CLAUDE_API_KEY, okxKey: CONFIG.OKX_API_KEY,
+    okxSecret: CONFIG.OKX_SECRET_KEY, okxPassphrase: CONFIG.OKX_PASSPHRASE,
+    tgToken: CONFIG.TELEGRAM_BOT_TOKEN, tgChatId: CONFIG.TELEGRAM_CHAT_ID,
+    riskProfile: CONFIG.RISK_PROFILE, refreshInterval: String(CONFIG.AUTO_REFRESH_INTERVAL),
+  };
+  const salt              = randomHex(16);
+  const password_hash     = await hashPassword(password, salt);
+  const { encrypted, iv } = await encryptJSON(payload, password, salt);
+  const res = await fetch(`${getSupabaseCfg().url}/rest/v1/app_settings`, {
+    method:  'POST',
+    headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+    body:    JSON.stringify({ id: 'main', password_hash, encrypted_data: encrypted, iv, salt }),
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.message || `Supabase error ${res.status}`);
+  }
+}
+
+async function loadFromCloud(password) {
+  if (!isSupabaseConfigured()) throw new Error('Supabase not configured.');
+  const res = await fetch(`${getSupabaseCfg().url}/rest/v1/app_settings?id=eq.main&select=*`, {
+    headers: sbHeaders(),
+  });
+  if (!res.ok) throw new Error(`Cannot reach Supabase (${res.status}) — check URL and Anon Key.`);
+  const rows = await res.json();
+  if (!rows.length) throw new Error('No cloud data found. Fill in your settings and click "Save All to Cloud" first.');
+  const row  = rows[0];
+  const hash = await hashPassword(password, row.salt);
+  if (hash !== row.password_hash) throw new Error('Incorrect password.');
+  return decryptJSON(row.encrypted_data, row.iv, password, row.salt);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  LOCK SCREEN
+// ═══════════════════════════════════════════════════════════
+function setLockError(msg) {
+  const e = el('lockError');
+  e.textContent   = msg;
+  e.style.display = msg ? 'block' : 'none';
+}
+
+async function handleUnlock() {
+  const password = el('lockPasswordInput').value;
+  if (!password) { setLockError('Enter your password.'); return; }
+
+  const btn = el('lockUnlockBtn');
+  btn.disabled    = true;
+  btn.textContent = 'Unlocking…';
+  setLockError('');
+
+  try {
+    const data = await loadFromCloud(password);
+
+    if (data.claude)          CONFIG.CLAUDE_API_KEY        = data.claude;
+    if (data.okxKey)          CONFIG.OKX_API_KEY           = data.okxKey;
+    if (data.okxSecret)       CONFIG.OKX_SECRET_KEY        = data.okxSecret;
+    if (data.okxPassphrase)   CONFIG.OKX_PASSPHRASE        = data.okxPassphrase;
+    if (data.tgToken)         CONFIG.TELEGRAM_BOT_TOKEN    = data.tgToken;
+    if (data.tgChatId)        CONFIG.TELEGRAM_CHAT_ID      = data.tgChatId;
+    if (data.riskProfile)     CONFIG.RISK_PROFILE          = data.riskProfile;
+    if (data.refreshInterval) CONFIG.AUTO_REFRESH_INTERVAL = parseInt(data.refreshInterval);
+
+    LS.set('apiKeys', {
+      claude: data.claude || '', okxKey: data.okxKey || '',
+      okxSecret: data.okxSecret || '', okxPassphrase: data.okxPassphrase || '',
+      tgToken: data.tgToken || '', tgChatId: data.tgChatId || '',
+    });
+    LS.set('prefs', {
+      riskProfile:     data.riskProfile     || 'moderate',
+      refreshInterval: data.refreshInterval || '60000',
+    });
+
+    state.sessionPassword          = password;
+    el('lockScreen').style.display = 'none';
+    toast('Unlocked — settings loaded from cloud ✓', 'success');
+    await loadAppData();
+  } catch (err) {
+    setLockError(err.message);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = 'Unlock';
   }
 }
 
@@ -1118,6 +1281,45 @@ function wireEvents() {
   });
   el('aiCustomInput').addEventListener('keydown', e => { if (e.key === 'Enter' && e.ctrlKey) runAiAnalysis(); });
 
+  // Lock screen
+  el('lockUnlockBtn').addEventListener('click', handleUnlock);
+  el('lockPasswordInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleUnlock(); });
+  el('lockSkipBtn').addEventListener('click', e => {
+    e.preventDefault();
+    el('lockScreen').style.display = 'none';
+    toast('Running without cloud settings', 'info');
+    loadAppData();
+  });
+
+  // Save all to cloud
+  el('saveToCloudBtn').addEventListener('click', async () => {
+    const password = el('settingsCloudPassword').value.trim();
+    if (!password) { toast('Enter a cloud password first', 'error'); return; }
+    const btn = el('saveToCloudBtn');
+    btn.disabled    = true;
+    btn.textContent = 'Saving…';
+    try {
+      LS.set('supabaseCfg', { url: el('settingsSbUrl').value.trim(), key: el('settingsSbKey').value.trim() });
+      CONFIG.CLAUDE_API_KEY        = el('settingsClaudeKey').value.trim();
+      CONFIG.OKX_API_KEY           = el('settingsOkxKey').value.trim();
+      CONFIG.OKX_SECRET_KEY        = el('settingsOkxSecret').value.trim();
+      CONFIG.OKX_PASSPHRASE        = el('settingsOkxPassphrase').value.trim();
+      CONFIG.TELEGRAM_BOT_TOKEN    = el('settingsTgToken').value.trim();
+      CONFIG.TELEGRAM_CHAT_ID      = el('settingsTgChatId').value.trim();
+      CONFIG.RISK_PROFILE          = el('settingsRiskProfile').value;
+      CONFIG.AUTO_REFRESH_INTERVAL = parseInt(el('settingsRefreshInterval').value);
+      await saveToCloud(password);
+      state.sessionPassword = password;
+      el('settingsCloudPassword').value = '';
+      toast('All settings saved to cloud ✓', 'success');
+    } catch (err) {
+      toast('Cloud save failed: ' + err.message, 'error');
+    } finally {
+      btn.disabled    = false;
+      btn.textContent = 'Save All to Cloud';
+    }
+  });
+
   // Settings
   el('saveSettingsBtn').addEventListener('click', saveSettings);
   el('exportDataBtn').addEventListener('click', exportData);
@@ -1134,29 +1336,35 @@ function wireEvents() {
 // ═══════════════════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════════════════
+async function loadAppData() {
+  renderPortfolio();
+  renderScanner();
+  await fetchAllData();
+  renderPortfolio();
+  renderScanner();
+  refreshNews();
+  restartAutoRefresh();
+}
+
 async function init() {
   loadSettings();
   loadPortfolio();
   loadScannerSymbols();
   wireEvents();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => { });
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => { });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // If Supabase is configured, show lock screen and wait for password
+  if (isSupabaseConfigured()) {
+    el('lockScreen').style.display = 'flex';
+    el('lockPasswordInput').focus();
+    return;
   }
 
-  // Show skeleton while loading
-  renderPortfolio();
-  renderScanner();
-
-  // Load all live market data
-  await fetchAllData();
-  renderPortfolio();
-  renderScanner();
-
-  // News loads in parallel (non-blocking)
-  refreshNews();
-
-  restartAutoRefresh();
+  // No cloud setup — load app normally
+  await loadAppData();
 }
 
 document.addEventListener('DOMContentLoaded', init);
