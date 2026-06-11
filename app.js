@@ -801,51 +801,32 @@ function removePosition(symbol) {
 //  RENDER — NEWS
 // ═══════════════════════════════════════════════════════════
 async function fetchNews(topic = '') {
-  // Primary: CryptoCompare (free, no key needed)
+  // Primary: CoinGecko news — free, no key, CORS-friendly
   try {
-    let url = CONFIG.CRYPTOCOMPARE_URL;
-    if (topic) url += `&categories=${encodeURIComponent(topic)}`;
+    let url = 'https://api.coingecko.com/api/v3/news';
     const res = await fetch(url);
     if (res.ok) {
       const d = await res.json();
-      if (d.Data?.length) {
-        state.news = d.Data.slice(0, CONFIG.MAX_NEWS_ARTICLES).map(a => ({
+      let articles = d.data || [];
+      if (topic) {
+        const t = topic.toLowerCase();
+        articles = articles.filter(a => (a.title + ' ' + (a.description || '')).toLowerCase().includes(t));
+      }
+      if (articles.length) {
+        state.news = articles.slice(0, CONFIG.MAX_NEWS_ARTICLES).map(a => ({
           title: a.title,
-          summary: a.body ? a.body.substring(0, 160) + '…' : '',
-          source: a.source_info?.name || a.source || 'CryptoCompare',
+          summary: a.description ? a.description.substring(0, 160) + '…' : '',
+          source: a.news_site || 'CoinGecko',
           url: a.url,
-          age: timeAgo(new Date(a.published_on * 1000)),
-          sentiment: guessSentiment(a.title + ' ' + (a.body || '')),
+          age: timeAgo(new Date(a.created_at * 1000)),
+          sentiment: guessSentiment(a.title + ' ' + (a.description || '')),
         }));
         return;
       }
     }
   } catch { }
 
-  // Fallback: NewsAPI (if key provided)
-  if (CONFIG.NEWS_API_KEY) {
-    try {
-      const query = topic || 'bitcoin ethereum crypto';
-      const url = `${CONFIG.NEWS_API_URL}?q=${encodeURIComponent(query)}&language=en&pageSize=${CONFIG.MAX_NEWS_ARTICLES}&sortBy=publishedAt&apiKey=${CONFIG.NEWS_API_KEY}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const d = await res.json();
-        if (d.articles?.length) {
-          state.news = d.articles.map(a => ({
-            title: a.title,
-            summary: a.description || '',
-            source: a.source?.name || 'NewsAPI',
-            url: a.url,
-            age: timeAgo(new Date(a.publishedAt)),
-            sentiment: guessSentiment(a.title + ' ' + (a.description || '')),
-          }));
-          return;
-        }
-      }
-    } catch { }
-  }
-
-  // Last resort: demo news
+  // Fallback: demo news
   state.news = getDemoNews();
 }
 
