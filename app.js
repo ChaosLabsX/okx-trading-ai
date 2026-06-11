@@ -302,6 +302,7 @@ async function handleUnlock() {
     });
 
     state.sessionPassword          = password;
+    sessionStorage.setItem('sp', password);
     el('lockScreen').style.display = 'none';
     toast('Unlocked — settings loaded from cloud ✓', 'success');
     await loadAppData();
@@ -1286,6 +1287,7 @@ function wireEvents() {
   el('lockPasswordInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleUnlock(); });
   el('lockSkipBtn').addEventListener('click', e => {
     e.preventDefault();
+    sessionStorage.removeItem('sp');
     el('lockScreen').style.display = 'none';
     toast('Running without cloud settings', 'info');
     loadAppData();
@@ -1353,8 +1355,27 @@ async function init() {
   wireEvents();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 
-  // If Supabase is configured, show lock screen and wait for password
+  // If Supabase is configured, try auto-unlock from session first
   if (isSupabaseConfigured()) {
+    const saved = sessionStorage.getItem('sp');
+    if (saved) {
+      try {
+        const data = await loadFromCloud(saved);
+        if (data.claude)          CONFIG.CLAUDE_API_KEY        = data.claude;
+        if (data.okxKey)          CONFIG.OKX_API_KEY           = data.okxKey;
+        if (data.okxSecret)       CONFIG.OKX_SECRET_KEY        = data.okxSecret;
+        if (data.okxPassphrase)   CONFIG.OKX_PASSPHRASE        = data.okxPassphrase;
+        if (data.tgToken)         CONFIG.TELEGRAM_BOT_TOKEN    = data.tgToken;
+        if (data.tgChatId)        CONFIG.TELEGRAM_CHAT_ID      = data.tgChatId;
+        if (data.riskProfile)     CONFIG.RISK_PROFILE          = data.riskProfile;
+        if (data.refreshInterval) CONFIG.AUTO_REFRESH_INTERVAL = parseInt(data.refreshInterval);
+        state.sessionPassword = saved;
+        await loadAppData();
+        return;
+      } catch {
+        sessionStorage.removeItem('sp');
+      }
+    }
     el('lockScreen').style.display = 'flex';
     el('lockPasswordInput').focus();
     return;
