@@ -393,12 +393,17 @@ async function fetchOKXBalance() {
   return d.data[0]?.details ?? [];
 }
 
+function showUsdtBalance(amount) {
+  state.usdtBalance = amount;
+  el('usdtBalance').textContent = '$' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  el('usdtBalanceItem').style.display = '';
+}
+
 async function syncPortfolioFromOKX() {
   const btn = el('okxSyncBtn');
-  btn.disabled = true;
-  btn.textContent = 'Syncing…';
-
   try {
+    btn.disabled = true;
+    btn.textContent = 'Syncing…';
     const details = await fetchOKXBalance();
     let added = 0, updated = 0, usdtBal = 0;
 
@@ -437,10 +442,10 @@ async function syncPortfolioFromOKX() {
 
     savePortfolio();
 
-    // Show free USDT cash in summary bar
+    // Show free USDT cash in summary bar and persist it
     if (usdtBal > 0) {
-      el('usdtBalance').textContent = '$' + usdtBal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      el('usdtBalanceItem').style.display = '';
+      showUsdtBalance(usdtBal);
+      LS.set('lastUsdtBalance', usdtBal);
     }
 
     await fetchAllData();
@@ -800,27 +805,34 @@ function removePosition(symbol) {
 // ═══════════════════════════════════════════════════════════
 //  RENDER — NEWS
 // ═══════════════════════════════════════════════════════════
+async function fetchWithTimeout(url, ms = 7000) {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), ms);
+  try { return await fetch(url, { signal: ctrl.signal }); }
+  finally { clearTimeout(id); }
+}
+
 async function fetchNews(topic = '') {
-  // Fetch RSS feeds via allorigins.win CORS proxy, parse with DOMParser
+  // Fetch RSS via corsproxy.io (CORS-safe, no API key needed)
   const feeds = [
-    { rss: 'https://cointelegraph.com/rss',                      source: 'CoinTelegraph' },
-    { rss: 'https://decrypt.co/feed',                            source: 'Decrypt'       },
-    { rss: 'https://www.coindesk.com/arc/outboundfeeds/rss/',    source: 'CoinDesk'      },
+    { rss: 'https://cointelegraph.com/rss',                   source: 'CoinTelegraph' },
+    { rss: 'https://decrypt.co/feed',                         source: 'Decrypt'       },
+    { rss: 'https://www.coindesk.com/arc/outboundfeeds/rss/', source: 'CoinDesk'      },
   ];
 
   for (const feed of feeds) {
     try {
-      const url = `https://api.allorigins.win/get?url=${encodeURIComponent(feed.rss)}`;
-      const res = await fetch(url);
+      const url = `https://corsproxy.io/?${encodeURIComponent(feed.rss)}`;
+      const res = await fetchWithTimeout(url);
       if (!res.ok) continue;
-      const data = await res.json();
-      if (!data.contents) continue;
+      const text = await res.text();
+      if (!text) continue;
 
-      const xml = new DOMParser().parseFromString(data.contents, 'text/xml');
+      const xml = new DOMParser().parseFromString(text, 'text/xml');
       const items = Array.from(xml.querySelectorAll('item'));
       if (!items.length) continue;
 
-      const getText = (el, tag) => el.querySelector(tag)?.textContent?.trim() || '';
+      const getText = (node, tag) => node.querySelector(tag)?.textContent?.trim() || '';
 
       let articles = items.map(item => ({
         title:       getText(item, 'title'),
@@ -1342,6 +1354,10 @@ function wireEvents() {
 //  INIT
 // ═══════════════════════════════════════════════════════════
 async function loadAppData() {
+  // Restore last known USDT balance immediately (before sync)
+  const lastBal = LS.get('lastUsdtBalance', 0);
+  if (lastBal > 0) showUsdtBalance(lastBal);
+
   renderPortfolio();
   renderScanner();
   await fetchAllData();
@@ -1349,9 +1365,9 @@ async function loadAppData() {
   renderScanner();
   refreshNews();
   restartAutoRefresh();
-  // Auto-sync OKX balance silently if credentials are available
+  // Auto-sync OKX balance if credentials are available
   if (CONFIG.OKX_API_KEY && CONFIG.OKX_SECRET_KEY && CONFIG.OKX_PASSPHRASE) {
-    syncPortfolioFromOKX().catch(() => {});
+    syncPortfolioFromOKX().catch(err => toast('OKX auto-sync failed: ' + err.message, 'error'));
   }
 }
 
