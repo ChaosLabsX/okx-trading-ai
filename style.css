@@ -820,6 +820,67 @@ select.form-input option { background: var(--bg-card); }
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border);
 }
+/* ══════════════════════════════════════════════════════════
+   LOCK SCREEN
+══════════════════════════════════════════════════════════ */
+.lock-screen {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.lock-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 40px 36px;
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: var(--shadow);
+}
+.lock-logo {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -.5px;
+  text-align: center;
+}
+.lock-subtitle {
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: center;
+  margin-top: -6px;
+}
+.lock-btn {
+  width: 100%;
+  padding: 11px;
+  font-size: 14px;
+  justify-content: center;
+}
+.lock-error {
+  background: rgba(239,68,68,.12);
+  border: 1px solid var(--red);
+  border-radius: var(--radius-sm);
+  color: var(--red);
+  font-size: 12px;
+  padding: 10px 12px;
+  line-height: 1.4;
+}
+.lock-skip {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 2px;
+}
+.lock-skip a { color: var(--text-dim); text-decoration: underline; }
+.lock-skip a:hover { color: var(--text); }
+
 .settings-desc {
   font-size: 12px;
   color: var(--text-dim);

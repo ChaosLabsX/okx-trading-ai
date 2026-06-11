@@ -19,6 +19,18 @@
 </head>
 <body>
 
+<!-- ═══════════════════════════════════════ LOCK SCREEN ═══════════════════════════════════════ -->
+<div id="lockScreen" class="lock-screen" style="display:none;">
+  <div class="lock-card">
+    <div class="lock-logo">▲ TradingAI</div>
+    <p class="lock-subtitle">Enter your password to unlock your settings</p>
+    <input type="password" id="lockPasswordInput" class="form-input" placeholder="Password" autocomplete="current-password" />
+    <button class="btn-primary lock-btn" id="lockUnlockBtn">Unlock</button>
+    <div class="lock-error" id="lockError" style="display:none;"></div>
+    <p class="lock-skip">First time setup? <a href="#" id="lockSkipBtn">Continue without password</a></p>
+  </div>
+</div>
+
 <!-- ═══════════════════════════════════════ HEADER ═══════════════════════════════════════ -->
 <header class="header">
   <div class="header-left">
@@ -257,6 +269,22 @@
     <div class="modal-body">
 
       <div class="settings-section">
+        <h4 class="settings-heading">Supabase Config</h4>
+        <p class="settings-desc">Connect to Supabase to store all your API keys securely in the cloud, encrypted with your password. Get a free account at <strong>supabase.com</strong>.</p>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Supabase URL</label>
+            <input type="text" id="settingsSbUrl" class="form-input" placeholder="https://xxxx.supabase.co" />
+          </div>
+          <div class="form-group">
+            <label>Supabase Anon Key</label>
+            <input type="password" id="settingsSbKey" class="form-input" placeholder="eyJ..." />
+          </div>
+        </div>
+        <span class="field-hint">Supabase → Project Settings → API → copy <strong>URL</strong> and <strong>anon public</strong> key. Safe to use — your data is always encrypted before being stored.</span>
+      </div>
+
+      <div class="settings-section">
         <h4 class="settings-heading">API Keys</h4>
         <div class="form-group">
           <label>Claude API Key <span class="badge-required">Required for AI Advisor</span></label>
@@ -300,6 +328,19 @@
           </div>
         </div>
         <span class="field-hint">OKX → Profile → API → Create API Key → set permission to <strong>Read</strong> only</span>
+      </div>
+
+      <div class="settings-section">
+        <h4 class="settings-heading">Cloud Security</h4>
+        <p class="settings-desc">Encrypt all your keys with a password and save them to Supabase. The app will ask for this password every time it loads.</p>
+        <div class="form-group">
+          <label>Cloud Password <span class="badge-required">Required to save</span></label>
+          <input type="password" id="settingsCloudPassword" class="form-input" placeholder="Choose a strong password" autocomplete="new-password" />
+          <span class="field-hint">⚠ If you forget this password your cloud keys cannot be recovered — keep it safe.</span>
+        </div>
+        <div class="settings-actions">
+          <button class="btn-primary" id="saveToCloudBtn">Save All to Cloud</button>
+        </div>
       </div>
 
       <div class="settings-section">
