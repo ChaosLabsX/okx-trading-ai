@@ -801,33 +801,39 @@ function removePosition(symbol) {
 //  RENDER — NEWS
 // ═══════════════════════════════════════════════════════════
 async function fetchNews(topic = '') {
-  // CoinTelegraph RSS via rss2json — free, no key, CORS-friendly
-  try {
-    const rss = 'https://cointelegraph.com/rss';
-    const url = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rss)}&count=20`;
-    const res = await fetch(url);
-    if (res.ok) {
+  // Try multiple RSS feeds via rss2json until one works
+  const feeds = [
+    { rss: 'https://news.bitcoin.com/feed/',      source: 'Bitcoin.com'    },
+    { rss: 'https://cryptobriefing.com/feed/',    source: 'CryptoBriefing' },
+    { rss: 'https://coinjournal.net/feed/',       source: 'CoinJournal'    },
+  ];
+
+  for (const feed of feeds) {
+    try {
+      const url = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed.rss)}&count=20`;
+      const res = await fetch(url);
+      if (!res.ok) continue;
       const d = await res.json();
-      if (d.status === 'ok' && d.items?.length) {
-        let items = d.items;
-        if (topic) {
-          const t = topic.toLowerCase();
-          items = items.filter(a => (a.title + ' ' + (a.description || '')).toLowerCase().includes(t));
-        }
-        if (items.length) {
-          state.news = items.slice(0, CONFIG.MAX_NEWS_ARTICLES).map(a => ({
-            title: a.title,
-            summary: a.description ? a.description.replace(/<[^>]*>/g, '').substring(0, 160) + '…' : '',
-            source: a.author || 'CoinTelegraph',
-            url: a.link,
-            age: timeAgo(new Date(a.pubDate)),
-            sentiment: guessSentiment(a.title + ' ' + (a.description || '')),
-          }));
-          return;
-        }
+      if (d.status !== 'ok' || !d.items?.length) continue;
+
+      let items = d.items;
+      if (topic) {
+        const t = topic.toLowerCase();
+        items = items.filter(a => (a.title + ' ' + (a.description || '')).toLowerCase().includes(t));
       }
-    }
-  } catch { }
+      if (!items.length) continue;
+
+      state.news = items.slice(0, CONFIG.MAX_NEWS_ARTICLES).map(a => ({
+        title: a.title,
+        summary: a.description ? a.description.replace(/<[^>]*>/g, '').substring(0, 160) + '…' : '',
+        source: feed.source,
+        url: a.link,
+        age: timeAgo(new Date(a.pubDate)),
+        sentiment: guessSentiment(a.title + ' ' + (a.description || '')),
+      }));
+      return;
+    } catch { }
+  }
 
   // Fallback: demo news
   state.news = getDemoNews();
@@ -904,13 +910,13 @@ async function runAiAnalysis() {
   showAiThinking();
 
   try {
-    const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(CONFIG.CLAUDE_API_URL);
-    const res = await fetch(proxyUrl, {
+    const res = await fetch(CONFIG.CLAUDE_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': CONFIG.CLAUDE_API_KEY,
         'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify({
         model: CONFIG.CLAUDE_MODEL,
