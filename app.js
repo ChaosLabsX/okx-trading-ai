@@ -801,27 +801,30 @@ function removePosition(symbol) {
 //  RENDER — NEWS
 // ═══════════════════════════════════════════════════════════
 async function fetchNews(topic = '') {
-  // Primary: CoinGecko news — free, no key, CORS-friendly
+  // CoinTelegraph RSS via rss2json — free, no key, CORS-friendly
   try {
-    let url = 'https://api.coingecko.com/api/v3/news';
+    const rss = 'https://cointelegraph.com/rss';
+    const url = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rss)}&count=20`;
     const res = await fetch(url);
     if (res.ok) {
       const d = await res.json();
-      let articles = d.data || [];
-      if (topic) {
-        const t = topic.toLowerCase();
-        articles = articles.filter(a => (a.title + ' ' + (a.description || '')).toLowerCase().includes(t));
-      }
-      if (articles.length) {
-        state.news = articles.slice(0, CONFIG.MAX_NEWS_ARTICLES).map(a => ({
-          title: a.title,
-          summary: a.description ? a.description.substring(0, 160) + '…' : '',
-          source: a.news_site || 'CoinGecko',
-          url: a.url,
-          age: timeAgo(new Date(a.created_at * 1000)),
-          sentiment: guessSentiment(a.title + ' ' + (a.description || '')),
-        }));
-        return;
+      if (d.status === 'ok' && d.items?.length) {
+        let items = d.items;
+        if (topic) {
+          const t = topic.toLowerCase();
+          items = items.filter(a => (a.title + ' ' + (a.description || '')).toLowerCase().includes(t));
+        }
+        if (items.length) {
+          state.news = items.slice(0, CONFIG.MAX_NEWS_ARTICLES).map(a => ({
+            title: a.title,
+            summary: a.description ? a.description.replace(/<[^>]*>/g, '').substring(0, 160) + '…' : '',
+            source: a.author || 'CoinTelegraph',
+            url: a.link,
+            age: timeAgo(new Date(a.pubDate)),
+            sentiment: guessSentiment(a.title + ' ' + (a.description || '')),
+          }));
+          return;
+        }
       }
     }
   } catch { }
@@ -901,13 +904,13 @@ async function runAiAnalysis() {
   showAiThinking();
 
   try {
-    const res = await fetch(CONFIG.CLAUDE_API_URL, {
+    const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(CONFIG.CLAUDE_API_URL);
+    const res = await fetch(proxyUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': CONFIG.CLAUDE_API_KEY,
         'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-calls': 'true',
       },
       body: JSON.stringify({
         model: CONFIG.CLAUDE_MODEL,
