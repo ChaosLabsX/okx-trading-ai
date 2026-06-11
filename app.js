@@ -1353,9 +1353,6 @@ async function init() {
   wireEvents();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 
-  updateClock();
-  setInterval(updateClock, 1000);
-
   // If Supabase is configured, show lock screen and wait for password
   if (isSupabaseConfigured()) {
     el('lockScreen').style.display = 'flex';
