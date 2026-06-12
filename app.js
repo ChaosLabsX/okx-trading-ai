@@ -17,6 +17,7 @@ const state = {
   notifiedSignals: {},   // {symbol: lastNotifiedLabel} — prevents duplicate alerts
   usdtBalance: 0,        // free USDT from OKX sync
   sessionPassword: null, // set after successful cloud unlock
+  derivData: {},         // {symbol: {fundingRate, nextFundingRate, openInterest}}
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -81,8 +82,8 @@ function populateSettingsForm() {
   if (keys.okxKey)        el('settingsOkxKey').value          = keys.okxKey;
   if (keys.okxSecret)     el('settingsOkxSecret').value       = keys.okxSecret;
   if (keys.okxPassphrase) el('settingsOkxPassphrase').value   = keys.okxPassphrase;
-  if (keys.tgToken)       el('settingsTgToken').value         = keys.tgToken;
-  if (keys.tgChatId)      el('settingsTgChatId').value        = keys.tgChatId;
+  if (keys.tgToken)       el('settingsTgToken').value            = keys.tgToken;
+  if (keys.tgChatId)      el('settingsTgChatId').value           = keys.tgChatId;
   if (prefs.riskProfile)     el('settingsRiskProfile').value     = prefs.riskProfile;
   if (prefs.refreshInterval) el('settingsRefreshInterval').value = prefs.refreshInterval;
   if (prefs.tradingCapital)  el('settingsTradingCapital').value  = prefs.tradingCapital;
@@ -152,10 +153,42 @@ async function fetchAllData() {
     ...state.scannerSymbols,
     ...state.portfolio.map(p => p.symbol),
   ])];
-  // Fetch in batches of 4 to stay within OKX rate limits
+  // Fetch price/indicator data in batches of 4
   for (let i = 0; i < symbols.length; i += 4) {
     await Promise.allSettled(symbols.slice(i, i + 4).map(fetchSymbolData));
   }
+  // Fetch funding rates + open interest in background (non-blocking)
+  Promise.allSettled(symbols.map(fetchOKXDerivData)).catch(() => {});
+}
+
+async function fetchOKXDerivData(symbol) {
+  // Only perpetual swap contracts have funding rates / OI
+  const swapId = symbol.replace('-USDT', '-USDT-SWAP');
+  try {
+    const [frRes, oiRes] = await Promise.allSettled([
+      fetch(`${CONFIG.OKX_BASE}/api/v5/public/funding-rate?instId=${encodeURIComponent(swapId)}`),
+      fetch(`${CONFIG.OKX_BASE}/api/v5/public/open-interest?instId=${encodeURIComponent(swapId)}`),
+    ]);
+
+    const deriv = {};
+
+    if (frRes.status === 'fulfilled' && frRes.value.ok) {
+      const d = await frRes.value.json();
+      if (d.code === '0' && d.data?.[0]) {
+        deriv.fundingRate     = parseFloat(d.data[0].fundingRate);
+        deriv.nextFundingRate = parseFloat(d.data[0].nextFundingRate);
+      }
+    }
+
+    if (oiRes.status === 'fulfilled' && oiRes.value.ok) {
+      const d = await oiRes.value.json();
+      if (d.code === '0' && d.data?.[0]) {
+        deriv.openInterest = parseFloat(d.data[0].oiCcy); // OI in coin units
+      }
+    }
+
+    if (Object.keys(deriv).length > 0) state.derivData[symbol] = deriv;
+  } catch { }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -333,17 +366,28 @@ async function sendTelegramAlert(message) {
 }
 
 function checkSignalAlerts() {
+  const EMOJI = {
+    'STRONG BUY':  '🟢',
+    'BUY':         '🔵',
+    'SELL':        '🟠',
+    'STRONG SELL': '🔴',
+  };
+
   for (const sym of state.scannerSymbols) {
     const sig = state.indicators[sym]?.signal;
     const price = state.tickers[sym]?.price;
     if (!sig || !price) continue;
 
-    const isAlert = sig.label === 'STRONG BUY' || sig.label === 'STRONG SELL';
+    const isSellSignal = sig.label === 'SELL' || sig.label === 'STRONG SELL';
+    const isAlert = sig.label in EMOJI;
+    // Only alert on SELL/STRONG SELL if the coin is actually in the portfolio
+    const holdsThisCoin = state.portfolio.some(p => p.symbol === sym);
+    const shouldAlert = isAlert && (!isSellSignal || holdsThisCoin);
     const alreadyNotified = state.notifiedSignals[sym] === sig.label;
 
-    if (isAlert && !alreadyNotified) {
+    if (shouldAlert && !alreadyNotified) {
       const coin = sym.replace('-USDT', '');
-      const emoji = sig.label === 'STRONG BUY' ? '🟢' : '🔴';
+      const emoji = EMOJI[sig.label];
       const msg = `${emoji} <b>${sig.label}: ${coin}</b>\n`
         + `💰 Price: ${fmtCrypto(price)}\n`
         + `📊 ${sig.reasons.join('\n📊 ')}\n`
@@ -352,8 +396,8 @@ function checkSignalAlerts() {
       state.notifiedSignals[sym] = sig.label;
     }
 
-    // Reset when signal drops back to neutral so future alerts can fire again
-    if (!isAlert && state.notifiedSignals[sym]) {
+    // Reset when signal goes to HOLD so future alerts can fire again
+    if (!shouldAlert && state.notifiedSignals[sym]) {
       delete state.notifiedSignals[sym];
     }
   }
@@ -371,26 +415,50 @@ async function hmacSHA256base64(secret, message) {
   return btoa(String.fromCharCode(...new Uint8Array(sig)));
 }
 
-async function fetchOKXBalance() {
-  if (!CONFIG.OKX_API_KEY || !CONFIG.OKX_SECRET_KEY || !CONFIG.OKX_PASSPHRASE) {
-    throw new Error('OKX API credentials missing — add them in Settings first.');
-  }
-  const path = '/api/v5/account/balance';
+async function okxSignedGet(path) {
   const timestamp = new Date().toISOString();
   const sign = await hmacSHA256base64(CONFIG.OKX_SECRET_KEY, timestamp + 'GET' + path);
-  const res = await fetch(CONFIG.OKX_BASE + path, {
+  const url = 'https://corsproxy.io/?' + encodeURIComponent(CONFIG.OKX_BASE + path);
+  const res = await fetch(url, {
     headers: {
-      'OK-ACCESS-KEY': CONFIG.OKX_API_KEY,
-      'OK-ACCESS-SIGN': sign,
-      'OK-ACCESS-TIMESTAMP': timestamp,
+      'OK-ACCESS-KEY':        CONFIG.OKX_API_KEY,
+      'OK-ACCESS-SIGN':       sign,
+      'OK-ACCESS-TIMESTAMP':  timestamp,
       'OK-ACCESS-PASSPHRASE': CONFIG.OKX_PASSPHRASE,
-      'Content-Type': 'application/json',
+      'Content-Type':         'application/json',
     },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const d = await res.json();
   if (d.code !== '0') throw new Error(d.msg || `OKX error code ${d.code}`);
-  return d.data[0]?.details ?? [];
+  return d;
+}
+
+async function fetchOKXBalance() {
+  if (!CONFIG.OKX_API_KEY || !CONFIG.OKX_SECRET_KEY || !CONFIG.OKX_PASSPHRASE) {
+    throw new Error('OKX API credentials missing — add them in Settings first.');
+  }
+
+  // Trading account (unified)
+  const trading = await okxSignedGet('/api/v5/account/balance');
+  const tradingDetails = trading.data[0]?.details ?? [];
+
+  // Funding account (wallet where deposits land)
+  let fundingUSDT = 0;
+  try {
+    const funding = await okxSignedGet('/api/v5/asset/balances?ccy=USDT');
+    fundingUSDT = parseFloat(funding.data?.find(b => b.ccy === 'USDT')?.availBal ?? '0');
+  } catch { }
+
+  // Merge: if trading USDT is lower than funding USDT, inject the funding balance
+  const tradingUSDT = parseFloat(tradingDetails.find(d => d.ccy === 'USDT')?.cashBal ?? '0');
+  if (fundingUSDT > tradingUSDT) {
+    const existing = tradingDetails.find(d => d.ccy === 'USDT');
+    if (existing) existing.cashBal = String(fundingUSDT);
+    else tradingDetails.push({ ccy: 'USDT', cashBal: String(fundingUSDT) });
+  }
+
+  return tradingDetails;
 }
 
 function showUsdtBalance(amount) {
@@ -813,7 +881,7 @@ async function fetchWithTimeout(url, ms = 7000) {
 }
 
 async function fetchNews(topic = '') {
-  // Fetch RSS via corsproxy.io (CORS-safe, no API key needed)
+  // RSS via corsproxy.io — free, no API key, CORS-safe
   const feeds = [
     { rss: 'https://cointelegraph.com/rss',                   source: 'CoinTelegraph' },
     { rss: 'https://decrypt.co/feed',                         source: 'Decrypt'       },
@@ -1020,6 +1088,21 @@ function buildPrompt(type, custom) {
   const newsLines = state.news.slice(0, 5).map(n => `- [${n.sentiment.toUpperCase()}] ${n.title}`).join('\n');
   const sentiment = calcNewsSentiment();
 
+  const derivLines = state.scannerSymbols.map(sym => {
+    const d = state.derivData[sym];
+    if (!d || d.fundingRate === undefined) return null;
+    const coin = sym.replace('-USDT', '');
+    const frPct = (d.fundingRate * 100).toFixed(4);
+    const frBias = d.fundingRate > 0.0005 ? 'longs overheated ⚠'
+      : d.fundingRate > 0     ? 'mild bullish bias'
+      : d.fundingRate < -0.0005 ? 'shorts overheated ⚠'
+      : 'mild bearish bias';
+    const oi = d.openInterest !== undefined
+      ? d.openInterest.toLocaleString('en-US', { maximumFractionDigits: 0 }) + ' coins'
+      : 'N/A';
+    return `  ${coin}: Funding ${frPct}% (${frBias}) | OI ${oi}`;
+  }).filter(Boolean).join('\n');
+
   const capitalLine = state.usdtBalance > 0
     ? `Available USDT balance (live from OKX): $${state.usdtBalance.toFixed(2)} — base ALL position sizes on this exact amount`
     : CONFIG.TRADING_CAPITAL > 0
@@ -1029,6 +1112,10 @@ function buildPrompt(type, custom) {
   const ctx = `
 ## LIVE TECHNICAL DATA (OKX Spot, ${CONFIG.CANDLE_BAR} candles)
 ${techData || 'No market data loaded.'}
+
+## DERIVATIVES MARKET CONTEXT (OKX Perpetual Futures)
+${derivLines || 'No derivatives data yet — loading in background.'}
+Note: High positive funding = longs crowded (risky to buy). High negative = shorts crowded (risky to sell). OI rising with price = strong trend. OI falling = trend weakening.
 
 ## MY PORTFOLIO
 ${portData}
@@ -1300,13 +1387,6 @@ function wireEvents() {
   // Lock screen
   el('lockUnlockBtn').addEventListener('click', handleUnlock);
   el('lockPasswordInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleUnlock(); });
-  el('lockSkipBtn').addEventListener('click', e => {
-    e.preventDefault();
-    sessionStorage.removeItem('sp');
-    el('lockScreen').style.display = 'none';
-    toast('Running without cloud settings', 'info');
-    loadAppData();
-  });
 
   // Save all to cloud
   el('saveToCloudBtn').addEventListener('click', async () => {
