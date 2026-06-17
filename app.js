@@ -567,7 +567,8 @@ async function syncPortfolioFromOKX() {
       return true;
     });
 
-    savePortfolio();
+    LS.set('portfolio', state.portfolio); // save locally first
+    await pushPortfolioSymbols();         // await so Supabase is updated before toast shows
 
     if (usdtBal > 0) {
       showUsdtBalance(usdtBal);
@@ -1550,12 +1551,15 @@ async function pushPortfolioSymbols() {
   if (!isSupabaseConfigured()) return;
   const symbols = state.portfolio.map(p => p.symbol).join(',');
   try {
-    await fetch(`${getSupabaseCfg().url}/rest/v1/app_settings?id=eq.main`, {
+    const r = await fetch(`${getSupabaseCfg().url}/rest/v1/app_settings?id=eq.main`, {
       method: 'PATCH',
-      headers: { ...sbHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      headers: { ...sbHeaders(), 'Prefer': 'return=minimal' },
       body: JSON.stringify({ portfolio_symbols: symbols }),
     });
-  } catch { } // silent — non-critical background sync
+    if (!r.ok) console.error('[portfolio sync] Supabase PATCH failed:', r.status, await r.text().catch(() => ''));
+  } catch (e) {
+    console.error('[portfolio sync] network error:', e.message);
+  }
 }
 function loadScannerSymbols() { state.scannerSymbols = LS.get('scanner', CONFIG.DEFAULT_SCANNER); }
 function saveScannerSymbols() { LS.set('scanner', state.scannerSymbols); }

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -15,400 +16,466 @@
   <meta name="apple-mobile-web-app-title" content="TradingAI" />
   <link rel="stylesheet" href="style.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
 </head>
+
 <body>
 
-<!-- ═══════════════════════════════════════ LOCK SCREEN ═══════════════════════════════════════ -->
-<div id="lockScreen" class="lock-screen" style="display:none;">
-  <div class="lock-card">
-    <div class="lock-logo">▲ TradingAI</div>
-    <p class="lock-subtitle">Enter your password to unlock your settings</p>
-    <input type="password" id="lockPasswordInput" class="form-input" placeholder="Password" autocomplete="current-password" />
-    <button class="btn-primary lock-btn" id="lockUnlockBtn">Unlock</button>
-    <div class="lock-error" id="lockError" style="display:none;"></div>
+  <!-- ═══════════════════════════════════════ LOCK SCREEN ═══════════════════════════════════════ -->
+  <div id="lockScreen" class="lock-screen" style="display:none;">
+    <div class="lock-card">
+      <div class="lock-logo">▲ TradingAI</div>
+      <p class="lock-subtitle">Enter your password to unlock your settings</p>
+      <input type="password" id="lockPasswordInput" class="form-input" placeholder="Password"
+        autocomplete="current-password" />
+      <button class="btn-primary lock-btn" id="lockUnlockBtn">Unlock</button>
+      <div class="lock-error" id="lockError" style="display:none;"></div>
+    </div>
   </div>
-</div>
 
-<!-- ═══════════════════════════════════════ HEADER ═══════════════════════════════════════ -->
-<header class="header">
-  <div class="header-left">
-    <span class="logo">▲ TradingAI</span>
-  </div>
-  <div class="header-right">
-    <button class="btn-icon" id="refreshBtn" title="Refresh all data">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-    </button>
-    <button class="btn-icon" id="settingsBtn" title="Settings">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-    </button>
-  </div>
-</header>
+  <!-- ═══════════════════════════════════════ HEADER ═══════════════════════════════════════ -->
+  <header class="header">
+    <div class="header-left">
+      <span class="logo">▲ TradingAI</span>
+    </div>
+    <div class="header-right">
+      <button class="btn-icon" id="refreshBtn" title="Refresh all data">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="23 4 23 10 17 10" />
+          <polyline points="1 20 1 14 7 14" />
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+        </svg>
+      </button>
+      <button class="btn-icon" id="settingsBtn" title="Settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3" />
+          <path
+            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+      </button>
+    </div>
+  </header>
 
-<!-- ═══════════════════════════════════════ SUMMARY BAR ═══════════════════════════════════════ -->
-<div class="summary-bar">
-  <div class="summary-item">
-    <span class="summary-label">Portfolio Value</span>
-    <span class="summary-value" id="totalPortfolioValue">—</span>
+  <!-- ═══════════════════════════════════════ SUMMARY BAR ═══════════════════════════════════════ -->
+  <div class="summary-bar">
+    <div class="summary-item">
+      <span class="summary-label">Portfolio Value</span>
+      <span class="summary-value" id="totalPortfolioValue">—</span>
+    </div>
+    <div class="summary-item" id="usdtBalanceItem" style="display:none;">
+      <span class="summary-label">Free Cash (USDT)</span>
+      <span class="summary-value pos" id="usdtBalance">—</span>
+    </div>
+    <div class="summary-item">
+      <span class="summary-label">Day P&L</span>
+      <span class="summary-value" id="totalDayPnl">—</span>
+    </div>
+    <div class="summary-item">
+      <span class="summary-label">Total P&L</span>
+      <span class="summary-value" id="totalPnl">—</span>
+    </div>
+    <div class="summary-item">
+      <span class="summary-label">Best Signal Now</span>
+      <span class="summary-value" id="topSignal">—</span>
+    </div>
+    <div class="summary-item">
+      <span class="summary-label">Last Updated</span>
+      <span class="summary-value" id="lastUpdated">—</span>
+    </div>
   </div>
-  <div class="summary-item" id="usdtBalanceItem" style="display:none;">
-    <span class="summary-label">Free Cash (USDT)</span>
-    <span class="summary-value pos" id="usdtBalance">—</span>
-  </div>
-  <div class="summary-item">
-    <span class="summary-label">Day P&L</span>
-    <span class="summary-value" id="totalDayPnl">—</span>
-  </div>
-  <div class="summary-item">
-    <span class="summary-label">Total P&L</span>
-    <span class="summary-value" id="totalPnl">—</span>
-  </div>
-  <div class="summary-item">
-    <span class="summary-label">Best Signal Now</span>
-    <span class="summary-value" id="topSignal">—</span>
-  </div>
-  <div class="summary-item">
-    <span class="summary-label">Last Updated</span>
-    <span class="summary-value" id="lastUpdated">—</span>
-  </div>
-</div>
 
-<!-- ═══════════════════════════════════════ MAIN GRID ═══════════════════════════════════════ -->
-<main class="main-grid">
+  <!-- ═══════════════════════════════════════ MAIN GRID ═══════════════════════════════════════ -->
+  <main class="main-grid">
 
-  <!-- ─────────── SIGNAL SCANNER (full width, primary panel) ─────────── -->
-  <section class="card" id="scannerSection">
-    <div class="card-header">
-      <h2 class="card-title">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        Signal Scanner
-      </h2>
-      <div class="card-actions">
-        <input class="scanner-input" type="text" id="scannerAddInput" placeholder="BTC or BTC-USDT" maxlength="15" />
-        <button class="btn-small" id="scannerAddBtn">Add</button>
-        <select class="select-small" id="scannerSortSelect">
-          <option value="signal">Sort: Signal</option>
-          <option value="change">Sort: 24h%</option>
-          <option value="price">Sort: Price</option>
-          <option value="symbol">Sort: A-Z</option>
-        </select>
+    <!-- ─────────── SIGNAL SCANNER (full width, primary panel) ─────────── -->
+    <section class="card" id="scannerSection">
+      <div class="card-header">
+        <h2 class="card-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          Signal Scanner
+        </h2>
+        <div class="card-actions">
+          <input class="scanner-input" type="text" id="scannerAddInput" placeholder="BTC or BTC-USDT" maxlength="15" />
+          <button class="btn-small" id="scannerAddBtn">Add</button>
+          <select class="select-small" id="scannerSortSelect">
+            <option value="signal">Sort: Signal</option>
+            <option value="change">Sort: 24h%</option>
+            <option value="price">Sort: Price</option>
+            <option value="symbol">Sort: A-Z</option>
+          </select>
+        </div>
       </div>
-    </div>
 
-    <!-- Best pick banner -->
-    <div class="best-pick-bar" id="bestPickBar" style="display:none;"></div>
+      <!-- Best pick banner -->
+      <div class="best-pick-bar" id="bestPickBar" style="display:none;"></div>
 
-    <div class="scanner-filters">
-      <button class="filter-chip active" data-filter="all">All Coins</button>
-      <button class="filter-chip" data-filter="buy">Buy Signals</button>
-      <button class="filter-chip" data-filter="sell">Sell Signals</button>
-      <button class="filter-chip" data-filter="hold">Hold</button>
-    </div>
-
-    <div class="table-wrap" style="max-height:320px;">
-      <table class="data-table" id="scannerTable">
-        <thead>
-          <tr>
-            <th>Coin</th>
-            <th class="num">Price</th>
-            <th class="num">24h%</th>
-            <th class="num" title="RSI on 1-hour candles. Below 30 = oversold. Above 70 = overbought.">RSI 1H ⓘ</th>
-            <th class="num" title="RSI on 4-hour candles. Confirms whether the bigger trend agrees with the 1H signal.">4H RSI ⓘ</th>
-            <th class="num" title="MACD trend. Bull Cross = upward momentum starting. Bear Cross = downward momentum starting.">MACD ⓘ</th>
-            <th class="num" title="Bollinger Band position. 0% = price at lower band (buy zone). 100% = price at upper band (sell zone).">BB% ⓘ</th>
-            <th class="num" title="Volume vs 20-bar average. 1.5× or higher = above-average interest. 2× = spike.">Vol ⓘ</th>
-            <th title="Signal label + score. Score range: −9 (extreme sell) to +9 (extreme buy). Hover for full breakdown.">Signal ⓘ</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="scannerBody">
-          <tr class="loading-row"><td colspan="10"><span class="spinner"></span> Loading market data from OKX...</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- ─────────── PORTFOLIO ─────────── -->
-  <section class="card" id="portfolioSection">
-    <div class="card-header">
-      <h2 class="card-title">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-        My Portfolio
-      </h2>
-      <div class="card-actions">
-        <button class="btn-small btn-okx" id="okxSyncBtn" title="Sync your real OKX holdings automatically">⟳ Sync OKX</button>
-        <button class="btn-small" id="addPositionBtn">+ Add Position</button>
-        <button class="btn-icon-sm" id="portfolioRefreshBtn" title="Refresh">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        </button>
+      <div class="scanner-filters">
+        <button class="filter-chip active" data-filter="all">All Coins</button>
+        <button class="filter-chip" data-filter="buy">Buy Signals</button>
+        <button class="filter-chip" data-filter="sell">Sell Signals</button>
+        <button class="filter-chip" data-filter="hold">Hold</button>
       </div>
-    </div>
-    <div class="table-wrap">
-      <table class="data-table" id="portfolioTable">
-        <thead>
-          <tr>
-            <th>Coin</th>
-            <th class="num">Price</th>
-            <th class="num">24h%</th>
-            <th class="num">Amount</th>
-            <th class="num">Value</th>
-            <th class="num">P&amp;L</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="portfolioBody">
-          <tr class="loading-row"><td colspan="7"><span class="spinner"></span> Loading portfolio...</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
 
-  <!-- ─────────── AI ADVISOR ─────────── -->
-  <section class="card card-ai" id="aiSection">
-    <div class="card-header">
-      <h2 class="card-title">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm-1-5h2v2h-2zm0-8h2v6h-2z"/></svg>
-        AI Advisor
-      </h2>
-      <div class="card-actions">
-        <select class="select-small" id="aiContextSelect">
-          <option value="market">Best Opportunities Now</option>
-          <option value="portfolio">Review My Portfolio</option>
-          <option value="risk">Risk Analysis</option>
-          <option value="custom">Custom Question</option>
-        </select>
-        <button class="btn-primary" id="aiAnalyzeBtn">Analyze</button>
+      <div class="table-wrap" style="max-height:320px;">
+        <table class="data-table" id="scannerTable">
+          <thead>
+            <tr>
+              <th>Coin</th>
+              <th class="num">Price</th>
+              <th class="num">24h%</th>
+              <th class="num" title="RSI on 1-hour candles. Below 30 = oversold. Above 70 = overbought.">RSI 1H ⓘ</th>
+              <th class="num"
+                title="RSI on 4-hour candles. Confirms whether the bigger trend agrees with the 1H signal.">4H RSI ⓘ
+              </th>
+              <th class="num"
+                title="MACD trend. Bull Cross = upward momentum starting. Bear Cross = downward momentum starting.">MACD
+                ⓘ</th>
+              <th class="num"
+                title="Bollinger Band position. 0% = price at lower band (buy zone). 100% = price at upper band (sell zone).">
+                BB% ⓘ</th>
+              <th class="num" title="Volume vs 20-bar average. 1.5× or higher = above-average interest. 2× = spike.">Vol
+                ⓘ</th>
+              <th
+                title="Signal label + score. Score range: −9 (extreme sell) to +9 (extreme buy). Hover for full breakdown.">
+                Signal ⓘ</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="scannerBody">
+            <tr class="loading-row">
+              <td colspan="10"><span class="spinner"></span> Loading market data from OKX...</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-    </div>
+    </section>
 
-    <div class="ai-custom-query" id="aiCustomQuery" style="display:none;">
-      <textarea class="ai-textarea" id="aiCustomInput" placeholder="Ask anything: 'Should I buy ETH now?', 'What's my biggest risk?', 'When should I take profits on BTC?'" rows="3"></textarea>
-    </div>
-
-    <div class="ai-response-area" id="aiResponseArea">
-      <div class="ai-placeholder">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z"/><path d="M12 6v6l4 2"/></svg>
-        <p>Click <strong>Analyze</strong> to get AI-powered trading insights with specific entry prices, take profit targets, and stop losses — based on live OKX market data and technical indicators.</p>
-        <p style="font-size:11px;margin-top:8px;">Requires a Claude API key in Settings.</p>
+    <!-- ─────────── PORTFOLIO ─────────── -->
+    <section class="card" id="portfolioSection">
+      <div class="card-header">
+        <h2 class="card-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="14" rx="2" />
+            <line x1="8" y1="21" x2="16" y2="21" />
+            <line x1="12" y1="17" x2="12" y2="21" />
+          </svg>
+          My Portfolio
+        </h2>
+        <div class="card-actions">
+          <button class="btn-small btn-okx" id="okxSyncBtn" title="Sync your real OKX holdings automatically">⟳ Sync
+            OKX</button>
+          <button class="btn-small" id="addPositionBtn">+ Add Position</button>
+          <button class="btn-icon-sm" id="portfolioRefreshBtn" title="Refresh">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 23 10 17 10" />
+              <polyline points="1 20 1 14 7 14" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+            </svg>
+          </button>
+        </div>
       </div>
-    </div>
-
-    <div class="ai-footer" id="aiFooter" style="display:none;">
-      <span class="ai-disclaimer">⚠ AI analysis is for educational purposes only. Not financial advice. Crypto is high risk.</span>
-      <span class="ai-timestamp" id="aiTimestamp"></span>
-    </div>
-  </section>
-
-  <!-- ─────────── NEWS ─────────── -->
-  <section class="card" id="newsSection">
-    <div class="card-header">
-      <h2 class="card-title">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2z"/><path d="M4 8H2v12a2 2 0 0 0 2 2h2"/><line x1="10" y1="10" x2="18" y2="10"/><line x1="10" y1="14" x2="18" y2="14"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
-        Crypto News
-      </h2>
-      <div class="card-actions">
-        <input class="scanner-input" type="text" id="newsTopicInput" placeholder="search topic..." />
-        <button class="btn-small" id="newsSearchBtn">Search</button>
+      <div class="table-wrap">
+        <table class="data-table" id="portfolioTable">
+          <thead>
+            <tr>
+              <th>Coin</th>
+              <th class="num">Price</th>
+              <th class="num">24h%</th>
+              <th class="num">Amount</th>
+              <th class="num">Value</th>
+              <th class="num">P&amp;L</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="portfolioBody">
+            <tr class="loading-row">
+              <td colspan="7"><span class="spinner"></span> Loading portfolio...</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-    </div>
+    </section>
 
-    <div class="news-sentiment-bar" id="newsSentimentBar">
-      <span class="sentiment-label">Market Sentiment</span>
-      <div class="sentiment-track">
-        <div class="sentiment-fill" id="sentimentFill"></div>
+    <!-- ─────────── AI ADVISOR ─────────── -->
+    <section class="card card-ai" id="aiSection">
+      <div class="card-header">
+        <h2 class="card-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path
+              d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm-1-5h2v2h-2zm0-8h2v6h-2z" />
+          </svg>
+          AI Advisor
+        </h2>
+        <div class="card-actions">
+          <select class="select-small" id="aiContextSelect">
+            <option value="market">Best Opportunities Now</option>
+            <option value="portfolio">Review My Portfolio</option>
+            <option value="risk">Risk Analysis</option>
+            <option value="custom">Custom Question</option>
+          </select>
+          <button class="btn-primary" id="aiAnalyzeBtn">Analyze</button>
+        </div>
       </div>
-      <span class="sentiment-score" id="sentimentScore">—</span>
-    </div>
 
-    <div class="news-list" id="newsList">
-      <div class="loading-row"><span class="spinner"></span> Loading news...</div>
-    </div>
-  </section>
-
-</main>
-
-<!-- ═══════════════════════════════════════ ADD POSITION MODAL ═══════════════════════════════════════ -->
-<div class="modal-overlay" id="addPositionModal">
-  <div class="modal">
-    <div class="modal-header">
-      <h3>Add Position</h3>
-      <button class="btn-icon modal-close" data-modal="addPositionModal">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="form-group">
-        <label>Coin Symbol</label>
-        <input type="text" id="newSymbol" placeholder="BTC  or  BTC-USDT" class="form-input" maxlength="15" />
-        <span class="field-hint">Type BTC, ETH, SOL — the app adds -USDT automatically</span>
+      <div class="ai-custom-query" id="aiCustomQuery" style="display:none;">
+        <textarea class="ai-textarea" id="aiCustomInput"
+          placeholder="Ask anything: 'Should I buy ETH now?', 'What's my biggest risk?', 'When should I take profits on BTC?'"
+          rows="3"></textarea>
       </div>
-      <div class="form-row">
+
+      <div class="ai-response-area" id="aiResponseArea">
+        <div class="ai-placeholder">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2z" />
+            <path d="M12 6v6l4 2" />
+          </svg>
+          <p>Click <strong>Analyze</strong> to get AI-powered trading insights with specific entry prices, take profit
+            targets, and stop losses — based on live OKX market data and technical indicators.</p>
+          <p style="font-size:11px;margin-top:8px;">Requires a Claude API key in Settings.</p>
+        </div>
+      </div>
+
+      <div class="ai-footer" id="aiFooter" style="display:none;">
+        <span class="ai-disclaimer">⚠ AI analysis is for educational purposes only. Not financial advice. Crypto is high
+          risk.</span>
+        <span class="ai-timestamp" id="aiTimestamp"></span>
+      </div>
+    </section>
+
+    <!-- ─────────── NEWS ─────────── -->
+    <section class="card" id="newsSection">
+      <div class="card-header">
+        <h2 class="card-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2z" />
+            <path d="M4 8H2v12a2 2 0 0 0 2 2h2" />
+            <line x1="10" y1="10" x2="18" y2="10" />
+            <line x1="10" y1="14" x2="18" y2="14" />
+            <line x1="10" y1="18" x2="14" y2="18" />
+          </svg>
+          Crypto News
+        </h2>
+        <div class="card-actions">
+          <input class="scanner-input" type="text" id="newsTopicInput" placeholder="search topic..." />
+          <button class="btn-small" id="newsSearchBtn">Search</button>
+        </div>
+      </div>
+
+      <div class="news-sentiment-bar" id="newsSentimentBar">
+        <span class="sentiment-label">Market Sentiment</span>
+        <div class="sentiment-track">
+          <div class="sentiment-fill" id="sentimentFill"></div>
+        </div>
+        <span class="sentiment-score" id="sentimentScore">—</span>
+      </div>
+
+      <div class="news-list" id="newsList">
+        <div class="loading-row"><span class="spinner"></span> Loading news...</div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ═══════════════════════════════════════ ADD POSITION MODAL ═══════════════════════════════════════ -->
+  <div class="modal-overlay" id="addPositionModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Add Position</h3>
+        <button class="btn-icon modal-close" data-modal="addPositionModal">✕</button>
+      </div>
+      <div class="modal-body">
         <div class="form-group">
-          <label>Amount (how many coins)</label>
-          <input type="number" id="newAmount" placeholder="0.5" class="form-input" min="0" step="any" />
-        </div>
-        <div class="form-group">
-          <label>Avg Buy Price (USDT)</label>
-          <input type="number" id="newAvgCost" placeholder="0.00" class="form-input" min="0" step="any" />
-        </div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary modal-close" data-modal="addPositionModal">Cancel</button>
-      <button class="btn-primary" id="confirmAddPosition">Add Position</button>
-    </div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════ SETTINGS MODAL ═══════════════════════════════════════ -->
-<div class="modal-overlay" id="settingsModal">
-  <div class="modal modal-lg">
-    <div class="modal-header">
-      <h3>Settings</h3>
-      <button class="btn-icon modal-close" data-modal="settingsModal">✕</button>
-    </div>
-    <div class="modal-body">
-
-      <div class="settings-section">
-        <h4 class="settings-heading">Supabase Config</h4>
-        <p class="settings-desc">Connect to Supabase to store all your API keys securely in the cloud, encrypted with your password. Get a free account at <strong>supabase.com</strong>.</p>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Supabase URL</label>
-            <input type="text" id="settingsSbUrl" class="form-input" placeholder="https://xxxx.supabase.co" />
-          </div>
-          <div class="form-group">
-            <label>Supabase Anon Key</label>
-            <input type="password" id="settingsSbKey" class="form-input" placeholder="eyJ..." />
-          </div>
-        </div>
-        <span class="field-hint">Supabase → Project Settings → API → copy <strong>URL</strong> and <strong>anon public</strong> key. Safe to use — your data is always encrypted before being stored.</span>
-      </div>
-
-      <div class="settings-section">
-        <h4 class="settings-heading">API Keys</h4>
-        <div class="form-group">
-          <label>Claude API Key <span class="badge-required">Required for AI Advisor</span></label>
-          <input type="password" id="settingsClaudeKey" class="form-input" placeholder="sk-ant-..." />
-          <span class="field-hint">Get a free key at console.anthropic.com — used only in your browser</span>
-        </div>
-      </div>
-
-      <div class="settings-section">
-        <h4 class="settings-heading">Telegram Alerts <span class="badge-optional">Optional</span></h4>
-        <p class="settings-desc">Get a Telegram message every time a <strong>STRONG BUY</strong> or <strong>STRONG SELL</strong> appears — even when your phone screen is off.</p>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Bot Token</label>
-            <input type="password" id="settingsTgToken" class="form-input" placeholder="123456:ABCdef..." />
-            <span class="field-hint">From @BotFather on Telegram</span>
-          </div>
-          <div class="form-group">
-            <label>Chat ID</label>
-            <input type="text" id="settingsTgChatId" class="form-input" placeholder="123456789" />
-            <span class="field-hint">Message @userinfobot to get your ID</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="settings-section">
-        <h4 class="settings-heading">OKX Account Sync <span class="badge-optional">Optional</span></h4>
-        <p class="settings-desc">Sync your OKX balance and holdings, and place trades directly from the AI Advisor. Create an API key with <strong>Read + Trade</strong> permissions (no Withdraw) for full functionality.</p>
-        <div class="form-group">
-          <label>OKX API Key</label>
-          <input type="password" id="settingsOkxKey" class="form-input" placeholder="Your OKX API Key" />
+          <label>Coin Symbol</label>
+          <input type="text" id="newSymbol" placeholder="BTC  or  BTC-USDT" class="form-input" maxlength="15" />
+          <span class="field-hint">Type BTC, ETH, SOL — the app adds -USDT automatically</span>
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label>OKX Secret Key</label>
-            <input type="password" id="settingsOkxSecret" class="form-input" placeholder="Your OKX Secret Key" />
+            <label>Amount (how many coins)</label>
+            <input type="number" id="newAmount" placeholder="0.5" class="form-input" min="0" step="any" />
           </div>
           <div class="form-group">
-            <label>OKX Passphrase</label>
-            <input type="password" id="settingsOkxPassphrase" class="form-input" placeholder="Passphrase you set on OKX" />
-          </div>
-        </div>
-        <span class="field-hint">OKX → Profile → API → Create API Key → set permissions to <strong>Read + Trade</strong> (leave Withdraw OFF)</span>
-      </div>
-
-      <div class="settings-section">
-        <h4 class="settings-heading">Cloud Security</h4>
-        <p class="settings-desc">Encrypt all your keys with a password and save them to Supabase. The app will ask for this password every time it loads.</p>
-        <div class="form-group">
-          <label>Cloud Password <span class="badge-required">Required to save</span></label>
-          <input type="password" id="settingsCloudPassword" class="form-input" placeholder="Choose a strong password" autocomplete="new-password" />
-          <span class="field-hint">⚠ If you forget this password your cloud keys cannot be recovered — keep it safe.</span>
-        </div>
-        <div class="settings-actions">
-          <button class="btn-primary" id="saveToCloudBtn">Save All to Cloud</button>
-        </div>
-      </div>
-
-      <div class="settings-section">
-        <h4 class="settings-heading">Trading Preferences</h4>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Risk Profile</label>
-            <select class="form-input" id="settingsRiskProfile">
-              <option value="conservative">Conservative — small, safe positions</option>
-              <option value="moderate" selected>Moderate — balanced risk/reward</option>
-              <option value="aggressive">Aggressive — high risk, high reward</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Trading Capital (USDT)</label>
-            <input type="number" id="settingsTradingCapital" class="form-input" placeholder="e.g. 500" min="0" step="any" />
-            <span class="field-hint">Your total USDT budget for trading — used by AI to calculate how much to buy per trade</span>
-          </div>
-          <div class="form-group">
-            <label>Auto-Refresh Interval</label>
-            <select class="form-input" id="settingsRefreshInterval">
-              <option value="30000">30 seconds</option>
-              <option value="60000" selected>1 minute</option>
-              <option value="300000">5 minutes</option>
-              <option value="0">Manual only</option>
-            </select>
+            <label>Avg Buy Price (USDT)</label>
+            <input type="number" id="newAvgCost" placeholder="0.00" class="form-input" min="0" step="any" />
           </div>
         </div>
       </div>
-
-      <div class="settings-section">
-        <h4 class="settings-heading">Data</h4>
-        <div class="settings-actions">
-          <button class="btn-secondary" id="exportDataBtn">Export Portfolio JSON</button>
-          <button class="btn-secondary" id="importDataBtn">Import Portfolio JSON</button>
-          <button class="btn-danger" id="clearDataBtn">Reset All Data</button>
-        </div>
-        <input type="file" id="importFileInput" accept=".json" style="display:none;" />
+      <div class="modal-footer">
+        <button class="btn-secondary modal-close" data-modal="addPositionModal">Cancel</button>
+        <button class="btn-primary" id="confirmAddPosition">Add Position</button>
       </div>
-
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary modal-close" data-modal="settingsModal">Cancel</button>
-      <button class="btn-primary" id="saveSettingsBtn">Save Settings</button>
     </div>
   </div>
-</div>
 
-<!-- ═══════════════════════════════════════ TRADE CONFIRM MODAL ═══════════════════════════════════════ -->
-<div class="modal-overlay" id="tradeConfirmModal">
-  <div class="modal" style="max-width:440px;">
-    <div class="modal-header">
-      <h3 id="tradeConfirmTitle">Confirm Trade</h3>
-      <button class="btn-icon modal-close" data-modal="tradeConfirmModal">✕</button>
-    </div>
-    <div class="modal-body">
-      <div id="tradeConfirmDetails"></div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn-secondary modal-close" data-modal="tradeConfirmModal">✕ Cancel</button>
-      <button class="btn-primary" id="tradeConfirmBtn" style="background:var(--green);border-color:var(--green);">⚡ Confirm Trade</button>
+  <!-- ═══════════════════════════════════════ SETTINGS MODAL ═══════════════════════════════════════ -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3>Settings</h3>
+        <button class="btn-icon modal-close" data-modal="settingsModal">✕</button>
+      </div>
+      <div class="modal-body">
+
+        <div class="settings-section">
+          <h4 class="settings-heading">Supabase Config</h4>
+          <p class="settings-desc">Connect to Supabase to store all your API keys securely in the cloud, encrypted with
+            your password. Get a free account at <strong>supabase.com</strong>.</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Supabase URL</label>
+              <input type="text" id="settingsSbUrl" class="form-input" placeholder="https://xxxx.supabase.co" />
+            </div>
+            <div class="form-group">
+              <label>Supabase Anon Key</label>
+              <input type="password" id="settingsSbKey" class="form-input" placeholder="eyJ..." />
+            </div>
+          </div>
+          <span class="field-hint">Supabase → Project Settings → API → copy <strong>URL</strong> and <strong>anon
+              public</strong> key. Safe to use — your data is always encrypted before being stored.</span>
+        </div>
+
+        <div class="settings-section">
+          <h4 class="settings-heading">API Keys</h4>
+          <div class="form-group">
+            <label>Claude API Key <span class="badge-required">Required for AI Advisor</span></label>
+            <input type="password" id="settingsClaudeKey" class="form-input" placeholder="sk-ant-..." />
+            <span class="field-hint">Get a free key at console.anthropic.com — used only in your browser</span>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h4 class="settings-heading">Telegram Alerts <span class="badge-optional">Optional</span></h4>
+          <p class="settings-desc">Get a Telegram message every time a <strong>STRONG BUY</strong> or <strong>STRONG
+              SELL</strong> appears — even when your phone screen is off.</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Bot Token</label>
+              <input type="password" id="settingsTgToken" class="form-input" placeholder="123456:ABCdef..." />
+              <span class="field-hint">From @BotFather on Telegram</span>
+            </div>
+            <div class="form-group">
+              <label>Chat ID</label>
+              <input type="text" id="settingsTgChatId" class="form-input" placeholder="123456789" />
+              <span class="field-hint">Message @userinfobot to get your ID</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h4 class="settings-heading">OKX Account Sync <span class="badge-optional">Optional</span></h4>
+          <p class="settings-desc">Sync your OKX balance and holdings, and place trades directly from the AI Advisor.
+            Create an API key with <strong>Read + Trade</strong> permissions (no Withdraw) for full functionality.</p>
+          <div class="form-group">
+            <label>OKX API Key</label>
+            <input type="password" id="settingsOkxKey" class="form-input" placeholder="Your OKX API Key" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>OKX Secret Key</label>
+              <input type="password" id="settingsOkxSecret" class="form-input" placeholder="Your OKX Secret Key" />
+            </div>
+            <div class="form-group">
+              <label>OKX Passphrase</label>
+              <input type="password" id="settingsOkxPassphrase" class="form-input"
+                placeholder="Passphrase you set on OKX" />
+            </div>
+          </div>
+          <span class="field-hint">OKX → Profile → API → Create API Key → set permissions to <strong>Read +
+              Trade</strong> (leave Withdraw OFF)</span>
+        </div>
+
+        <div class="settings-section">
+          <h4 class="settings-heading">Cloud Security</h4>
+          <p class="settings-desc">Encrypt all your keys with a password and save them to Supabase. The app will ask for
+            this password every time it loads.</p>
+          <div class="form-group">
+            <label>Cloud Password <span class="badge-required">Required to save</span></label>
+            <input type="password" id="settingsCloudPassword" class="form-input" placeholder="Choose a strong password"
+              autocomplete="new-password" />
+            <span class="field-hint">⚠ If you forget this password your cloud keys cannot be recovered — keep it
+              safe.</span>
+          </div>
+          <div class="settings-actions">
+            <button class="btn-primary" id="saveToCloudBtn">Save All to Cloud</button>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h4 class="settings-heading">Trading Preferences</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Risk Profile</label>
+              <select class="form-input" id="settingsRiskProfile">
+                <option value="conservative">Conservative — small, safe positions</option>
+                <option value="moderate" selected>Moderate — balanced risk/reward</option>
+                <option value="aggressive">Aggressive — high risk, high reward</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Trading Capital (USDT)</label>
+              <input type="number" id="settingsTradingCapital" class="form-input" placeholder="e.g. 500" min="0"
+                step="any" />
+              <span class="field-hint">Your total USDT budget for trading — used by AI to calculate how much to buy per
+                trade</span>
+            </div>
+            <div class="form-group">
+              <label>Auto-Refresh Interval</label>
+              <select class="form-input" id="settingsRefreshInterval">
+                <option value="30000">30 seconds</option>
+                <option value="60000" selected>1 minute</option>
+                <option value="300000">5 minutes</option>
+                <option value="0">Manual only</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h4 class="settings-heading">Data</h4>
+          <div class="settings-actions">
+            <button class="btn-secondary" id="exportDataBtn">Export Portfolio JSON</button>
+            <button class="btn-secondary" id="importDataBtn">Import Portfolio JSON</button>
+            <button class="btn-danger" id="clearDataBtn">Reset All Data</button>
+          </div>
+          <input type="file" id="importFileInput" accept=".json" style="display:none;" />
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary modal-close" data-modal="settingsModal">Cancel</button>
+        <button class="btn-primary" id="saveSettingsBtn">Save Settings</button>
+      </div>
     </div>
   </div>
-</div>
 
-<!-- ═══════════════════════════════════════ TOAST ═══════════════════════════════════════ -->
-<div class="toast-container" id="toastContainer"></div>
+  <!-- ═══════════════════════════════════════ TRADE CONFIRM MODAL ═══════════════════════════════════════ -->
+  <div class="modal-overlay" id="tradeConfirmModal">
+    <div class="modal" style="max-width:440px;">
+      <div class="modal-header">
+        <h3 id="tradeConfirmTitle">Confirm Trade</h3>
+        <button class="btn-icon modal-close" data-modal="tradeConfirmModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="tradeConfirmDetails"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary modal-close" data-modal="tradeConfirmModal">✕ Cancel</button>
+        <button class="btn-primary" id="tradeConfirmBtn" style="background:var(--green);border-color:var(--green);">⚡
+          Confirm Trade</button>
+      </div>
+    </div>
+  </div>
 
-<script src="config.js"></script>
-<script src="app.js"></script>
+  <!-- ═══════════════════════════════════════ TOAST ═══════════════════════════════════════ -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
 </body>
+
 </html>
