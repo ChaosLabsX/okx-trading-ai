@@ -1,11 +1,14 @@
 """
 TradingAI — Background Signal Checker (24/7 mode)
 Runs every 5 minutes on GitHub Actions.
-Each run loops internally for ~4 minutes (one scan every 60 s) to give near-real-time coverage.
-Sends Telegram alerts when any signal changes: BUY, SELL, STRONG BUY, STRONG SELL.
+Each run loops internally for ~4 minutes (one scan every 60 s).
 
-SELL / STRONG SELL alerts are automatically filtered to coins you actually hold.
-Your portfolio is read live from Supabase before every scan — no manual configuration needed.
+Alert rules:
+- BUY and STRONG BUY are the same zone — oscillating between them produces NO extra alert.
+- SELL and STRONG SELL are the same zone — same rule.
+- A new alert fires only when the zone CHANGES (entering BUY zone, flipping to SELL, etc.).
+- 2-minute safety cooldown prevents false alerts from rapid back-and-forth oscillation.
+- SELL/STRONG SELL alerts are filtered to coins you actually hold (read live from Supabase).
 """
 
 import json
@@ -26,25 +29,35 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID   = os.environ.get('TELEGRAM_CHAT_ID', '')
 CACHE_FILE         = 'signal_cache.json'
 
-# Supabase — reads your live portfolio so SELL alerts match what you actually hold
 SUPABASE_URL = 'https://trbfhtopkcupzeqmrnom.supabase.co'
 SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRyYmZodG9wa2N1cHplcW1ybm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExNDI1NDYsImV4cCI6MjA5NjcxODU0Nn0.6XKKIJIotc4lRVL_akt7P63woJiB8NyOVaUotQmmpHQ'
 
-LOOP_DURATION  = 4 * 60   # seconds — how long each Actions run stays active
-CHECK_INTERVAL = 60        # seconds between each full scan
+LOOP_DURATION  = 4 * 60   # seconds per GitHub Actions run
+CHECK_INTERVAL = 60        # seconds between scans
 
-ALERT_LABELS = {'STRONG BUY', 'BUY', 'SELL', 'STRONG SELL'}
 SELL_LABELS  = {'SELL', 'STRONG SELL'}
 EMOJI        = {'STRONG BUY': '🟢', 'BUY': '🔵', 'SELL': '🟠', 'STRONG SELL': '🔴'}
+
+# Minimum seconds between any two alerts for the same coin.
+# A genuine zone flip (BUY→SELL) within this window is suppressed — if a signal
+# flips zones twice in 2 minutes it is noise, not a real signal.
+FLIP_COOLDOWN = 2 * 60
+
+
+# ── Zone helpers ──────────────────────────────────────────────────────────────
+def direction_zone(label):
+    """Collapse fine-grained labels into broad zones for dedup purposes."""
+    if label in ('STRONG BUY', 'BUY'):   return 'up'
+    if label in ('STRONG SELL', 'SELL'): return 'down'
+    return 'neutral'
 
 
 # ── Portfolio from Supabase ───────────────────────────────────────────────────
 def fetch_portfolio_symbols():
     """
-    Returns the set of OKX symbols currently in your portfolio (e.g. {'BTC-USDT', 'ETH-USDT'}).
-    The browser app pushes this to Supabase automatically whenever your portfolio changes.
-    Returns an empty set if Supabase is unreachable — in that case SELL alerts are skipped
-    to avoid spamming coins you don't own.
+    Returns the set of OKX symbols in your portfolio (e.g. {'BTC-USDT', 'ETH-USDT'}).
+    The browser app pushes this to Supabase automatically on every portfolio change.
+    Returns empty set if Supabase is unreachable — SELL alerts are skipped in that case.
     """
     try:
         r = requests.get(
@@ -54,34 +67,38 @@ def fetch_portfolio_symbols():
         )
         if r.status_code == 200:
             data = r.json()
-            raw = (data[0].get('portfolio_symbols') or '') if data else ''
-            symbols = {s.strip() for s in raw.split(',') if s.strip()}
-            if symbols:
-                print(f'  Portfolio (from Supabase): {", ".join(sorted(symbols))}')
+            raw  = (data[0].get('portfolio_symbols') or '') if data else ''
+            syms = {s.strip() for s in raw.split(',') if s.strip()}
+            if syms:
+                print(f'  Portfolio: {", ".join(sorted(syms))}')
             else:
                 print('  Portfolio: empty — SELL alerts will be skipped')
-            return symbols
+            return syms
     except Exception as e:
-        print(f'  Portfolio fetch failed: {e} — SELL alerts skipped this scan')
+        print(f'  Portfolio fetch failed: {e} — SELL alerts skipped')
     return set()
 
 
 # ── OKX data fetching ─────────────────────────────────────────────────────────
 def fetch_candles(symbol, bar='1H', limit=100):
     url = f'{OKX_BASE}/api/v5/market/candles?instId={symbol}&bar={bar}&limit={limit}'
-    r = requests.get(url, timeout=15)
+    r   = requests.get(url, timeout=15)
     r.raise_for_status()
-    d = r.json()
+    d   = r.json()
     if d['code'] != '0' or not d.get('data'):
-        return []
-    return [float(c[4]) for c in reversed(d['data'])]  # close prices, chronological
+        return None
+    rows = list(reversed(d['data']))
+    return {
+        'closes':  [float(c[4]) for c in rows],
+        'volumes': [float(c[5]) for c in rows],
+    }
 
 
 def fetch_ticker(symbol):
     url = f'{OKX_BASE}/api/v5/market/ticker?instId={symbol}'
-    r = requests.get(url, timeout=15)
+    r   = requests.get(url, timeout=15)
     r.raise_for_status()
-    d = r.json()
+    d   = r.json()
     if d['code'] != '0' or not d.get('data'):
         return None
     t = d['data'][0]
@@ -89,17 +106,15 @@ def fetch_ticker(symbol):
     return {'price': last, 'change_pct': (last - open24) / open24 * 100 if open24 else 0}
 
 
-# ── Technical indicators (identical to app.js) ────────────────────────────────
+# ── Technical indicators ──────────────────────────────────────────────────────
 def calc_rsi(closes, period=14):
     if len(closes) < period + 1:
         return None
     avg_gain = avg_loss = 0.0
     for i in range(1, period + 1):
         d = closes[i] - closes[i - 1]
-        if d > 0:
-            avg_gain += d
-        else:
-            avg_loss -= d
+        if d > 0: avg_gain += d
+        else:     avg_loss -= d
     avg_gain /= period
     avg_loss /= period
     for i in range(period + 1, len(closes)):
@@ -122,7 +137,7 @@ def calc_macd(closes):
     ema12, ema26 = ema_array(closes, 12), ema_array(closes, 26)
     ml = [a - b for a, b in zip(ema12[25:], ema26[25:])]
     sl = ema_array(ml, 9)
-    n = len(ml) - 1
+    n  = len(ml) - 1
     return {
         'trend':         'bullish' if ml[n] > sl[n] else 'bearish',
         'bullish_cross': n > 0 and ml[n - 1] < sl[n - 1] and ml[n] >= sl[n],
@@ -140,8 +155,17 @@ def calc_bb(closes, period=20):
     return {'pct_b': (closes[-1] - lower) / (upper - lower) if upper > lower else 0.5}
 
 
-def generate_signal(rsi, macd, bb):
+def calc_vol_ratio(volumes):
+    """Current bar volume relative to the prior 20-bar average."""
+    if len(volumes) < 21:
+        return None
+    avg = sum(volumes[-21:-1]) / 20
+    return volumes[-1] / avg if avg > 0 else None
+
+
+def generate_signal(rsi, macd, bb, vol_ratio=None):
     score, reasons = 0.0, []
+
     if rsi is not None:
         if   rsi <= 20: score += 3; reasons.append(f'RSI {rsi:.0f} — extremely oversold')
         elif rsi <= 30: score += 2; reasons.append(f'RSI {rsi:.0f} — oversold')
@@ -149,16 +173,23 @@ def generate_signal(rsi, macd, bb):
         elif rsi >= 80: score -= 3; reasons.append(f'RSI {rsi:.0f} — extremely overbought')
         elif rsi >= 70: score -= 2; reasons.append(f'RSI {rsi:.0f} — overbought')
         elif rsi >= 60: score -= 1; reasons.append(f'RSI {rsi:.0f} — above neutral')
+
     if macd is not None:
         if   macd['bullish_cross']: score += 2; reasons.append('MACD bullish crossover')
         elif macd['bearish_cross']: score -= 2; reasons.append('MACD bearish crossover')
         elif macd['trend'] == 'bullish': score += 0.5
         else:                            score -= 0.5
+
     if bb is not None:
         if   bb['pct_b'] <= 0.05: score += 2; reasons.append('Price at lower Bollinger Band')
         elif bb['pct_b'] <= 0.20: score += 1; reasons.append('Price near lower BB')
         elif bb['pct_b'] >= 0.95: score -= 2; reasons.append('Price at upper Bollinger Band')
         elif bb['pct_b'] >= 0.80: score -= 1; reasons.append('Price near upper BB')
+
+    if vol_ratio is not None:
+        if   vol_ratio >= 2.0: score += 1; reasons.append(f'Volume {vol_ratio:.1f}× avg — strong buying interest')
+        elif vol_ratio >= 1.5:             reasons.append(f'Volume {vol_ratio:.1f}× avg — elevated')
+
     label = ('STRONG BUY'  if score >= 4  else
              'BUY'         if score >= 2  else
              'STRONG SELL' if score <= -4 else
@@ -187,10 +218,13 @@ def format_alert(symbol, sig, ticker):
     coin    = symbol.replace('-USDT', '')
     emoji   = EMOJI.get(sig['label'], '⚪')
     reasons = ' · '.join(sig['reasons']) if sig['reasons'] else 'Multiple indicators aligned'
+    ts      = time.strftime('%H:%M UTC')
+    score   = sig['score']
     return (
-        f"{emoji} <b>{sig['label']}: {coin}</b>\n"
+        f"{emoji} <b>{sig['label']}: {coin}</b>  [{score:+.1f}]\n"
         f"💰 {fmt_price(ticker['price'])} ({ticker['change_pct']:+.2f}% 24h)\n"
-        f"📊 {reasons}"
+        f"📊 {reasons}\n"
+        f"⏰ {ts}"
     )
 
 
@@ -198,7 +232,20 @@ def load_cache():
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE) as f:
-                return json.load(f)
+                data = json.load(f)
+            # Migrate old format {symbol: label_str} → {symbol: dict}
+            result = {}
+            for k, v in data.items():
+                if isinstance(v, str):
+                    old_zone = direction_zone(v)
+                    result[k] = {
+                        'label':        v,
+                        'alerted_zone': old_zone,
+                        'alerted_at':   time.time() - FLIP_COOLDOWN,
+                    }
+                else:
+                    result[k] = v
+            return result
         except Exception:
             pass
     return {}
@@ -210,42 +257,61 @@ def save_cache(data):
 
 
 # ── Single scan ───────────────────────────────────────────────────────────────
-def run_scan(last_signals, portfolio_symbols):
-    """
-    Check all symbols. Alert when a signal changes. Mutates last_signals in place.
-    portfolio_symbols: set of symbols the user holds — SELL alerts only fire for these.
-                       If empty, SELL alerts are skipped (safer than spamming unowned coins).
-    """
+def run_scan(cache, portfolio_symbols):
+    now = time.time()
     for symbol in SYMBOLS:
         try:
-            closes = fetch_candles(symbol)
-            ticker = fetch_ticker(symbol)
-            if not closes or not ticker:
+            candle_data = fetch_candles(symbol)
+            ticker      = fetch_ticker(symbol)
+            if not candle_data or not ticker:
                 print(f'  {symbol}: no data')
                 continue
 
-            sig   = generate_signal(calc_rsi(closes), calc_macd(closes), calc_bb(closes))
+            closes    = candle_data['closes']
+            volumes   = candle_data['volumes']
+            vol_ratio = calc_vol_ratio(volumes)
+
+            sig   = generate_signal(calc_rsi(closes), calc_macd(closes), calc_bb(closes), vol_ratio)
             label = sig['label']
-            prev  = last_signals.get(symbol)
+            zone  = direction_zone(label)
 
-            print(f'  {symbol}: {label} (prev: {prev or "—"})')
+            prev         = cache.get(symbol, {})
+            alerted_zone = prev.get('alerted_zone')
+            alerted_at   = prev.get('alerted_at', 0)
 
-            # Always update tracked signal so transitions are detected correctly
-            last_signals[symbol] = label
+            # Always persist latest label
+            cache[symbol] = {**prev, 'label': label, 'zone': zone}
 
-            # Only alert on alertable signals that changed
-            if label not in ALERT_LABELS or label == prev:
+            print(f'  {symbol}: {label} (zone={zone}, last_alerted={alerted_zone or "—"})')
+
+            # HOLD — never alert
+            if zone == 'neutral':
                 time.sleep(0.3)
                 continue
 
-            # SELL filter: only alert if the user holds this coin
-            if label in SELL_LABELS:
-                if symbol not in portfolio_symbols:
-                    print(f'  {symbol}: SELL skipped — not in your portfolio')
-                    time.sleep(0.3)
-                    continue
+            # SELL filter — skip if coin not in portfolio
+            if label in SELL_LABELS and symbol not in portfolio_symbols:
+                print(f'  {symbol}: SELL skipped — not in portfolio')
+                time.sleep(0.3)
+                continue
 
+            # Same zone as last alert → still BUY or still SELL, no new alert needed.
+            # This suppresses BUY↔STRONG BUY oscillation entirely.
+            if zone == alerted_zone:
+                print(f'  {symbol}: still in {zone} zone — suppressed')
+                time.sleep(0.3)
+                continue
+
+            # Zone changed but flipped back too quickly — rapid oscillation guard
+            if now - alerted_at < FLIP_COOLDOWN:
+                secs_left = int(FLIP_COOLDOWN - (now - alerted_at))
+                print(f'  {symbol}: zone flip within cooldown ({secs_left}s left) — suppressed')
+                time.sleep(0.3)
+                continue
+
+            # New zone entry — send alert
             send_telegram(format_alert(symbol, sig, ticker))
+            cache[symbol] = {**cache[symbol], 'alerted_zone': zone, 'alerted_at': now}
             time.sleep(0.3)
 
         except Exception as e:
@@ -254,20 +320,18 @@ def run_scan(last_signals, portfolio_symbols):
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 def main():
-    last_signals = load_cache()
-    start        = time.time()
-    scan_num     = 0
+    cache    = load_cache()
+    start    = time.time()
+    scan_num = 0
 
     while True:
         scan_num += 1
         elapsed = time.time() - start
         print(f'\n=== Scan #{scan_num} | +{elapsed:.0f}s | {time.strftime("%H:%M:%S UTC")} ===')
 
-        # Fetch live portfolio before every scan — picks up any changes instantly
         portfolio = fetch_portfolio_symbols()
-
-        run_scan(last_signals, portfolio)
-        save_cache(last_signals)   # persist after every scan
+        run_scan(cache, portfolio)
+        save_cache(cache)
 
         elapsed   = time.time() - start
         remaining = LOOP_DURATION - elapsed

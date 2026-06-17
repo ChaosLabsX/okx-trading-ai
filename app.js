@@ -498,19 +498,30 @@ async function syncPortfolioFromOKX() {
     const details = await fetchOKXBalance();
     let added = 0, updated = 0, usdtBal = 0;
 
+    // Build a ccy→availBal map upfront — used later to remove stale entries.
+    // availBal matches what the OKX app displays (excludes amounts frozen in open orders).
+    // cashBal includes frozen amounts and can diverge from what the user sees on OKX.
+    const okxBalMap = {};
     for (const d of details) {
-      const bal = parseFloat(d.cashBal ?? d.eq ?? '0');
-      if (bal <= 0) continue;
+      const bal = parseFloat(d.availBal || d.cashBal || d.eq || '0');
+      okxBalMap[d.ccy] = isNaN(bal) ? 0 : bal;
+    }
 
+    for (const d of details) {
       if (d.ccy === 'USDT') {
-        usdtBal = bal;
-        state.usdtBalance = bal;
+        // Total USDT — cashBal is correct here (full wallet value)
+        usdtBal = parseFloat(d.cashBal ?? d.eq ?? '0');
+        state.usdtBalance = usdtBal;
         continue;
       }
 
+      // availBal: available balance, excludes amounts frozen in open orders.
+      // This is the value the OKX app displays — use it so numbers match.
+      const bal = parseFloat(d.availBal || d.cashBal || d.eq || '0');
+      if (!bal || bal <= 0) continue;
+
       const symbol = d.ccy + '-USDT';
 
-      // Fetch price if not already in state (to filter out dust < $1)
       if (!state.tickers[symbol]) await fetchSymbolData(symbol);
       const price = state.tickers[symbol]?.price ?? 0;
       if (price > 0 && bal * price < 1) continue; // skip dust
@@ -520,7 +531,6 @@ async function syncPortfolioFromOKX() {
         existing.amount = bal;
         updated++;
       } else {
-        // avgBuyPrice defaults to current price; user can update manually
         state.portfolio.push({ symbol, amount: bal, avgBuyPrice: price || 0 });
         added++;
       }
@@ -531,9 +541,21 @@ async function syncPortfolioFromOKX() {
       }
     }
 
+    // Remove stale entries: coins OKX now shows as zero or dust
+    // (e.g. a coin was fully sold, leaving only rounding dust like 0.00000074).
+    // Only removes entries that appear in the OKX response — manually-added coins
+    // that OKX doesn't return are left untouched.
+    state.portfolio = state.portfolio.filter(p => {
+      const ccy = p.symbol.replace('-USDT', '');
+      if (!(ccy in okxBalMap)) return true; // not in OKX response — keep
+      const okxBal = okxBalMap[ccy];
+      const price  = state.tickers[p.symbol]?.price ?? 0;
+      if (okxBal <= 0 || (price > 0 && okxBal * price < 1)) return false; // dust/zero — remove
+      return true;
+    });
+
     savePortfolio();
 
-    // Show free USDT cash in summary bar and persist it
     if (usdtBal > 0) {
       showUsdtBalance(usdtBal);
       LS.set('lastUsdtBalance', usdtBal);
@@ -543,7 +565,7 @@ async function syncPortfolioFromOKX() {
     renderPortfolio();
     renderScanner();
 
-    toast(`OKX synced: ${added} new position${added !== 1 ? 's' : ''}, ${updated} updated`, 'success');
+    toast(`OKX synced: ${added} new, ${updated} updated`, 'success');
     if (added > 0) toast('Tip: new positions use current price as avg buy price — update if needed', 'info');
   } catch (err) {
     toast('OKX sync failed: ' + err.message, 'error');
