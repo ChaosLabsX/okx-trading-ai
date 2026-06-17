@@ -498,27 +498,36 @@ async function syncPortfolioFromOKX() {
     const details = await fetchOKXBalance();
     let added = 0, updated = 0, usdtBal = 0;
 
-    // Build a ccy→availBal map upfront — used later to remove stale entries.
-    // availBal matches what the OKX app displays (excludes amounts frozen in open orders).
-    // cashBal includes frozen amounts and can diverge from what the user sees on OKX.
-    const okxBalMap = {};
+    // Parse a coin balance from OKX account details.
+    // Prefer availBal (what OKX app shows) when positive; fall back to cashBal (total
+    // including frozen-in-orders) when availBal is missing or zero. This handles the case
+    // where all coins are locked in an open order — the coin still belongs to the user.
+    // NOTE: never use JS `||` here — `"0" || fallback` returns `"0"` (string "0" is truthy).
+    function coinBal(d) {
+      const avail = parseFloat(d.availBal ?? 'NaN');
+      if (avail > 0) return avail;
+      const cash = parseFloat(d.cashBal ?? 'NaN');
+      if (cash > 0) return cash;
+      return parseFloat(d.eq ?? '0') || 0;
+    }
+
+    // Build a ccy→cashBal map for stale-entry cleanup.
+    // Use cashBal (not availBal) so coins locked in open orders are NOT removed.
+    const okxTotalMap = {};
     for (const d of details) {
-      const bal = parseFloat(d.availBal || d.cashBal || d.eq || '0');
-      okxBalMap[d.ccy] = isNaN(bal) ? 0 : bal;
+      const cash = parseFloat(d.cashBal ?? d.eq ?? '0');
+      okxTotalMap[d.ccy] = isNaN(cash) ? 0 : cash;
     }
 
     for (const d of details) {
       if (d.ccy === 'USDT') {
-        // Total USDT — cashBal is correct here (full wallet value)
         usdtBal = parseFloat(d.cashBal ?? d.eq ?? '0');
         state.usdtBalance = usdtBal;
         continue;
       }
 
-      // availBal: available balance, excludes amounts frozen in open orders.
-      // This is the value the OKX app displays — use it so numbers match.
-      const bal = parseFloat(d.availBal || d.cashBal || d.eq || '0');
-      if (!bal || bal <= 0) continue;
+      const bal = coinBal(d);
+      if (bal <= 0) continue;
 
       const symbol = d.ccy + '-USDT';
 
@@ -541,16 +550,14 @@ async function syncPortfolioFromOKX() {
       }
     }
 
-    // Remove stale entries: coins OKX now shows as zero or dust
-    // (e.g. a coin was fully sold, leaving only rounding dust like 0.00000074).
-    // Only removes entries that appear in the OKX response — manually-added coins
-    // that OKX doesn't return are left untouched.
+    // Remove stale entries: coins whose total OKX balance is now zero or dust.
+    // Uses cashBal (total including frozen) so a coin locked in an open order is kept.
     state.portfolio = state.portfolio.filter(p => {
       const ccy = p.symbol.replace('-USDT', '');
-      if (!(ccy in okxBalMap)) return true; // not in OKX response — keep
-      const okxBal = okxBalMap[ccy];
-      const price  = state.tickers[p.symbol]?.price ?? 0;
-      if (okxBal <= 0 || (price > 0 && okxBal * price < 1)) return false; // dust/zero — remove
+      if (!(ccy in okxTotalMap)) return true; // not in OKX response — keep (manual entry)
+      const total = okxTotalMap[ccy];
+      const price = state.tickers[p.symbol]?.price ?? 0;
+      if (total <= 0 || (price > 0 && total * price < 1)) return false; // truly zero/dust — remove
       return true;
     });
 
@@ -1372,14 +1379,18 @@ async function executeTrade(action, coinAmt) {
     await okxSignedPost('/api/v5/trade/order', orderBody);
     toast(`${action.side.toUpperCase()} order placed`, 'success');
 
-    // 2. TP/SL algo order (OCO) placed on the opposite side
+    // 2. TP/SL algo order placed on the opposite side.
+    // Apply 0.15% fee haircut so the algo size never exceeds actual received coins.
     if (action.tp && action.sl && szCoin > 0) {
-      const algoBody = {
-        instId:          action.symbol,
-        tdMode:          'cash',
-        side:            isBuy ? 'sell' : 'buy',
+      const algoSz   = (szCoin * 0.9985).toFixed(8);
+      const algoSide = isBuy ? 'sell' : 'buy';
+      const baseAlgo = { instId: action.symbol, tdMode: 'cash', side: algoSide };
+
+      // Primary: OCO (TP + SL in one atomic order — one cancels the other)
+      const ocoBody = {
+        ...baseAlgo,
         ordType:         'oco',
-        sz:              szCoin.toFixed(8),
+        sz:              algoSz,
         tpTriggerPx:     String(action.tp),
         tpOrdPx:         '-1',
         tpTriggerPxType: 'last',
@@ -1388,10 +1399,27 @@ async function executeTrade(action, coinAmt) {
         slTriggerPxType: 'last',
       };
       try {
-        await okxSignedPost('/api/v5/trade/order-algo', algoBody);
-        toast('TP/SL orders set automatically', 'success');
+        await okxSignedPost('/api/v5/trade/order-algo', ocoBody);
+        toast('TP/SL set (OCO order active)', 'success');
       } catch (e) {
-        toast('Trade placed — set TP/SL manually on OKX (' + e.message + ')', 'info');
+        // OCO not supported on all spot account modes — fall back to two conditional orders
+        console.warn('[TP/SL] OCO failed, trying separate conditional orders:', e.message);
+        try {
+          await Promise.all([
+            okxSignedPost('/api/v5/trade/order-algo', {
+              ...baseAlgo, ordType: 'conditional', sz: algoSz,
+              tpTriggerPx: String(action.tp), tpOrdPx: '-1', tpTriggerPxType: 'last',
+            }),
+            okxSignedPost('/api/v5/trade/order-algo', {
+              ...baseAlgo, ordType: 'conditional', sz: algoSz,
+              slTriggerPx: String(action.sl), slOrdPx: '-1', slTriggerPxType: 'last',
+            }),
+          ]);
+          toast('TP/SL set (two conditional orders — cancel one manually after the other triggers)', 'success', 6000);
+        } catch (e2) {
+          console.error('[TP/SL] Both OCO and conditional orders failed:', e2.message);
+          toast('TP/SL could not be set automatically — set it manually on OKX. Error: ' + e2.message, 'error', 8000);
+        }
       }
     }
 
@@ -1602,10 +1630,10 @@ function escHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function toast(msg, type = 'info') {
+function toast(msg, type = 'info', duration = 3500) {
   const div = Object.assign(document.createElement('div'), { className: `toast ${type}`, textContent: msg });
   el('toastContainer').appendChild(div);
-  setTimeout(() => div.remove(), 3500);
+  setTimeout(() => div.remove(), duration);
 }
 
 // ═══════════════════════════════════════════════════════════
