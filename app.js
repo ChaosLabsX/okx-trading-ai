@@ -74,19 +74,19 @@ function saveSettings() {
 
 function populateSettingsForm() {
   const sbCfg = getSupabaseCfg();
-  const keys  = LS.get('apiKeys', {});
+  const keys = LS.get('apiKeys', {});
   const prefs = LS.get('prefs', {});
   el('settingsSbUrl').value = sbCfg.url;
   el('settingsSbKey').value = sbCfg.key;
-  if (keys.claude)        el('settingsClaudeKey').value       = keys.claude;
-  if (keys.okxKey)        el('settingsOkxKey').value          = keys.okxKey;
-  if (keys.okxSecret)     el('settingsOkxSecret').value       = keys.okxSecret;
-  if (keys.okxPassphrase) el('settingsOkxPassphrase').value   = keys.okxPassphrase;
-  if (keys.tgToken)       el('settingsTgToken').value            = keys.tgToken;
-  if (keys.tgChatId)      el('settingsTgChatId').value           = keys.tgChatId;
-  if (prefs.riskProfile)     el('settingsRiskProfile').value     = prefs.riskProfile;
+  if (keys.claude) el('settingsClaudeKey').value = keys.claude;
+  if (keys.okxKey) el('settingsOkxKey').value = keys.okxKey;
+  if (keys.okxSecret) el('settingsOkxSecret').value = keys.okxSecret;
+  if (keys.okxPassphrase) el('settingsOkxPassphrase').value = keys.okxPassphrase;
+  if (keys.tgToken) el('settingsTgToken').value = keys.tgToken;
+  if (keys.tgChatId) el('settingsTgChatId').value = keys.tgChatId;
+  if (prefs.riskProfile) el('settingsRiskProfile').value = prefs.riskProfile;
   if (prefs.refreshInterval) el('settingsRefreshInterval').value = prefs.refreshInterval;
-  if (prefs.tradingCapital)  el('settingsTradingCapital').value  = prefs.tradingCapital;
+  if (prefs.tradingCapital) el('settingsTradingCapital').value = prefs.tradingCapital;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -159,7 +159,7 @@ async function fetchAllData() {
     await Promise.allSettled(symbols.slice(i, i + 4).map(fetchSymbolData));
   }
   // Fetch funding rates + open interest in background (non-blocking)
-  Promise.allSettled(symbols.map(fetchOKXDerivData)).catch(() => {});
+  Promise.allSettled(symbols.map(fetchOKXDerivData)).catch(() => { });
 }
 
 async function fetchOKXDerivData(symbol) {
@@ -176,7 +176,7 @@ async function fetchOKXDerivData(symbol) {
     if (frRes.status === 'fulfilled' && frRes.value.ok) {
       const d = await frRes.value.json();
       if (d.code === '0' && d.data?.[0]) {
-        deriv.fundingRate     = parseFloat(d.data[0].fundingRate);
+        deriv.fundingRate = parseFloat(d.data[0].fundingRate);
         deriv.nextFundingRate = parseFloat(d.data[0].nextFundingRate);
       }
     }
@@ -218,19 +218,19 @@ async function deriveKey(password, salt) {
 
 async function encryptJSON(obj, password, salt) {
   const key = await deriveKey(password, salt);
-  const iv  = crypto.getRandomValues(new Uint8Array(12));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
   const buf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(obj)));
   return {
     encrypted: btoa(String.fromCharCode(...new Uint8Array(buf))),
-    iv:        btoa(String.fromCharCode(...iv)),
+    iv: btoa(String.fromCharCode(...iv)),
   };
 }
 
 async function decryptJSON(encB64, ivB64, password, salt) {
-  const key       = await deriveKey(password, salt);
+  const key = await deriveKey(password, salt);
   const encrypted = Uint8Array.from(atob(encB64), c => c.charCodeAt(0));
-  const iv        = Uint8Array.from(atob(ivB64),  c => c.charCodeAt(0));
-  const buf       = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encrypted);
+  const iv = Uint8Array.from(atob(ivB64), c => c.charCodeAt(0));
+  const buf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encrypted);
   return JSON.parse(new TextDecoder().decode(buf));
 }
 
@@ -240,7 +240,7 @@ async function decryptJSON(encB64, ivB64, password, salt) {
 function getSupabaseCfg() {
   const stored = LS.get('supabaseCfg', {});
   return {
-    url: stored.url || CONFIG.SUPABASE_URL  || '',
+    url: stored.url || CONFIG.SUPABASE_URL || '',
     key: stored.key || CONFIG.SUPABASE_ANON_KEY || '',
   };
 }
@@ -252,9 +252,9 @@ function isSupabaseConfigured() {
 
 function sbHeaders(extra = {}) {
   return {
-    'apikey':        getSupabaseCfg().key,
+    'apikey': getSupabaseCfg().key,
     'Authorization': `Bearer ${getSupabaseCfg().key}`,
-    'Content-Type':  'application/json',
+    'Content-Type': 'application/json',
     ...extra,
   };
 }
@@ -267,13 +267,13 @@ async function saveToCloud(password) {
     tgToken: CONFIG.TELEGRAM_BOT_TOKEN, tgChatId: CONFIG.TELEGRAM_CHAT_ID,
     riskProfile: CONFIG.RISK_PROFILE, refreshInterval: String(CONFIG.AUTO_REFRESH_INTERVAL),
   };
-  const salt              = randomHex(16);
-  const password_hash     = await hashPassword(password, salt);
+  const salt = randomHex(16);
+  const password_hash = await hashPassword(password, salt);
   const { encrypted, iv } = await encryptJSON(payload, password, salt);
   const res = await fetch(`${getSupabaseCfg().url}/rest/v1/app_settings`, {
-    method:  'POST',
+    method: 'POST',
     headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
-    body:    JSON.stringify({ id: 'main', password_hash, encrypted_data: encrypted, iv, salt }),
+    body: JSON.stringify({ id: 'main', password_hash, encrypted_data: encrypted, iv, salt }),
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
@@ -289,7 +289,7 @@ async function loadFromCloud(password) {
   if (!res.ok) throw new Error(`Cannot reach Supabase (${res.status}) — check URL and Anon Key.`);
   const rows = await res.json();
   if (!rows.length) throw new Error('No cloud data found. Fill in your settings and click "Save All to Cloud" first.');
-  const row  = rows[0];
+  const row = rows[0];
   const hash = await hashPassword(password, row.salt);
   if (hash !== row.password_hash) throw new Error('Incorrect password.');
   return decryptJSON(row.encrypted_data, row.iv, password, row.salt);
@@ -300,7 +300,7 @@ async function loadFromCloud(password) {
 // ═══════════════════════════════════════════════════════════
 function setLockError(msg) {
   const e = el('lockError');
-  e.textContent   = msg;
+  e.textContent = msg;
   e.style.display = msg ? 'block' : 'none';
 }
 
@@ -309,20 +309,20 @@ async function handleUnlock() {
   if (!password) { setLockError('Enter your password.'); return; }
 
   const btn = el('lockUnlockBtn');
-  btn.disabled    = true;
+  btn.disabled = true;
   btn.textContent = 'Unlocking…';
   setLockError('');
 
   try {
     const data = await loadFromCloud(password);
 
-    if (data.claude)          CONFIG.CLAUDE_API_KEY        = data.claude;
-    if (data.okxKey)          CONFIG.OKX_API_KEY           = data.okxKey;
-    if (data.okxSecret)       CONFIG.OKX_SECRET_KEY        = data.okxSecret;
-    if (data.okxPassphrase)   CONFIG.OKX_PASSPHRASE        = data.okxPassphrase;
-    if (data.tgToken)         CONFIG.TELEGRAM_BOT_TOKEN    = data.tgToken;
-    if (data.tgChatId)        CONFIG.TELEGRAM_CHAT_ID      = data.tgChatId;
-    if (data.riskProfile)     CONFIG.RISK_PROFILE          = data.riskProfile;
+    if (data.claude) CONFIG.CLAUDE_API_KEY = data.claude;
+    if (data.okxKey) CONFIG.OKX_API_KEY = data.okxKey;
+    if (data.okxSecret) CONFIG.OKX_SECRET_KEY = data.okxSecret;
+    if (data.okxPassphrase) CONFIG.OKX_PASSPHRASE = data.okxPassphrase;
+    if (data.tgToken) CONFIG.TELEGRAM_BOT_TOKEN = data.tgToken;
+    if (data.tgChatId) CONFIG.TELEGRAM_CHAT_ID = data.tgChatId;
+    if (data.riskProfile) CONFIG.RISK_PROFILE = data.riskProfile;
     if (data.refreshInterval) CONFIG.AUTO_REFRESH_INTERVAL = parseInt(data.refreshInterval);
 
     LS.set('apiKeys', {
@@ -331,11 +331,11 @@ async function handleUnlock() {
       tgToken: data.tgToken || '', tgChatId: data.tgChatId || '',
     });
     LS.set('prefs', {
-      riskProfile:     data.riskProfile     || 'moderate',
+      riskProfile: data.riskProfile || 'moderate',
       refreshInterval: data.refreshInterval || '60000',
     });
 
-    state.sessionPassword          = password;
+    state.sessionPassword = password;
     localStorage.setItem('sp', password);
     el('lockScreen').style.display = 'none';
     toast('Unlocked — settings loaded from cloud ✓', 'success');
@@ -343,7 +343,7 @@ async function handleUnlock() {
   } catch (err) {
     setLockError(err.message);
   } finally {
-    btn.disabled    = false;
+    btn.disabled = false;
     btn.textContent = 'Unlock';
   }
 }
@@ -368,9 +368,9 @@ async function sendTelegramAlert(message) {
 
 function checkSignalAlerts() {
   const EMOJI = {
-    'STRONG BUY':  '🟢',
-    'BUY':         '🔵',
-    'SELL':        '🟠',
+    'STRONG BUY': '🟢',
+    'BUY': '🔵',
+    'SELL': '🟠',
     'STRONG SELL': '🔴',
   };
 
@@ -422,11 +422,11 @@ async function okxSignedGet(path) {
   const url = 'https://corsproxy.io/?' + encodeURIComponent(CONFIG.OKX_BASE + path);
   const res = await fetch(url, {
     headers: {
-      'OK-ACCESS-KEY':        CONFIG.OKX_API_KEY,
-      'OK-ACCESS-SIGN':       sign,
-      'OK-ACCESS-TIMESTAMP':  timestamp,
+      'OK-ACCESS-KEY': CONFIG.OKX_API_KEY,
+      'OK-ACCESS-SIGN': sign,
+      'OK-ACCESS-TIMESTAMP': timestamp,
       'OK-ACCESS-PASSPHRASE': CONFIG.OKX_PASSPHRASE,
-      'Content-Type':         'application/json',
+      'Content-Type': 'application/json',
     },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -437,17 +437,17 @@ async function okxSignedGet(path) {
 
 async function okxSignedPost(path, body) {
   const timestamp = new Date().toISOString();
-  const bodyStr   = JSON.stringify(body);
-  const sign      = await hmacSHA256base64(CONFIG.OKX_SECRET_KEY, timestamp + 'POST' + path + bodyStr);
-  const url       = 'https://corsproxy.io/?' + encodeURIComponent(CONFIG.OKX_BASE + path);
+  const bodyStr = JSON.stringify(body);
+  const sign = await hmacSHA256base64(CONFIG.OKX_SECRET_KEY, timestamp + 'POST' + path + bodyStr);
+  const url = 'https://corsproxy.io/?' + encodeURIComponent(CONFIG.OKX_BASE + path);
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      'OK-ACCESS-KEY':        CONFIG.OKX_API_KEY,
-      'OK-ACCESS-SIGN':       sign,
-      'OK-ACCESS-TIMESTAMP':  timestamp,
+      'OK-ACCESS-KEY': CONFIG.OKX_API_KEY,
+      'OK-ACCESS-SIGN': sign,
+      'OK-ACCESS-TIMESTAMP': timestamp,
       'OK-ACCESS-PASSPHRASE': CONFIG.OKX_PASSPHRASE,
-      'Content-Type':         'application/json',
+      'Content-Type': 'application/json',
     },
     body: bodyStr,
   });
@@ -535,12 +535,18 @@ async function syncPortfolioFromOKX() {
       const price = state.tickers[symbol]?.price ?? 0;
       if (price > 0 && bal * price < 1) continue; // skip dust
 
+      // openAvgPx is OKX's actual average purchase price — always more accurate
+      // than the current market price we previously used as a default.
+      const openAvgPx = parseFloat(d.openAvgPx ?? '0') || 0;
+      const avgBuyPrice = openAvgPx > 0 ? openAvgPx : price;
+
       const existing = state.portfolio.find(p => p.symbol === symbol);
       if (existing) {
         existing.amount = bal;
+        if (openAvgPx > 0) existing.avgBuyPrice = openAvgPx; // sync real avg from OKX
         updated++;
       } else {
-        state.portfolio.push({ symbol, amount: bal, avgBuyPrice: price || 0 });
+        state.portfolio.push({ symbol, amount: bal, avgBuyPrice });
         added++;
       }
 
@@ -671,16 +677,16 @@ function calcBB(closes, period = 20) {
 }
 
 function computeIndicators(candles1H, candles4H = []) {
-  const closes  = candles1H.map(c => c.close);
+  const closes = candles1H.map(c => c.close);
   const volumes = candles1H.map(c => c.vol);
 
-  const rsi  = calcRSI(closes);
+  const rsi = calcRSI(closes);
   const macd = calcMACD(closes);
-  const bb   = calcBB(closes);
+  const bb = calcBB(closes);
 
   // 4H RSI — higher-timeframe trend confirmation
   const closes4H = candles4H.map(c => c.close);
-  const rsi4h    = closes4H.length > 14 ? calcRSI(closes4H) : null;
+  const rsi4h = closes4H.length > 14 ? calcRSI(closes4H) : null;
 
   // Volume ratio: latest candle vs 20-bar average
   let volRatio = null;
@@ -737,7 +743,7 @@ function generateSignal(rsi, macd, bb, rsi4h = null, volRatio = null) {
 
   // ── Volume spike confirmation (max ±1) ──
   if (volRatio !== null && volRatio >= 1.5) {
-    if (score >= 2)  { score += 1;   reasons.push(`Volume ${volRatio.toFixed(1)}× avg — strong buying interest`); }
+    if (score >= 2) { score += 1; reasons.push(`Volume ${volRatio.toFixed(1)}× avg — strong buying interest`); }
     else if (score <= -2) { score -= 1; reasons.push(`Volume ${volRatio.toFixed(1)}× avg — strong selling pressure`); }
     else if (volRatio >= 2) reasons.push(`Volume spike ${volRatio.toFixed(1)}× avg (no strong signal yet)`);
   }
@@ -779,24 +785,24 @@ function renderScanner() {
   }
 
   tbody.innerHTML = symbols.map(sym => {
-    const t   = state.tickers[sym];
+    const t = state.tickers[sym];
     const ind = state.indicators[sym];
     const sig = ind?.signal;
 
-    const price   = t?.price ?? 0;
-    const chgPct  = t?.changePercent ?? 0;
-    const rsi     = ind?.rsi   ?? null;
-    const rsi4h   = ind?.rsi4h ?? null;
-    const macd    = ind?.macd  ?? null;
-    const bb      = ind?.bb    ?? null;
+    const price = t?.price ?? 0;
+    const chgPct = t?.changePercent ?? 0;
+    const rsi = ind?.rsi ?? null;
+    const rsi4h = ind?.rsi4h ?? null;
+    const macd = ind?.macd ?? null;
+    const bb = ind?.bb ?? null;
     const volRatio = ind?.volRatio ?? null;
-    const score   = sig?.score ?? 0;
-    const isDemo  = t?.source === 'Demo';
+    const score = sig?.score ?? 0;
+    const isDemo = t?.source === 'Demo';
 
-    const chgCls  = chgPct >= 0 ? 'pos' : 'neg';
+    const chgCls = chgPct >= 0 ? 'pos' : 'neg';
 
     // 1H RSI badge
-    const rsiCls  = rsi === null ? '' : rsi <= 30 ? 'rsi-low' : rsi >= 70 ? 'rsi-high' : 'rsi-mid';
+    const rsiCls = rsi === null ? '' : rsi <= 30 ? 'rsi-low' : rsi >= 70 ? 'rsi-high' : 'rsi-mid';
 
     // 4H RSI badge
     const rsi4hCls = rsi4h === null ? '' : rsi4h <= 35 ? 'rsi-low' : rsi4h >= 65 ? 'rsi-high' : 'rsi-mid';
@@ -820,9 +826,9 @@ function renderScanner() {
     // Score chip inside signal badge
     const scoreStr = (score >= 0 ? '+' : '') + score.toFixed(1);
 
-    const inPort  = state.portfolio.some(p => p.symbol === sym);
-    const reason  = sig?.reasons?.join(' · ') || 'Neutral — no strong signal';
-    const coin    = sym.replace('-USDT', '').replace('-BTC', '');
+    const inPort = state.portfolio.some(p => p.symbol === sym);
+    const reason = sig?.reasons?.join(' · ') || 'Neutral — no strong signal';
+    const coin = sym.replace('-USDT', '').replace('-BTC', '');
     const tooltip = escHtml(`Score: ${scoreStr} | ${reason}`);
 
     return `<tr class="scanner-row ${sig?.cls ?? ''}">
@@ -995,9 +1001,9 @@ async function fetchWithTimeout(url, ms = 7000) {
 async function fetchNews(topic = '') {
   // RSS via corsproxy.io — free, no API key, CORS-safe
   const feeds = [
-    { rss: 'https://cointelegraph.com/rss',                   source: 'CoinTelegraph' },
-    { rss: 'https://decrypt.co/feed',                         source: 'Decrypt'       },
-    { rss: 'https://www.coindesk.com/arc/outboundfeeds/rss/', source: 'CoinDesk'      },
+    { rss: 'https://cointelegraph.com/rss', source: 'CoinTelegraph' },
+    { rss: 'https://decrypt.co/feed', source: 'Decrypt' },
+    { rss: 'https://www.coindesk.com/arc/outboundfeeds/rss/', source: 'CoinDesk' },
   ];
 
   for (const feed of feeds) {
@@ -1015,10 +1021,10 @@ async function fetchNews(topic = '') {
       const getText = (node, tag) => node.querySelector(tag)?.textContent?.trim() || '';
 
       let articles = items.map(item => ({
-        title:       getText(item, 'title'),
-        link:        getText(item, 'link'),
+        title: getText(item, 'title'),
+        link: getText(item, 'link'),
         description: getText(item, 'description').replace(/<[^>]*>/g, ''),
-        pubDate:     getText(item, 'pubDate'),
+        pubDate: getText(item, 'pubDate'),
       })).filter(a => a.title);
 
       if (topic) {
@@ -1028,11 +1034,11 @@ async function fetchNews(topic = '') {
       if (!articles.length) continue;
 
       state.news = articles.slice(0, CONFIG.MAX_NEWS_ARTICLES).map(a => ({
-        title:     a.title,
-        summary:   a.description.substring(0, 160) + (a.description.length > 160 ? '…' : ''),
-        source:    feed.source,
-        url:       a.link,
-        age:       a.pubDate ? timeAgo(new Date(a.pubDate)) : 'recently',
+        title: a.title,
+        summary: a.description.substring(0, 160) + (a.description.length > 160 ? '…' : ''),
+        source: feed.source,
+        url: a.link,
+        age: a.pubDate ? timeAgo(new Date(a.pubDate)) : 'recently',
         sentiment: guessSentiment(a.title + ' ' + a.description),
       }));
       return;
@@ -1223,9 +1229,9 @@ function buildPrompt(type, custom) {
     const coin = sym.replace('-USDT', '');
     const frPct = (d.fundingRate * 100).toFixed(4);
     const frBias = d.fundingRate > 0.0005 ? 'longs overheated ⚠'
-      : d.fundingRate > 0     ? 'mild bullish bias'
-      : d.fundingRate < -0.0005 ? 'shorts overheated ⚠'
-      : 'mild bearish bias';
+      : d.fundingRate > 0 ? 'mild bullish bias'
+        : d.fundingRate < -0.0005 ? 'shorts overheated ⚠'
+          : 'mild bearish bias';
     const oi = d.openInterest !== undefined
       ? d.openInterest.toLocaleString('en-US', { maximumFractionDigits: 0 }) + ' coins'
       : 'N/A';
@@ -1294,7 +1300,7 @@ function parseTradeActions(text) {
 }
 
 function renderAiResponse(text) {
-  const actions   = parseTradeActions(text);
+  const actions = parseTradeActions(text);
   const displayed = text.replace(/\[TRADE:\{[^}]+\}\]/g, '').trim();
 
   let actionsHtml = '';
@@ -1302,12 +1308,12 @@ function renderAiResponse(text) {
     actionsHtml = '<div class="trade-actions-bar">' +
       actions.map((a, i) => {
         const isBuy = a.side === 'buy';
-        const coin  = a.symbol.replace('-USDT', '');
+        const coin = a.symbol.replace('-USDT', '');
         return `<button class="btn-take-action ${isBuy ? '' : 'sell'}" data-idx="${i}">
           ⚡ Take Action &nbsp;·&nbsp; ${isBuy ? '🟢 BUY' : '🔴 SELL'} ${coin} &nbsp;·&nbsp; $${a.amountUsdt.toLocaleString()} USDT
         </button>`;
       }).join('') +
-    '</div>';
+      '</div>';
     state._tradeActions = actions;
   }
 
@@ -1325,9 +1331,9 @@ function showTradeConfirmation(action) {
     toast('Add your OKX API key in Settings to place trades', 'error'); return;
   }
 
-  const price  = state.tickers[action.symbol]?.price ?? 0;
-  const isBuy  = action.side === 'buy';
-  const coin   = action.symbol.replace('-USDT', '');
+  const price = state.tickers[action.symbol]?.price ?? 0;
+  const isBuy = action.side === 'buy';
+  const coin = action.symbol.replace('-USDT', '');
 
   // For sell: cap at actual portfolio holdings
   const portfolioEntry = state.portfolio.find(p => p.symbol === action.symbol);
@@ -1340,11 +1346,11 @@ function showTradeConfirmation(action) {
   const slPct = price && action.sl ? ((price - action.sl) / price * 100).toFixed(1) : null;
 
   const rows = [
-    ['Order Type',  `Spot Market ${isBuy ? 'Buy' : 'Sell'} — executes instantly`],
-    ['Amount',      `$${action.amountUsdt.toLocaleString()} USDT${coinAmt ? ` ≈ ${parseFloat(coinAmt.toFixed(6))} ${coin}` : ''}`],
+    ['Order Type', `Spot Market ${isBuy ? 'Buy' : 'Sell'} — executes instantly`],
+    ['Amount', `$${action.amountUsdt.toLocaleString()} USDT${coinAmt ? ` ≈ ${parseFloat(coinAmt.toFixed(6))} ${coin}` : ''}`],
     ['Entry Price', price ? `${fmtCrypto(price)} (current market)` : '? — refresh market data first'],
     action.tp ? ['Take Profit', `${fmtCrypto(action.tp)}${tpPct ? ` <span class="pos">(+${tpPct}%)</span>` : ''}`] : null,
-    action.sl ? ['Stop Loss',   `${fmtCrypto(action.sl)}${slPct ? ` <span class="neg">(-${slPct}%)</span>` : ''}`] : null,
+    action.sl ? ['Stop Loss', `${fmtCrypto(action.sl)}${slPct ? ` <span class="neg">(-${slPct}%)</span>` : ''}`] : null,
   ].filter(Boolean);
 
   el('tradeConfirmTitle').textContent = `${isBuy ? '🟢 BUY' : '🔴 SELL'} ${coin}`;
@@ -1366,14 +1372,14 @@ async function executeTrade(action, coinAmt) {
   btn.textContent = 'Placing order…';
 
   try {
-    const price  = state.tickers[action.symbol]?.price;
+    const price = state.tickers[action.symbol]?.price;
     if (!price) throw new Error('Current price unavailable — refresh market data and try again');
-    const isBuy  = action.side === 'buy';
+    const isBuy = action.side === 'buy';
     const szCoin = coinAmt ?? (action.amountUsdt / price);
 
     // 1. Main market order
     const orderBody = isBuy
-      ? { instId: action.symbol, tdMode: 'cash', side: 'buy',  ordType: 'market', sz: action.amountUsdt.toFixed(4), tgtCcy: 'quote_ccy' }
+      ? { instId: action.symbol, tdMode: 'cash', side: 'buy', ordType: 'market', sz: action.amountUsdt.toFixed(4), tgtCcy: 'quote_ccy' }
       : { instId: action.symbol, tdMode: 'cash', side: 'sell', ordType: 'market', sz: szCoin.toFixed(8) };
 
     await okxSignedPost('/api/v5/trade/order', orderBody);
@@ -1382,20 +1388,20 @@ async function executeTrade(action, coinAmt) {
     // 2. TP/SL algo order placed on the opposite side.
     // Apply 0.15% fee haircut so the algo size never exceeds actual received coins.
     if (action.tp && action.sl && szCoin > 0) {
-      const algoSz   = (szCoin * 0.9985).toFixed(8);
+      const algoSz = (szCoin * 0.9985).toFixed(8);
       const algoSide = isBuy ? 'sell' : 'buy';
       const baseAlgo = { instId: action.symbol, tdMode: 'cash', side: algoSide };
 
       // Primary: OCO (TP + SL in one atomic order — one cancels the other)
       const ocoBody = {
         ...baseAlgo,
-        ordType:         'oco',
-        sz:              algoSz,
-        tpTriggerPx:     String(action.tp),
-        tpOrdPx:         '-1',
+        ordType: 'oco',
+        sz: algoSz,
+        tpTriggerPx: String(action.tp),
+        tpOrdPx: '-1',
         tpTriggerPxType: 'last',
-        slTriggerPx:     String(action.sl),
-        slOrdPx:         '-1',
+        slTriggerPx: String(action.sl),
+        slOrdPx: '-1',
         slTriggerPxType: 'last',
       };
       try {
@@ -1429,8 +1435,8 @@ async function executeTrade(action, coinAmt) {
       fetchOKXBalance().then(details => {
         const usdt = parseFloat(details.find(d => d.ccy === 'USDT')?.cashBal ?? 0);
         showUsdtBalance(usdt);
-      }).catch(() => {});
-      syncPortfolioFromOKX().catch(() => {});
+      }).catch(() => { });
+      syncPortfolioFromOKX().catch(() => { });
     }, 2000);
 
   } catch (err) {
@@ -1696,17 +1702,17 @@ function wireEvents() {
     const password = el('settingsCloudPassword').value.trim();
     if (!password) { toast('Enter a cloud password first', 'error'); return; }
     const btn = el('saveToCloudBtn');
-    btn.disabled    = true;
+    btn.disabled = true;
     btn.textContent = 'Saving…';
     try {
       LS.set('supabaseCfg', { url: el('settingsSbUrl').value.trim(), key: el('settingsSbKey').value.trim() });
-      CONFIG.CLAUDE_API_KEY        = el('settingsClaudeKey').value.trim();
-      CONFIG.OKX_API_KEY           = el('settingsOkxKey').value.trim();
-      CONFIG.OKX_SECRET_KEY        = el('settingsOkxSecret').value.trim();
-      CONFIG.OKX_PASSPHRASE        = el('settingsOkxPassphrase').value.trim();
-      CONFIG.TELEGRAM_BOT_TOKEN    = el('settingsTgToken').value.trim();
-      CONFIG.TELEGRAM_CHAT_ID      = el('settingsTgChatId').value.trim();
-      CONFIG.RISK_PROFILE          = el('settingsRiskProfile').value;
+      CONFIG.CLAUDE_API_KEY = el('settingsClaudeKey').value.trim();
+      CONFIG.OKX_API_KEY = el('settingsOkxKey').value.trim();
+      CONFIG.OKX_SECRET_KEY = el('settingsOkxSecret').value.trim();
+      CONFIG.OKX_PASSPHRASE = el('settingsOkxPassphrase').value.trim();
+      CONFIG.TELEGRAM_BOT_TOKEN = el('settingsTgToken').value.trim();
+      CONFIG.TELEGRAM_CHAT_ID = el('settingsTgChatId').value.trim();
+      CONFIG.RISK_PROFILE = el('settingsRiskProfile').value;
       CONFIG.AUTO_REFRESH_INTERVAL = parseInt(el('settingsRefreshInterval').value);
       await saveToCloud(password);
       state.sessionPassword = password;
@@ -1715,7 +1721,7 @@ function wireEvents() {
     } catch (err) {
       toast('Cloud save failed: ' + err.message, 'error');
     } finally {
-      btn.disabled    = false;
+      btn.disabled = false;
       btn.textContent = 'Save All to Cloud';
     }
   });
@@ -1759,7 +1765,7 @@ async function init() {
   loadPortfolio();
   loadScannerSymbols();
   wireEvents();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => { });
 
   // If Supabase is configured, try auto-unlock from session first
   if (isSupabaseConfigured()) {
@@ -1767,13 +1773,13 @@ async function init() {
     if (saved) {
       try {
         const data = await loadFromCloud(saved);
-        if (data.claude)          CONFIG.CLAUDE_API_KEY        = data.claude;
-        if (data.okxKey)          CONFIG.OKX_API_KEY           = data.okxKey;
-        if (data.okxSecret)       CONFIG.OKX_SECRET_KEY        = data.okxSecret;
-        if (data.okxPassphrase)   CONFIG.OKX_PASSPHRASE        = data.okxPassphrase;
-        if (data.tgToken)         CONFIG.TELEGRAM_BOT_TOKEN    = data.tgToken;
-        if (data.tgChatId)        CONFIG.TELEGRAM_CHAT_ID      = data.tgChatId;
-        if (data.riskProfile)     CONFIG.RISK_PROFILE          = data.riskProfile;
+        if (data.claude) CONFIG.CLAUDE_API_KEY = data.claude;
+        if (data.okxKey) CONFIG.OKX_API_KEY = data.okxKey;
+        if (data.okxSecret) CONFIG.OKX_SECRET_KEY = data.okxSecret;
+        if (data.okxPassphrase) CONFIG.OKX_PASSPHRASE = data.okxPassphrase;
+        if (data.tgToken) CONFIG.TELEGRAM_BOT_TOKEN = data.tgToken;
+        if (data.tgChatId) CONFIG.TELEGRAM_CHAT_ID = data.tgChatId;
+        if (data.riskProfile) CONFIG.RISK_PROFILE = data.riskProfile;
         if (data.refreshInterval) CONFIG.AUTO_REFRESH_INTERVAL = parseInt(data.refreshInterval);
         state.sessionPassword = saved;
         await loadAppData();
