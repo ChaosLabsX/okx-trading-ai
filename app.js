@@ -335,7 +335,7 @@ async function handleUnlock() {
     });
 
     state.sessionPassword          = password;
-    sessionStorage.setItem('sp', password);
+    localStorage.setItem('sp', password);
     el('lockScreen').style.display = 'none';
     toast('Unlocked — settings loaded from cloud ✓', 'success');
     await loadAppData();
@@ -431,6 +431,28 @@ async function okxSignedGet(path) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const d = await res.json();
   if (d.code !== '0') throw new Error(d.msg || `OKX error code ${d.code}`);
+  return d;
+}
+
+async function okxSignedPost(path, body) {
+  const timestamp = new Date().toISOString();
+  const bodyStr   = JSON.stringify(body);
+  const sign      = await hmacSHA256base64(CONFIG.OKX_SECRET_KEY, timestamp + 'POST' + path + bodyStr);
+  const url       = 'https://corsproxy.io/?' + encodeURIComponent(CONFIG.OKX_BASE + path);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'OK-ACCESS-KEY':        CONFIG.OKX_API_KEY,
+      'OK-ACCESS-SIGN':       sign,
+      'OK-ACCESS-TIMESTAMP':  timestamp,
+      'OK-ACCESS-PASSPHRASE': CONFIG.OKX_PASSPHRASE,
+      'Content-Type':         'application/json',
+    },
+    body: bodyStr,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const d = await res.json();
+  if (d.code !== '0') throw new Error(d.data?.[0]?.sMsg || d.msg || `OKX error ${d.code}`);
   return d;
 }
 
@@ -1011,7 +1033,7 @@ async function runAiAnalysis() {
       },
       body: JSON.stringify({
         model: CONFIG.CLAUDE_MODEL,
-        max_tokens: 1400,
+        max_tokens: 1800,
         system: buildSystemPrompt(),
         messages: [{ role: 'user', content: buildPrompt(contextType, customText) }],
       }),
@@ -1038,6 +1060,9 @@ function buildSystemPrompt() {
   const positionSize = availableCapital > 0
     ? `Suggested position size per trade: $${(availableCapital * riskPct / 100).toFixed(2)} USDT (${riskPct}% of capital for ${CONFIG.RISK_PROFILE} risk — never exceed 30%)`
     : 'Position size: suggest a % of capital since exact amount is unknown';
+  const ownedCoins = state.portfolio.length
+    ? state.portfolio.map(p => p.symbol).join(', ')
+    : 'none';
 
   return `You are an expert cryptocurrency trading advisor specializing in technical analysis for OKX spot markets. The user is a retail trader who wants clear, actionable guidance.
 
@@ -1055,6 +1080,18 @@ Rules:
 - ${capital}
 - ${positionSize}
 - Platform: OKX Spot Trading (not futures/leverage)
+- Coins user currently holds: ${ownedCoins}
+- IMPORTANT: Only recommend [SELL] for coins the user currently holds (listed above). Never suggest selling a coin they don't own.
+
+TRADE TAGS — REQUIRED for every actionable [BUY] or [SELL]:
+After each concrete BUY or SELL recommendation, append this tag on its own line (valid JSON, numbers only — no $ signs, no quotes around numbers):
+[TRADE:{"side":"buy","symbol":"ETH-USDT","amountUsdt":50,"tp":2800,"sl":2300}]
+  • side: exactly "buy" or "sell"
+  • symbol: exact OKX instrument ID (e.g. "BTC-USDT", "ETH-USDT")
+  • amountUsdt: USDT amount to spend (buy) or USDT value of coins to sell
+  • tp: take profit price (number only)
+  • sl: stop loss price (number only)
+Never include a TRADE tag after a [HOLD]. Use only plain numbers (no commas, no dollar signs).
 
 Always end your response with this exact line:
 "⚠ Not financial advice. Crypto is high-risk — only invest what you can afford to lose completely."`;
@@ -1146,10 +1183,148 @@ function showAiThinking() {
   el('aiFooter').style.display = 'none';
 }
 
+function parseTradeActions(text) {
+  const results = [];
+  const re = /\[TRADE:(\{[^}]+\})\]/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    try {
+      const a = JSON.parse(m[1]);
+      if (a.side && a.symbol && a.amountUsdt) {
+        a.amountUsdt = parseFloat(a.amountUsdt) || 0;
+        a.tp = parseFloat(a.tp) || 0;
+        a.sl = parseFloat(a.sl) || 0;
+        results.push(a);
+      }
+    } catch { }
+  }
+  return results;
+}
+
 function renderAiResponse(text) {
-  el('aiResponseArea').innerHTML = `<div class="ai-response">${markdownToHtml(text)}</div>`;
+  const actions   = parseTradeActions(text);
+  const displayed = text.replace(/\[TRADE:\{[^}]+\}\]/g, '').trim();
+
+  let actionsHtml = '';
+  if (actions.length) {
+    actionsHtml = '<div class="trade-actions-bar">' +
+      actions.map((a, i) => {
+        const isBuy = a.side === 'buy';
+        const coin  = a.symbol.replace('-USDT', '');
+        return `<button class="btn-take-action ${isBuy ? '' : 'sell'}" data-idx="${i}">
+          ⚡ Take Action &nbsp;·&nbsp; ${isBuy ? '🟢 BUY' : '🔴 SELL'} ${coin} &nbsp;·&nbsp; $${a.amountUsdt.toLocaleString()} USDT
+        </button>`;
+      }).join('') +
+    '</div>';
+    state._tradeActions = actions;
+  }
+
+  el('aiResponseArea').innerHTML = `<div class="ai-response">${markdownToHtml(displayed)}</div>${actionsHtml}`;
   el('aiFooter').style.display = 'flex';
   el('aiTimestamp').textContent = 'Generated ' + new Date().toLocaleTimeString();
+
+  el('aiResponseArea').querySelectorAll('.btn-take-action').forEach(btn => {
+    btn.addEventListener('click', () => showTradeConfirmation(state._tradeActions[+btn.dataset.idx]));
+  });
+}
+
+function showTradeConfirmation(action) {
+  if (!CONFIG.OKX_API_KEY) {
+    toast('Add your OKX API key in Settings to place trades', 'error'); return;
+  }
+
+  const price  = state.tickers[action.symbol]?.price ?? 0;
+  const isBuy  = action.side === 'buy';
+  const coin   = action.symbol.replace('-USDT', '');
+
+  // For sell: cap at actual portfolio holdings
+  const portfolioEntry = state.portfolio.find(p => p.symbol === action.symbol);
+  let coinAmt = price > 0 ? action.amountUsdt / price : null;
+  if (!isBuy && portfolioEntry && coinAmt > portfolioEntry.amount) {
+    coinAmt = portfolioEntry.amount;
+  }
+
+  const tpPct = price && action.tp ? ((action.tp - price) / price * 100).toFixed(1) : null;
+  const slPct = price && action.sl ? ((price - action.sl) / price * 100).toFixed(1) : null;
+
+  const rows = [
+    ['Order Type',  `Spot Market ${isBuy ? 'Buy' : 'Sell'} — executes instantly`],
+    ['Amount',      `$${action.amountUsdt.toLocaleString()} USDT${coinAmt ? ` ≈ ${parseFloat(coinAmt.toFixed(6))} ${coin}` : ''}`],
+    ['Entry Price', price ? `${fmtCrypto(price)} (current market)` : '? — refresh market data first'],
+    action.tp ? ['Take Profit', `${fmtCrypto(action.tp)}${tpPct ? ` <span class="pos">(+${tpPct}%)</span>` : ''}`] : null,
+    action.sl ? ['Stop Loss',   `${fmtCrypto(action.sl)}${slPct ? ` <span class="neg">(-${slPct}%)</span>` : ''}`] : null,
+  ].filter(Boolean);
+
+  el('tradeConfirmTitle').textContent = `${isBuy ? '🟢 BUY' : '🔴 SELL'} ${coin}`;
+  el('tradeConfirmDetails').innerHTML =
+    `<table class="trade-detail-table">${rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table>
+     <p class="trade-warning">⚠ TP &amp; SL orders will be placed automatically after execution. Double-check the numbers before confirming.</p>`;
+
+  const btn = el('tradeConfirmBtn');
+  btn.disabled = false;
+  btn.textContent = '⚡ Confirm Trade';
+  btn.onclick = () => executeTrade(action, coinAmt);
+
+  openModal('tradeConfirmModal');
+}
+
+async function executeTrade(action, coinAmt) {
+  const btn = el('tradeConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = 'Placing order…';
+
+  try {
+    const price  = state.tickers[action.symbol]?.price;
+    if (!price) throw new Error('Current price unavailable — refresh market data and try again');
+    const isBuy  = action.side === 'buy';
+    const szCoin = coinAmt ?? (action.amountUsdt / price);
+
+    // 1. Main market order
+    const orderBody = isBuy
+      ? { instId: action.symbol, tdMode: 'cash', side: 'buy',  ordType: 'market', sz: action.amountUsdt.toFixed(4), tgtCcy: 'quote_ccy' }
+      : { instId: action.symbol, tdMode: 'cash', side: 'sell', ordType: 'market', sz: szCoin.toFixed(8) };
+
+    await okxSignedPost('/api/v5/trade/order', orderBody);
+    toast(`${action.side.toUpperCase()} order placed`, 'success');
+
+    // 2. TP/SL algo order (OCO) placed on the opposite side
+    if (action.tp && action.sl && szCoin > 0) {
+      const algoBody = {
+        instId:          action.symbol,
+        tdMode:          'cash',
+        side:            isBuy ? 'sell' : 'buy',
+        ordType:         'oco',
+        sz:              szCoin.toFixed(8),
+        tpTriggerPx:     String(action.tp),
+        tpOrdPx:         '-1',
+        tpTriggerPxType: 'last',
+        slTriggerPx:     String(action.sl),
+        slOrdPx:         '-1',
+        slTriggerPxType: 'last',
+      };
+      try {
+        await okxSignedPost('/api/v5/trade/order-algo', algoBody);
+        toast('TP/SL orders set automatically', 'success');
+      } catch (e) {
+        toast('Trade placed — set TP/SL manually on OKX (' + e.message + ')', 'info');
+      }
+    }
+
+    closeModal('tradeConfirmModal');
+    // Refresh balance + portfolio after 2 s
+    setTimeout(() => {
+      fetchOKXBalance().then(details => {
+        const usdt = parseFloat(details.find(d => d.ccy === 'USDT')?.cashBal ?? 0);
+        showUsdtBalance(usdt);
+      }).catch(() => {});
+      syncPortfolioFromOKX().catch(() => {});
+    }, 2000);
+
+  } catch (err) {
+    toast('Trade failed: ' + err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = '⚡ Confirm Trade';
+  }
 }
 
 function renderAiError(msg) {
@@ -1247,7 +1422,22 @@ function restartAutoRefresh() {
 //  PERSISTENCE
 // ═══════════════════════════════════════════════════════════
 function loadPortfolio() { state.portfolio = LS.get('portfolio', CONFIG.DEFAULT_PORTFOLIO); }
-function savePortfolio() { LS.set('portfolio', state.portfolio); }
+function savePortfolio() {
+  LS.set('portfolio', state.portfolio);
+  pushPortfolioSymbols(); // keep Supabase in sync so GitHub Actions always knows what you hold
+}
+
+async function pushPortfolioSymbols() {
+  if (!isSupabaseConfigured()) return;
+  const symbols = state.portfolio.map(p => p.symbol).join(',');
+  try {
+    await fetch(`${getSupabaseCfg().url}/rest/v1/app_settings?id=eq.main`, {
+      method: 'PATCH',
+      headers: { ...sbHeaders(), 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ portfolio_symbols: symbols }),
+    });
+  } catch { } // silent — non-critical background sync
+}
 function loadScannerSymbols() { state.scannerSymbols = LS.get('scanner', CONFIG.DEFAULT_SCANNER); }
 function saveScannerSymbols() { LS.set('scanner', state.scannerSymbols); }
 
@@ -1460,7 +1650,7 @@ async function init() {
 
   // If Supabase is configured, try auto-unlock from session first
   if (isSupabaseConfigured()) {
-    const saved = sessionStorage.getItem('sp');
+    const saved = localStorage.getItem('sp');
     if (saved) {
       try {
         const data = await loadFromCloud(saved);
@@ -1476,7 +1666,7 @@ async function init() {
         await loadAppData();
         return;
       } catch {
-        sessionStorage.removeItem('sp');
+        localStorage.removeItem('sp');
       }
     }
     el('lockScreen').style.display = 'flex';

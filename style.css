@@ -648,6 +648,62 @@ tr:hover .btn-row-del { opacity: 1; }
   30%           { transform: translateY(-6px); opacity: 1; }
 }
 
+/* ─── Take Action buttons (shown after AI response) ─── */
+.trade-actions-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px 4px;
+  border-top: 1px solid var(--border);
+}
+
+.btn-take-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #0f2d1a, #145a2e);
+  color: #4ade80;
+  border: 1px solid #166534;
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  transition: background .15s, transform .1s;
+  font-family: var(--sans);
+}
+.btn-take-action:hover { background: linear-gradient(135deg, #145a2e, #16703a); transform: translateY(-1px); }
+.btn-take-action.sell {
+  background: linear-gradient(135deg, #2d0f0f, #5a1414);
+  color: #f87171;
+  border-color: #7f1d1d;
+}
+.btn-take-action.sell:hover { background: linear-gradient(135deg, #5a1414, #701616); }
+
+/* ─── Trade confirmation modal details ─── */
+.trade-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.trade-detail-table tr { border-bottom: 1px solid var(--border); }
+.trade-detail-table tr:last-child { border-bottom: none; }
+.trade-detail-table td { padding: 9px 4px; vertical-align: top; }
+.trade-detail-table td:first-child { color: var(--text-muted); width: 38%; }
+.trade-detail-table td:last-child  { font-weight: 500; }
+
+.trade-warning {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 12px;
+  padding: 8px 10px;
+  background: rgba(245,158,11,.08);
+  border-left: 2px solid var(--amber);
+  border-radius: 4px;
+}
+
 .ai-footer {
   display: flex;
   align-items: center;

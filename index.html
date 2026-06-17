@@ -311,7 +311,7 @@
 
       <div class="settings-section">
         <h4 class="settings-heading">OKX Account Sync <span class="badge-optional">Optional</span></h4>
-        <p class="settings-desc">Automatically import your real OKX holdings into the portfolio. Create a <strong>Read Only</strong> API key on OKX — the app cannot place orders, only read balances.</p>
+        <p class="settings-desc">Sync your OKX balance and holdings, and place trades directly from the AI Advisor. Create an API key with <strong>Read + Trade</strong> permissions (no Withdraw) for full functionality.</p>
         <div class="form-group">
           <label>OKX API Key</label>
           <input type="password" id="settingsOkxKey" class="form-input" placeholder="Your OKX API Key" />
@@ -326,7 +326,7 @@
             <input type="password" id="settingsOkxPassphrase" class="form-input" placeholder="Passphrase you set on OKX" />
           </div>
         </div>
-        <span class="field-hint">OKX → Profile → API → Create API Key → set permission to <strong>Read</strong> only</span>
+        <span class="field-hint">OKX → Profile → API → Create API Key → set permissions to <strong>Read + Trade</strong> (leave Withdraw OFF)</span>
       </div>
 
       <div class="settings-section">
@@ -384,6 +384,23 @@
     <div class="modal-footer">
       <button class="btn-secondary modal-close" data-modal="settingsModal">Cancel</button>
       <button class="btn-primary" id="saveSettingsBtn">Save Settings</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════ TRADE CONFIRM MODAL ═══════════════════════════════════════ -->
+<div class="modal-overlay" id="tradeConfirmModal">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header">
+      <h3 id="tradeConfirmTitle">Confirm Trade</h3>
+      <button class="btn-icon modal-close" data-modal="tradeConfirmModal">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="tradeConfirmDetails"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary modal-close" data-modal="tradeConfirmModal">✕ Cancel</button>
+      <button class="btn-primary" id="tradeConfirmBtn" style="background:var(--green);border-color:var(--green);">⚡ Confirm Trade</button>
     </div>
   </div>
 </div>
