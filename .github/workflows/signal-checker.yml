@@ -2,8 +2,8 @@ name: Crypto Signal Checker
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # every 5 minutes
-  workflow_dispatch:          # also allows manual trigger from GitHub
+    - cron: '*/5 * * * *'   # every 5 minutes — script loops internally every 60 s
+  workflow_dispatch:          # allows manual trigger from GitHub
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -11,6 +11,7 @@ env:
 jobs:
   check-signals:
     runs-on: ubuntu-latest
+    timeout-minutes: 6        # safety cap — script self-exits after 4 min
 
     steps:
       - name: Checkout repo
@@ -35,7 +36,11 @@ jobs:
       - name: Run signal checker
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Optional: comma-separated symbols you hold — limits SELL alerts to those coins.
+          # Set as a GitHub Secret named PORTFOLIO_SYMBOLS, e.g. "BTC-USDT,ETH-USDT"
+          # Leave unset to receive SELL alerts for all scanned coins.
+          PORTFOLIO_SYMBOLS:  ${{ secrets.PORTFOLIO_SYMBOLS }}
         run: python signal_checker.py
 
       - name: Save signal state
