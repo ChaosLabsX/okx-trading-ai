@@ -114,8 +114,8 @@ async function fetchOKXTicker(instId) {
   };
 }
 
-async function fetchOKXCandles(instId) {
-  const url = `${CONFIG.OKX_BASE}/api/v5/market/candles?instId=${encodeURIComponent(instId)}&bar=${CONFIG.CANDLE_BAR}&limit=${CONFIG.CANDLE_LIMIT}`;
+async function fetchOKXCandles(instId, bar = CONFIG.CANDLE_BAR) {
+  const url = `${CONFIG.OKX_BASE}/api/v5/market/candles?instId=${encodeURIComponent(instId)}&bar=${bar}&limit=${CONFIG.CANDLE_LIMIT}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const d = await res.json();
@@ -132,12 +132,13 @@ async function fetchOKXCandles(instId) {
 
 async function fetchSymbolData(symbol) {
   try {
-    const [ticker, candles] = await Promise.all([
+    const [ticker, candles1H, candles4H] = await Promise.all([
       fetchOKXTicker(symbol),
-      fetchOKXCandles(symbol),
+      fetchOKXCandles(symbol, '1H'),
+      fetchOKXCandles(symbol, '4H'),
     ]);
     state.tickers[symbol] = ticker;
-    state.indicators[symbol] = computeIndicators(candles, ticker.price);
+    state.indicators[symbol] = computeIndicators(candles1H, candles4H);
   } catch (err) {
     // Keep stale data if any; otherwise use demo
     if (!state.tickers[symbol]) {
@@ -580,7 +581,7 @@ function buildIndicatorsFromMock(symbol) {
   const bbPct = (seed % 100) / 100;
   const mockMacd = { trend: macdBull ? 'bullish' : 'bearish', bullishCross: macdBull && (seed % 5 === 0), bearishCross: !macdBull && (seed % 5 === 0), macd: macdBull ? 0.002 : -0.002, signal: 0 };
   const mockBB = { pctB: bbPct, upper: 1, middle: 0.97, lower: 0.94 };
-  return { rsi, macd: mockMacd, bb: mockBB, signal: generateSignal(rsi, mockMacd, mockBB), source: 'Demo' };
+  return { rsi, rsi4h: null, macd: mockMacd, bb: mockBB, volRatio: null, signal: generateSignal(rsi, mockMacd, mockBB), source: 'Demo' };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -640,12 +641,26 @@ function calcBB(closes, period = 20) {
   return { upper, middle: mean, lower, pctB: upper > lower ? (price - lower) / (upper - lower) : 0.5 };
 }
 
-function computeIndicators(candles) {
-  const closes = candles.map(c => c.close);
-  const rsi = calcRSI(closes);
+function computeIndicators(candles1H, candles4H = []) {
+  const closes  = candles1H.map(c => c.close);
+  const volumes = candles1H.map(c => c.vol);
+
+  const rsi  = calcRSI(closes);
   const macd = calcMACD(closes);
-  const bb = calcBB(closes);
-  return { rsi, macd, bb, signal: generateSignal(rsi, macd, bb) };
+  const bb   = calcBB(closes);
+
+  // 4H RSI — higher-timeframe trend confirmation
+  const closes4H = candles4H.map(c => c.close);
+  const rsi4h    = closes4H.length > 14 ? calcRSI(closes4H) : null;
+
+  // Volume ratio: latest candle vs 20-bar average
+  let volRatio = null;
+  if (volumes.length >= 21) {
+    const avg = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+    if (avg > 0) volRatio = volumes[volumes.length - 1] / avg;
+  }
+
+  return { rsi, rsi4h, macd, bb, volRatio, signal: generateSignal(rsi, macd, bb, rsi4h, volRatio) };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -653,7 +668,7 @@ function computeIndicators(candles) {
 //  Score: positive = buy pressure, negative = sell pressure
 //  RSI: ±3 max, MACD: ±2, BB: ±2 → total range -7 to +7
 // ═══════════════════════════════════════════════════════════
-function generateSignal(rsi, macd, bb) {
+function generateSignal(rsi, macd, bb, rsi4h = null, volRatio = null) {
   let score = 0;
   const reasons = [];
 
@@ -681,6 +696,21 @@ function generateSignal(rsi, macd, bb) {
     else if (bb.pctB <= 0.20) { score += 1; reasons.push('Price near lower BB'); }
     else if (bb.pctB >= 0.95) { score -= 2; reasons.push('Price at upper Bollinger Band'); }
     else if (bb.pctB >= 0.80) { score -= 1; reasons.push('Price near upper BB'); }
+  }
+
+  // ── 4H RSI confirmation (max ±1) ──
+  if (rsi4h !== null) {
+    if (score > 0 && rsi4h <= 45) { score += 1; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — higher-TF uptrend confirmed`); }
+    else if (score < 0 && rsi4h >= 55) { score -= 1; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — higher-TF downtrend confirmed`); }
+    else if (score > 0 && rsi4h >= 70) { score -= 0.5; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — caution: overbought on 4H`); }
+    else if (score < 0 && rsi4h <= 30) { score += 0.5; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — caution: oversold on 4H`); }
+  }
+
+  // ── Volume spike confirmation (max ±1) ──
+  if (volRatio !== null && volRatio >= 1.5) {
+    if (score >= 2)  { score += 1;   reasons.push(`Volume ${volRatio.toFixed(1)}× avg — strong buying interest`); }
+    else if (score <= -2) { score -= 1; reasons.push(`Volume ${volRatio.toFixed(1)}× avg — strong selling pressure`); }
+    else if (volRatio >= 2) reasons.push(`Volume spike ${volRatio.toFixed(1)}× avg (no strong signal yet)`);
   }
 
   let label, cls;
@@ -714,36 +744,57 @@ function renderScanner() {
   });
 
   if (!symbols.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:28px">No results for this filter.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:28px">No results for this filter.</td></tr>';
     updateBestPickBanner();
     return;
   }
 
   tbody.innerHTML = symbols.map(sym => {
-    const t = state.tickers[sym];
+    const t   = state.tickers[sym];
     const ind = state.indicators[sym];
     const sig = ind?.signal;
 
-    const price = t?.price ?? 0;
-    const chgPct = t?.changePercent ?? 0;
-    const rsi = ind?.rsi ?? null;
-    const macd = ind?.macd ?? null;
-    const bb = ind?.bb ?? null;
-    const isDemo = t?.source === 'Demo';
+    const price   = t?.price ?? 0;
+    const chgPct  = t?.changePercent ?? 0;
+    const rsi     = ind?.rsi   ?? null;
+    const rsi4h   = ind?.rsi4h ?? null;
+    const macd    = ind?.macd  ?? null;
+    const bb      = ind?.bb    ?? null;
+    const volRatio = ind?.volRatio ?? null;
+    const score   = sig?.score ?? 0;
+    const isDemo  = t?.source === 'Demo';
 
-    const chgCls = chgPct >= 0 ? 'pos' : 'neg';
-    const rsiCls = rsi === null ? '' : rsi <= 30 ? 'rsi-low' : rsi >= 70 ? 'rsi-high' : 'rsi-mid';
+    const chgCls  = chgPct >= 0 ? 'pos' : 'neg';
+
+    // 1H RSI badge
+    const rsiCls  = rsi === null ? '' : rsi <= 30 ? 'rsi-low' : rsi >= 70 ? 'rsi-high' : 'rsi-mid';
+
+    // 4H RSI badge
+    const rsi4hCls = rsi4h === null ? '' : rsi4h <= 35 ? 'rsi-low' : rsi4h >= 65 ? 'rsi-high' : 'rsi-mid';
+    const rsi4hTxt = rsi4h !== null ? rsi4h.toFixed(0) : '—';
+
+    // MACD
     const macdTxt = macd
       ? (macd.bullishCross ? '↑ Cross' : macd.bearishCross ? '↓ Cross'
         : macd.trend === 'bullish' ? '↑ Bull' : '↓ Bear')
       : '—';
     const macdCls = macd ? (macd.trend === 'bullish' || macd.bullishCross ? 'pos' : 'neg') : '';
+
+    // BB%
     const bbPct = bb ? (bb.pctB * 100).toFixed(0) + '%' : '—';
     const bbCls = bb ? (bb.pctB <= 0.2 ? 'pos' : bb.pctB >= 0.8 ? 'neg' : '') : '';
-    const inPort = state.portfolio.some(p => p.symbol === sym);
-    const reason = sig?.reasons?.join(' · ') || 'Neutral — no strong signal';
-    const coin = sym.replace('-USDT', '').replace('-BTC', '');
-    const tooltip = escHtml(reason);
+
+    // Volume
+    const volTxt = volRatio !== null ? volRatio.toFixed(1) + '×' : '—';
+    const volCls = volRatio === null ? '' : volRatio >= 2 ? 'vol-spike' : volRatio >= 1.5 ? 'vol-high' : 'vol-normal';
+
+    // Score chip inside signal badge
+    const scoreStr = (score >= 0 ? '+' : '') + score.toFixed(1);
+
+    const inPort  = state.portfolio.some(p => p.symbol === sym);
+    const reason  = sig?.reasons?.join(' · ') || 'Neutral — no strong signal';
+    const coin    = sym.replace('-USDT', '').replace('-BTC', '');
+    const tooltip = escHtml(`Score: ${scoreStr} | ${reason}`);
 
     return `<tr class="scanner-row ${sig?.cls ?? ''}">
       <td>
@@ -756,10 +807,15 @@ function renderScanner() {
       <td class="num price-cell">${price ? fmtCrypto(price) : '—'}</td>
       <td class="num ${chgCls}">${price ? (chgPct >= 0 ? '+' : '') + chgPct.toFixed(2) + '%' : '—'}</td>
       <td class="num"><span class="rsi-badge ${rsiCls}">${rsi !== null ? rsi.toFixed(0) : '—'}</span></td>
+      <td class="num"><span class="rsi-badge ${rsi4hCls}">${rsi4hTxt}</span></td>
       <td class="num ${macdCls}">${macdTxt}</td>
       <td class="num ${bbCls}">${bbPct}</td>
-      <td><span class="signal-badge ${sig?.cls ?? 'sig-hold'}" title="${tooltip}">${sig?.label ?? '—'}</span></td>
-      <td class="reason-cell">${escHtml(reason)}</td>
+      <td class="num ${volCls}">${volTxt}</td>
+      <td>
+        <span class="signal-badge ${sig?.cls ?? 'sig-hold'}" title="${tooltip}">
+          ${sig?.label ?? '—'} <span class="score-chip">${scoreStr}</span>
+        </span>
+      </td>
       <td><button class="btn-row-del" data-sym="${sym}" title="Remove from scanner">✕</button></td>
     </tr>`;
   }).join('');
@@ -837,9 +893,14 @@ function renderPortfolio() {
       <td class="num price-cell">${price ? fmtCrypto(price) : '—'}</td>
       <td class="num ${chgCls}">${price ? (chgPct >= 0 ? '+' : '') + chgPct.toFixed(2) + '%' : '—'}</td>
       <td class="num">${pos.amount}</td>
-      <td class="num price-cell">${price ? fmtMoney(value) : '—'}</td>
-      <td class="num ${pnlCls}">${price ? (pnl >= 0 ? '+' : '') + fmtMoney(pnl) : '—'}</td>
-      <td class="num ${pnlCls}">${price ? (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%' : '—'}</td>
+      <td class="num price-cell">
+        ${price ? fmtMoney(value) : '—'}
+        ${cost > 0 ? `<div class="invested-sub">invested ${fmtMoney(cost)}</div>` : ''}
+      </td>
+      <td class="num ${pnlCls} pnl-cell">
+        ${price ? `<span class="pnl-dollar">${pnl >= 0 ? '+' : ''}${fmtMoney(pnl)}</span>` : '—'}
+        ${price && cost > 0 ? `<div class="pnl-pct-sub">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</div>` : ''}
+      </td>
       <td><button class="btn-row-del" data-symbol="${pos.symbol}" title="Remove">✕</button></td>
     </tr>`;
   }).join('');
@@ -1106,10 +1167,12 @@ function buildPrompt(type, custom) {
     const isDemo = t.source === 'Demo';
     return [
       `**${sym}**${isDemo ? ' [DEMO DATA]' : ''}: ${fmtCrypto(t.price)} (${t.changePercent >= 0 ? '+' : ''}${t.changePercent.toFixed(2)}% 24h)`,
-      `  Signal: ${sig?.label ?? '?'} (score ${sig?.score?.toFixed(1) ?? '?'}/7)`,
-      `  RSI(14): ${ind?.rsi?.toFixed(1) ?? 'N/A'}`,
+      `  Signal: ${sig?.label ?? '?'} (score ${sig?.score?.toFixed(1) ?? '?'}/9)`,
+      `  RSI 1H(14): ${ind?.rsi?.toFixed(1) ?? 'N/A'}`,
+      `  RSI 4H(14): ${ind?.rsi4h != null ? ind.rsi4h.toFixed(1) : 'N/A'}`,
       `  MACD: ${ind?.macd ? (ind.macd.bullishCross ? '✓ Bullish crossover (strong buy signal)' : ind.macd.bearishCross ? '✗ Bearish crossover (strong sell signal)' : ind.macd.trend === 'bullish' ? 'Bullish trend' : 'Bearish trend') : 'N/A'}`,
       `  Bollinger %B: ${ind?.bb ? (ind.bb.pctB * 100).toFixed(0) + '%' : 'N/A'} (0%=oversold/lower band, 100%=overbought/upper band)`,
+      `  Volume ratio (vs 20-bar avg): ${ind?.volRatio != null ? ind.volRatio.toFixed(2) + 'x' : 'N/A'}`,
       `  Reasons: ${sig?.reasons?.join(', ') || 'Neutral'}`,
     ].join('\n');
   }).filter(Boolean).join('\n\n');
