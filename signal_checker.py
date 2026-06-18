@@ -264,6 +264,7 @@ def save_cache(data):
 
 # ── Single scan ───────────────────────────────────────────────────────────────
 def run_scan(cache, portfolio_symbols):
+    send_telegram("This Message Is Just For Testing")
     now = time.time()
     for symbol in SYMBOLS:
         try:
