@@ -43,6 +43,15 @@ EMOJI        = {'STRONG BUY': '🟢', 'BUY': '🔵', 'SELL': '🟠', 'STRONG SEL
 # flips zones twice in 2 minutes it is noise, not a real signal.
 FLIP_COOLDOWN = 2 * 60
 
+# If a coin stays in the same BUY/SELL zone longer than this, send a reminder alert.
+REZONE_REMINDER = 4 * 60 * 60  # 4 hours
+
+# ── Signal pipeline test ───────────────────────────────────────────────────────
+# Set to True to force a STRONG BUY alert for BTC on the next run — bypasses all
+# market logic so you can confirm GitHub Actions → Telegram is working end-to-end.
+# Delete the cache on GitHub (Actions → Caches) before running, then set back to False.
+TEST_FORCE_SIGNAL = True
+
 # ── Zone helpers ──────────────────────────────────────────────────────────────
 def direction_zone(label):
     """Collapse fine-grained labels into broad zones for dedup purposes."""
@@ -271,6 +280,8 @@ def run_scan(cache, portfolio_symbols):
             vol_ratio = calc_vol_ratio(volumes)
 
             sig   = generate_signal(calc_rsi(closes), calc_macd(closes), calc_bb(closes), vol_ratio)
+            if TEST_FORCE_SIGNAL and symbol == 'BTC-USDT':
+                sig = {'label': 'STRONG BUY', 'score': 5.0, 'reasons': ['TEST — forced signal, not real']}
             label = sig['label']
             zone  = direction_zone(label)
 
@@ -294,12 +305,16 @@ def run_scan(cache, portfolio_symbols):
                 time.sleep(0.3)
                 continue
 
-            # Same zone as last alert → still BUY or still SELL, no new alert needed.
-            # This suppresses BUY↔STRONG BUY oscillation entirely.
+            # Same zone as last alert → suppress unless the reminder interval has passed.
+            # This stops BUY↔STRONG BUY oscillation spam while still re-alerting every 4 h
+            # so a coin that stays in BUY zone all day doesn't go completely silent.
             if zone == alerted_zone:
-                print(f'  {symbol}: still in {zone} zone — suppressed')
-                time.sleep(0.3)
-                continue
+                secs_in_zone = now - alerted_at
+                if secs_in_zone < REZONE_REMINDER:
+                    print(f'  {symbol}: still in {zone} zone ({int(secs_in_zone/60)}m) — suppressed')
+                    time.sleep(0.3)
+                    continue
+                print(f'  {symbol}: still in {zone} zone for {int(secs_in_zone/3600)}h — reminder alert')
 
             # Zone changed but flipped back too quickly — rapid oscillation guard
             if now - alerted_at < FLIP_COOLDOWN:
