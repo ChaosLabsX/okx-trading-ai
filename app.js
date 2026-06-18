@@ -535,18 +535,23 @@ async function syncPortfolioFromOKX() {
       const price = state.tickers[symbol]?.price ?? 0;
       if (price > 0 && bal * price < 1) continue; // skip dust
 
-      // openAvgPx is OKX's actual average purchase price — always more accurate
-      // than the current market price we previously used as a default.
+      // OKX provides two avg-price fields:
+      //   accAvgPx  — accumulated avg cost including fees (matches OKX UI "Spot PnL")
+      //   openAvgPx — raw open avg price (no fees included)
+      // Try accAvgPx first; it should produce the same P&L as the OKX portfolio page.
+      const accAvgPx  = parseFloat(d.accAvgPx  ?? '0') || 0;
       const openAvgPx = parseFloat(d.openAvgPx ?? '0') || 0;
-      const avgBuyPrice = openAvgPx > 0 ? openAvgPx : price;
+      const apiAvgPx  = accAvgPx > 0 ? accAvgPx : openAvgPx;
+      // Never fall back to current price — that would show $0 P&L which is wrong.
+      // If OKX returns no avg price, leave avgBuyPrice as 0 (P&L displays '—').
 
       const existing = state.portfolio.find(p => p.symbol === symbol);
       if (existing) {
         existing.amount = bal;
-        if (openAvgPx > 0) existing.avgBuyPrice = openAvgPx; // sync real avg from OKX
+        if (apiAvgPx > 0) existing.avgBuyPrice = apiAvgPx;
         updated++;
       } else {
-        state.portfolio.push({ symbol, amount: bal, avgBuyPrice });
+        state.portfolio.push({ symbol, amount: bal, avgBuyPrice: apiAvgPx });
         added++;
       }
 
