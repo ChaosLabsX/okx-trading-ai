@@ -2,8 +2,10 @@ name: Crypto Signal Checker
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # every 5 minutes — script loops internally every 60 s
+    - cron: '*/5 * * * *'   # every 5 minutes (backup — GitHub cron can be delayed)
   workflow_dispatch:          # allows manual trigger from GitHub
+  repository_dispatch:        # allows external trigger via GitHub API (used by cron-job.org)
+    types: [run-signal-checker]
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
