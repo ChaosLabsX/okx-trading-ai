@@ -1806,11 +1806,4 @@ async function init() {
   await loadAppData();
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  init();
-  // ── TELEGRAM TEST — remove this block after confirming messages arrive ──────
-  const TEST_MSG = 'This Message Is Just For Testing';
-  setTimeout(() => sendTelegramAlert(TEST_MSG), 3000); // send once 3 s after load
-  setInterval(() => sendTelegramAlert(TEST_MSG), 60_000); // then every 60 s
-  // ────────────────────────────────────────────────────────────────────────────
-});
+document.addEventListener('DOMContentLoaded', init);
