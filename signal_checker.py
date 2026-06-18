@@ -50,7 +50,7 @@ REZONE_REMINDER = 4 * 60 * 60  # 4 hours
 # Set to True to force a STRONG BUY alert for BTC on the next run — bypasses all
 # market logic so you can confirm GitHub Actions → Telegram is working end-to-end.
 # Delete the cache on GitHub (Actions → Caches) before running, then set back to False.
-TEST_FORCE_SIGNAL = True
+TEST_FORCE_SIGNAL = False
 
 # ── Zone helpers ──────────────────────────────────────────────────────────────
 def direction_zone(label):
