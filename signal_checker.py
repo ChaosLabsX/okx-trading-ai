@@ -43,6 +43,12 @@ EMOJI        = {'STRONG BUY': '🟢', 'BUY': '🔵', 'SELL': '🟠', 'STRONG SEL
 # flips zones twice in 2 minutes it is noise, not a real signal.
 FLIP_COOLDOWN = 2 * 60
 
+# ── Test mode ─────────────────────────────────────────────────────────────────
+# Set to True to receive a heartbeat Telegram message on every scan (~every 60 s).
+# Use this to verify your GitHub Secrets are set correctly and Telegram is working.
+# Set back to False once confirmed — it will spam you otherwise.
+TEST_HEARTBEAT = True
+
 
 # ── Zone helpers ──────────────────────────────────────────────────────────────
 def direction_zone(label):
@@ -332,6 +338,14 @@ def main():
         portfolio = fetch_portfolio_symbols()
         run_scan(cache, portfolio)
         save_cache(cache)
+
+        if TEST_HEARTBEAT:
+            send_telegram(
+                f'🔔 <b>Heartbeat — Scan #{scan_num}</b>\n'
+                f'⏰ {time.strftime("%H:%M UTC")}\n'
+                f'✅ GitHub Actions + Telegram working\n'
+                f'<i>(disable TEST_HEARTBEAT in signal_checker.py when done)</i>'
+            )
 
         elapsed   = time.time() - start
         remaining = LOOP_DURATION - elapsed
