@@ -154,12 +154,19 @@ async function fetchAllData() {
     ...state.scannerSymbols,
     ...state.portfolio.map(p => p.symbol),
   ])];
-  // Fetch price/indicator data in batches of 4
-  for (let i = 0; i < symbols.length; i += 4) {
-    await Promise.allSettled(symbols.slice(i, i + 4).map(fetchSymbolData));
+  // Fetch in batches of 2 with a 250 ms gap — prevents OKX 429 rate-limit errors.
+  // Each symbol fires 3 requests (ticker + 1H + 4H), so batch-of-2 = 6 concurrent.
+  for (let i = 0; i < symbols.length; i += 2) {
+    await Promise.allSettled(symbols.slice(i, i + 2).map(fetchSymbolData));
+    if (i + 2 < symbols.length) await new Promise(r => setTimeout(r, 250));
   }
-  // Fetch funding rates + open interest in background (non-blocking)
-  Promise.allSettled(symbols.map(fetchOKXDerivData)).catch(() => { });
+  // Fetch funding rates + open interest in small batches (non-blocking)
+  (async () => {
+    for (let i = 0; i < symbols.length; i += 3) {
+      await Promise.allSettled(symbols.slice(i, i + 3).map(fetchOKXDerivData));
+      if (i + 3 < symbols.length) await new Promise(r => setTimeout(r, 300));
+    }
+  })().catch(() => { });
 }
 
 async function fetchOKXDerivData(symbol) {
@@ -373,7 +380,7 @@ function reversalConfirmedBrowser(ind, zone) {
   // Returns true (allow alert) when there is actual evidence the move is turning.
   // Returns true also when data is insufficient — don't block on missing history.
   if (!ind || ind.lastOpen == null || ind.lastClose == null || ind.rsi == null || ind.rsiPrev == null) return true;
-  if (zone === 'up')   return ind.lastClose >= ind.lastOpen && ind.rsi >= ind.rsiPrev;
+  if (zone === 'up') return ind.lastClose >= ind.lastOpen && ind.rsi >= ind.rsiPrev;
   if (zone === 'down') return ind.lastClose <= ind.lastOpen && ind.rsi <= ind.rsiPrev;
   return true;
 }
@@ -400,7 +407,7 @@ function checkSignalAlerts() {
     // Zone-based dedup: BUY and STRONG BUY are the same zone — no repeat alert.
     // Persisted in localStorage so page refreshes never re-trigger existing signals.
     const currentZone = isSellSignal ? 'down' : isAlert ? 'up' : 'neutral';
-    const lastZone    = state.notifiedSignals[sym] ?? 'neutral';
+    const lastZone = state.notifiedSignals[sym] ?? 'neutral';
     const alreadyNotified = shouldAlert && currentZone === lastZone;
 
     // Reversal confirmation: same filter as signal_checker.py — prevents alerting
@@ -506,16 +513,11 @@ async function fetchOKXBalance() {
       if (!td) {
         // Coin exists only in Funding — inject it so sync picks it up
         tradingDetails.push({ ccy: fb.ccy, availBal: fb.availBal, cashBal: fb.availBal, eq: fb.availBal });
-        console.log(`[OKX] ${fb.ccy} found in Funding account (${availBal}) — not in Trading`);
       }
     }
   } catch (e) {
     console.warn('[OKX] Funding account fetch failed:', e.message);
   }
-
-  // Log trading-account coins for diagnostics (visible in browser console F12 → Console)
-  console.log('[OKX] Trading account coins:', tradingDetails.map(d =>
-    `${d.ccy}: avail=${d.availBal} cash=${d.cashBal} eq=${d.eq}`).join(' | '));
 
   // Merge USDT: use whichever account has the higher balance
   const tradingUSDT = parseFloat(tradingDetails.find(d => d.ccy === 'USDT')?.cashBal ?? '0');
@@ -574,23 +576,21 @@ async function syncPortfolioFromOKX() {
       }
 
       const bal = coinBal(d);
-      // Diagnostic log: open browser console (F12 → Console) to see this output
-      console.log(`[OKX Sync] ${d.ccy}: bal=${bal} | availBal=${d.availBal} cashBal=${d.cashBal} eq=${d.eq} frozenBal=${d.frozenBal}`);
-      if (bal <= 0) { console.log(`  → SKIPPED (bal=0)`); continue; }
+      if (bal <= 0) continue;
 
       const symbol = d.ccy + '-USDT';
 
       if (!state.tickers[symbol]) await fetchSymbolData(symbol);
       const price = state.tickers[symbol]?.price ?? 0;
-      if (price > 0 && bal * price < 1) { console.log(`  → SKIPPED (dust: ${bal} × $${price} = $${(bal*price).toFixed(4)})`); continue; }
+      if (price > 0 && bal * price < 1) continue;
 
       // OKX provides two avg-price fields:
       //   accAvgPx  — accumulated avg cost including fees (matches OKX UI "Spot PnL")
       //   openAvgPx — raw open avg price (no fees included)
       // Try accAvgPx first; it should produce the same P&L as the OKX portfolio page.
-      const accAvgPx  = parseFloat(d.accAvgPx  ?? '0') || 0;
+      const accAvgPx = parseFloat(d.accAvgPx ?? '0') || 0;
       const openAvgPx = parseFloat(d.openAvgPx ?? '0') || 0;
-      const apiAvgPx  = accAvgPx > 0 ? accAvgPx : openAvgPx;
+      const apiAvgPx = accAvgPx > 0 ? accAvgPx : openAvgPx;
       // Never fall back to current price — that would show $0 P&L which is wrong.
       // If OKX returns no avg price, leave avgBuyPrice as 0 (P&L displays '—').
 
@@ -731,14 +731,14 @@ function calcBB(closes, period = 20) {
 }
 
 function computeIndicators(candles1H, candles4H = []) {
-  const closes  = candles1H.map(c => c.close);
-  const opens   = candles1H.map(c => c.open);
+  const closes = candles1H.map(c => c.close);
+  const opens = candles1H.map(c => c.open);
   const volumes = candles1H.map(c => c.vol);
 
-  const rsi     = calcRSI(closes);
+  const rsi = calcRSI(closes);
   const rsiPrev = closes.length > 1 ? calcRSI(closes.slice(0, -1)) : null;
-  const macd    = calcMACD(closes);
-  const bb      = calcBB(closes);
+  const macd = calcMACD(closes);
+  const bb = calcBB(closes);
 
   // 4H RSI — higher-timeframe trend confirmation
   const closes4H = candles4H.map(c => c.close);
@@ -752,7 +752,7 @@ function computeIndicators(candles1H, candles4H = []) {
   }
 
   // Last candle direction + RSI momentum — used by reversal confirmation filter
-  const lastOpen  = opens.at(-1)  ?? null;
+  const lastOpen = opens.at(-1) ?? null;
   const lastClose = closes.at(-1) ?? null;
 
   return { rsi, rsiPrev, rsi4h, macd, bb, volRatio, lastOpen, lastClose, signal: generateSignal(rsi, macd, bb, rsi4h, volRatio) };
@@ -1063,17 +1063,17 @@ async function fetchNews(topic = '') {
   // CryptoPanic aggregates Twitter/X, Reddit, and all major outlets in one feed —
   // it's the closest free substitute for X since Twitter killed its free API in 2023.
   // proxies: per-feed override — use when a site blocks corsproxy.io specifically.
-  const PROXY_CORSPROXY  = u => `https://corsproxy.io/?${encodeURIComponent(u)}`;
+  const PROXY_CORSPROXY = u => `https://corsproxy.io/?${encodeURIComponent(u)}`;
   const PROXY_ALLORIGINS = u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`;
 
   const feeds = [
     // CryptoPanic blocks corsproxy.io → use allorigins only (avoids the 403 console error)
-    { rss: 'https://cryptopanic.com/news/rss/',               source: 'CryptoPanic',     proxies: [PROXY_ALLORIGINS] },
-    { rss: 'https://cointelegraph.com/rss',                   source: 'CoinTelegraph',   proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
-    { rss: 'https://decrypt.co/feed',                          source: 'Decrypt',         proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
-    { rss: 'https://www.coindesk.com/arc/outboundfeeds/rss/', source: 'CoinDesk',        proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
-    { rss: 'https://bitcoinmagazine.com/.rss/full/',           source: 'Bitcoin Magazine',proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
-    { rss: 'https://www.theblock.co/rss.xml',                 source: 'The Block',       proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
+    { rss: 'https://cryptopanic.com/news/rss/', source: 'CryptoPanic', proxies: [PROXY_ALLORIGINS] },
+    { rss: 'https://cointelegraph.com/rss', source: 'CoinTelegraph', proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
+    { rss: 'https://decrypt.co/feed', source: 'Decrypt', proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
+    { rss: 'https://www.coindesk.com/arc/outboundfeeds/rss/', source: 'CoinDesk', proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
+    { rss: 'https://bitcoinmagazine.com/.rss/full/', source: 'Bitcoin Magazine', proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
+    { rss: 'https://www.theblock.co/rss.xml', source: 'The Block', proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
   ];
 
   for (const feed of feeds) {
@@ -1386,10 +1386,10 @@ function parseTradeActions(text) {
     try {
       const a = JSON.parse(m[1]);
       if (a.side && a.symbol && a.amountUsdt) {
-        a.amountUsdt          = parseFloat(a.amountUsdt)          || 0;
-        a.partialTpPct        = parseFloat(a.partialTpPct)        || 0;
+        a.amountUsdt = parseFloat(a.amountUsdt) || 0;
+        a.partialTpPct = parseFloat(a.partialTpPct) || 0;
         a.trailingCallbackPct = parseFloat(a.trailingCallbackPct) || 0;
-        a.slPct               = parseFloat(a.slPct)               || 0;
+        a.slPct = parseFloat(a.slPct) || 0;
         // Legacy format compatibility
         a.tp = parseFloat(a.tp) || 0;
         a.sl = parseFloat(a.sl) || 0;
@@ -1453,7 +1453,7 @@ function showTradeConfirmation(action) {
 
   const price = state.tickers[action.symbol]?.price ?? 0;
   const isBuy = action.side === 'buy';
-  const coin  = action.symbol.replace('-USDT', '');
+  const coin = action.symbol.replace('-USDT', '');
 
   const portfolioEntry = state.portfolio.find(p => p.symbol === action.symbol);
   let coinAmt = price > 0 ? action.amountUsdt / price : null;
@@ -1467,14 +1467,14 @@ function showTradeConfirmation(action) {
     // ─── Option 3: Partial TP + Trailing Stop ──────────────────────────────
     el('tpSlToggles').style.display = 'none';
 
-    let pTpPct   = action.partialTpPct;
+    let pTpPct = action.partialTpPct;
     let trailPct = action.trailingCallbackPct || 2.5;
-    let slPct    = action.slPct || 8;
+    let slPct = action.slPct || 8;
 
     function calcO3Prices() {
       return {
         ptPrice: price * (1 + pTpPct / 100),
-        slPrice: price * (1 - slPct  / 100),
+        slPrice: price * (1 - slPct / 100),
       };
     }
 
@@ -1539,7 +1539,7 @@ function showTradeConfirmation(action) {
       ['Amount', `${fmtMoney(action.amountUsdt)} USDT${coinAmt ? ` ≈ ${parseFloat(coinAmt.toFixed(6))} ${coin}` : ''}`],
       ['Entry Price', price ? `${fmtCrypto(price)} (current market)` : '? — refresh market data first'],
       action.tp ? ['Take Profit', `${fmtCrypto(action.tp)}${tpPct ? ` <span class="pos">(+${tpPct}%)</span>` : ''}`] : null,
-      action.sl ? ['Stop Loss',   `${fmtCrypto(action.sl)}${slPct ? ` <span class="neg">(-${slPct}%)</span>` : ''}`] : null,
+      action.sl ? ['Stop Loss', `${fmtCrypto(action.sl)}${slPct ? ` <span class="neg">(-${slPct}%)</span>` : ''}`] : null,
     ].filter(Boolean);
 
     el('tradeConfirmDetails').innerHTML =
@@ -1547,8 +1547,8 @@ function showTradeConfirmation(action) {
        <p class="trade-warning">⚠ TP/SL orders will be placed on OKX after execution based on your toggles below.</p>`;
 
     const tpSlToggles = el('tpSlToggles');
-    const tpToggle    = el('tpToggle');
-    const slToggle    = el('slToggle');
+    const tpToggle = el('tpToggle');
+    const slToggle = el('slToggle');
     const hasAlgo = action.tp || action.sl;
     tpSlToggles.style.display = hasAlgo ? 'block' : 'none';
     if (hasAlgo) {
@@ -1565,7 +1565,7 @@ function showTradeConfirmation(action) {
         table.querySelectorAll('tr').forEach(row => {
           const label = row.cells[0]?.textContent;
           if (label === 'Take Profit') row.style.opacity = tpToggle.classList.contains('active') ? '' : '.35';
-          if (label === 'Stop Loss')   row.style.opacity = slToggle.classList.contains('active') ? '' : '.35';
+          if (label === 'Stop Loss') row.style.opacity = slToggle.classList.contains('active') ? '' : '.35';
         });
       }
       tpToggle.onclick = () => {
@@ -1599,16 +1599,16 @@ async function saveOption3Trade({ id, symbol, entryPrice, partialTpId, slId, tra
       headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
       body: JSON.stringify({
         id, symbol,
-        entry_price:    entryPrice,
-        partial_tp_id:  partialTpId,
-        sl_id:          slId,
-        trailing_id:    trailingId,
-        amount_usdt:    amountUsdt,
-        sz_half:        szHalf,
+        entry_price: entryPrice,
+        partial_tp_id: partialTpId,
+        sl_id: slId,
+        trailing_id: trailingId,
+        amount_usdt: amountUsdt,
+        sz_half: szHalf,
         partial_tp_pct: partialTpPct,
-        sl_pct:         slPct,
-        trailing_pct:   trailingPct,
-        phase:          1,
+        sl_pct: slPct,
+        trailing_pct: trailingPct,
+        phase: 1,
       }),
     });
     if (res.ok) {
@@ -1643,10 +1643,10 @@ async function executeTrade(action, coinAmt) {
 
     // ─── Option 3: Partial TP + SL + Trailing Stop ───────────────────────
     if (action._pTpPct > 0 && szCoin > 0) {
-      const halfSz   = (szCoin * 0.5  * 0.9985).toFixed(8); // 50% with fee haircut
-      const fullSz   = (szCoin * 1.0  * 0.9985).toFixed(8); // 100% with fee haircut
-      const ptPrice  = price * (1 + action._pTpPct  / 100);
-      const slPrice  = price * (1 - action._slPct   / 100);
+      const halfSz = (szCoin * 0.5 * 0.9985).toFixed(8); // 50% with fee haircut
+      const fullSz = (szCoin * 1.0 * 0.9985).toFixed(8); // 100% with fee haircut
+      const ptPrice = price * (1 + action._pTpPct / 100);
+      const slPrice = price * (1 - action._slPct / 100);
       const baseAlgo = { instId: action.symbol, tdMode: 'cash', side: 'sell' };
 
       btn.textContent = 'Setting up TP/SL/Trailing…';
@@ -1677,22 +1677,22 @@ async function executeTrade(action, coinAmt) {
         toast('Option 3 active: Partial TP + SL + Trailing Stop all set on OKX', 'success', 6000);
 
         // Extract OKX algo order IDs and save to Supabase for break-even SL monitoring
-        const ptId    = ptResult.value?.data?.[0]?.algoId;
-        const slId    = slResult.value?.data?.[0]?.algoId;
+        const ptId = ptResult.value?.data?.[0]?.algoId;
+        const slId = slResult.value?.data?.[0]?.algoId;
         const trailId = trailResult.value?.data?.[0]?.algoId;
         if (ptId && slId && trailId) {
           await saveOption3Trade({
             id: ptId,
-            symbol:       action.symbol,
-            entryPrice:   price,
-            partialTpId:  ptId,
+            symbol: action.symbol,
+            entryPrice: price,
+            partialTpId: ptId,
             slId,
-            trailingId:   trailId,
-            amountUsdt:   action.amountUsdt,
-            szHalf:       halfSz,
+            trailingId: trailId,
+            amountUsdt: action.amountUsdt,
+            szHalf: halfSz,
             partialTpPct: action._pTpPct,
-            slPct:        action._slPct,
-            trailingPct:  action._trailPct,
+            slPct: action._slPct,
+            trailingPct: action._trailPct,
           });
         }
       } else {
@@ -1711,7 +1711,7 @@ async function executeTrade(action, coinAmt) {
       const useSL = action.sl && el('slToggle')?.classList.contains('active');
 
       if ((useTP || useSL) && szCoin > 0) {
-        const algoSz   = (szCoin * 0.9985).toFixed(8);
+        const algoSz = (szCoin * 0.9985).toFixed(8);
         const algoSide = isBuy ? 'sell' : 'buy';
         const baseAlgo = { instId: action.symbol, tdMode: 'cash', side: algoSide };
 
