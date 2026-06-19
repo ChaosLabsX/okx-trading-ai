@@ -153,14 +153,17 @@ def calc_vol_ratio(volumes):
     return volumes[-1] / avg if avg > 0 else None
 
 
-def reversal_confirmed(opens, closes, zone):
+def reversal_confirmed(opens, closes, volumes, zone):
     """
     Guards against alerting into a falling knife (BUY) or a rising knife (SELL).
 
-    A coin can be RSI-oversold for 16+ hours while still dropping. This check
-    requires the most recent 1H candle to show the move is actually turning:
-      BUY  → last candle green (close ≥ open)  AND RSI turning up   (rising vs prev bar)
-      SELL → last candle red   (close ≤ open)  AND RSI turning down (falling vs prev bar)
+    A coin can be RSI-oversold for 16+ hours while still dropping. Requires ALL
+    three conditions on the most recent 1H candle:
+      BUY  → candle green (close ≥ open)  AND RSI turning up   AND volume ≥ 1.2× avg
+      SELL → candle red   (close ≤ open)  AND RSI turning down AND volume ≥ 1.2× avg
+
+    The volume check filters dead-cat bounces — real reversals attract buyers
+    (or sellers) and show up as above-average volume.
 
     Returns True  = allow the alert
             False = suppress — no reversal evidence yet
@@ -173,10 +176,16 @@ def reversal_confirmed(opens, closes, zone):
     if rsi_now is None or rsi_prev is None:
         return True
 
+    # Volume confirmation: last candle must be at least 1.2× the 20-bar average
+    vol_ok = True
+    if volumes and len(volumes) >= 21:
+        avg_vol = sum(volumes[-21:-1]) / 20
+        vol_ok  = avg_vol > 0 and volumes[-1] >= avg_vol * 1.2
+
     if zone == 'up':    # BUY signal
-        return closes[-1] >= opens[-1] and rsi_now >= rsi_prev
+        return closes[-1] >= opens[-1] and rsi_now >= rsi_prev and vol_ok
     if zone == 'down':  # SELL signal
-        return closes[-1] <= opens[-1] and rsi_now <= rsi_prev
+        return closes[-1] <= opens[-1] and rsi_now <= rsi_prev and vol_ok
     return True
 
 
@@ -318,7 +327,7 @@ def run_scan(cache):
             # is turning. Prevents alerting into a falling knife (BUY while still dropping)
             # or a rising knife (SELL while still climbing). Applies to both new zone
             # entries AND 4-hour re-alerts, so a sustained drop stays silent.
-            if not reversal_confirmed(opens, closes, zone):
+            if not reversal_confirmed(opens, closes, volumes, zone):
                 print(f'  {symbol}: {label} — no reversal confirmation yet (candle/RSI still against signal)')
                 time.sleep(0.3)
                 continue

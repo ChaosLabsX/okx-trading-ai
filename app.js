@@ -372,13 +372,13 @@ async function sendTelegramAlert(message) {
 
 function reversalConfirmedBrowser(ind, zone) {
   // Mirrors signal_checker.py's reversal_confirmed():
-  // BUY  → last candle green (close ≥ open) AND RSI turning up   (rsi ≥ rsiPrev)
-  // SELL → last candle red   (close ≤ open) AND RSI turning down (rsi ≤ rsiPrev)
-  // Returns true (allow alert) when there is actual evidence the move is turning.
-  // Returns true also when data is insufficient — don't block on missing history.
+  // BUY  → green candle AND RSI turning up AND volume ≥ 1.2× avg
+  // SELL → red candle   AND RSI turning down AND volume ≥ 1.2× avg
+  // Returns true when data is insufficient — don't block on missing history.
   if (!ind || ind.lastOpen == null || ind.lastClose == null || ind.rsi == null || ind.rsiPrev == null) return true;
-  if (zone === 'up') return ind.lastClose >= ind.lastOpen && ind.rsi >= ind.rsiPrev;
-  if (zone === 'down') return ind.lastClose <= ind.lastOpen && ind.rsi <= ind.rsiPrev;
+  const volOk = ind.volRatio == null || ind.volRatio >= 1.2;
+  if (zone === 'up') return ind.lastClose >= ind.lastOpen && ind.rsi >= ind.rsiPrev && volOk;
+  if (zone === 'down') return ind.lastClose <= ind.lastOpen && ind.rsi <= ind.rsiPrev && volOk;
   return true;
 }
 
