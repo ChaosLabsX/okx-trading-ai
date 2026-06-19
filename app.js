@@ -366,6 +366,18 @@ async function sendTelegramAlert(message) {
   } catch { }
 }
 
+function reversalConfirmedBrowser(ind, zone) {
+  // Mirrors signal_checker.py's reversal_confirmed():
+  // BUY  → last candle green (close ≥ open) AND RSI turning up   (rsi ≥ rsiPrev)
+  // SELL → last candle red   (close ≤ open) AND RSI turning down (rsi ≤ rsiPrev)
+  // Returns true (allow alert) when there is actual evidence the move is turning.
+  // Returns true also when data is insufficient — don't block on missing history.
+  if (!ind || ind.lastOpen == null || ind.lastClose == null || ind.rsi == null || ind.rsiPrev == null) return true;
+  if (zone === 'up')   return ind.lastClose >= ind.lastOpen && ind.rsi >= ind.rsiPrev;
+  if (zone === 'down') return ind.lastClose <= ind.lastOpen && ind.rsi <= ind.rsiPrev;
+  return true;
+}
+
 function checkSignalAlerts() {
   const EMOJI = {
     'STRONG BUY': '🟢',
@@ -376,6 +388,7 @@ function checkSignalAlerts() {
 
   for (const sym of state.scannerSymbols) {
     const sig = state.indicators[sym]?.signal;
+    const ind = state.indicators[sym];
     const price = state.tickers[sym]?.price;
     if (!sig || !price) continue;
 
@@ -389,6 +402,10 @@ function checkSignalAlerts() {
     const currentZone = isSellSignal ? 'down' : isAlert ? 'up' : 'neutral';
     const lastZone    = state.notifiedSignals[sym] ?? 'neutral';
     const alreadyNotified = shouldAlert && currentZone === lastZone;
+
+    // Reversal confirmation: same filter as signal_checker.py — prevents alerting
+    // into a falling knife (BUY while candle is still red and RSI still falling).
+    if (shouldAlert && !alreadyNotified && !reversalConfirmedBrowser(ind, currentZone)) continue;
 
     if (shouldAlert && !alreadyNotified) {
       const coin = sym.replace('-USDT', '');
@@ -689,12 +706,14 @@ function calcBB(closes, period = 20) {
 }
 
 function computeIndicators(candles1H, candles4H = []) {
-  const closes = candles1H.map(c => c.close);
+  const closes  = candles1H.map(c => c.close);
+  const opens   = candles1H.map(c => c.open);
   const volumes = candles1H.map(c => c.vol);
 
-  const rsi = calcRSI(closes);
-  const macd = calcMACD(closes);
-  const bb = calcBB(closes);
+  const rsi     = calcRSI(closes);
+  const rsiPrev = closes.length > 1 ? calcRSI(closes.slice(0, -1)) : null;
+  const macd    = calcMACD(closes);
+  const bb      = calcBB(closes);
 
   // 4H RSI — higher-timeframe trend confirmation
   const closes4H = candles4H.map(c => c.close);
@@ -707,7 +726,11 @@ function computeIndicators(candles1H, candles4H = []) {
     if (avg > 0) volRatio = volumes[volumes.length - 1] / avg;
   }
 
-  return { rsi, rsi4h, macd, bb, volRatio, signal: generateSignal(rsi, macd, bb, rsi4h, volRatio) };
+  // Last candle direction + RSI momentum — used by reversal confirmation filter
+  const lastOpen  = opens.at(-1)  ?? null;
+  const lastClose = closes.at(-1) ?? null;
+
+  return { rsi, rsiPrev, rsi4h, macd, bb, volRatio, lastOpen, lastClose, signal: generateSignal(rsi, macd, bb, rsi4h, volRatio) };
 }
 
 // ═══════════════════════════════════════════════════════════
