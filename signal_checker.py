@@ -11,22 +11,30 @@ Alert rules:
 - SELL/STRONG SELL alerts are filtered to coins you actually hold (read live from Supabase).
 """
 
+import base64
+import hashlib
+import hmac
 import json
 import math
 import os
 import time
+from datetime import datetime, timezone
 
 import requests
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SYMBOLS = [
-    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT', 'XRP-USDT',
-    'DOGE-USDT', 'ADA-USDT', 'AVAX-USDT', 'MATIC-USDT', 'DOT-USDT',
+    'AVAX-USDT', 'SOL-USDT',  'DOGE-USDT', 'PEPE-USDT', 'WIF-USDT',
+    'SUI-USDT',  'NEAR-USDT', 'INJ-USDT',  'APT-USDT',  'FET-USDT',
+    'TIA-USDT',  'LINK-USDT', 'SEI-USDT',
 ]
 
 OKX_BASE           = 'https://www.okx.com'
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID   = os.environ.get('TELEGRAM_CHAT_ID', '')
+OKX_API_KEY        = os.environ.get('OKX_API_KEY', '')
+OKX_SECRET_KEY     = os.environ.get('OKX_SECRET_KEY', '')
+OKX_PASSPHRASE     = os.environ.get('OKX_PASSPHRASE', '')
 CACHE_FILE         = 'signal_cache.json'
 
 SUPABASE_URL = 'https://trbfhtopkcupzeqmrnom.supabase.co'
@@ -370,6 +378,163 @@ def run_scan(cache, portfolio_symbols):
             print(f'  {symbol}: ERROR — {e}')
 
 
+# ── OKX private API helpers ───────────────────────────────────────────────────
+def _okx_sign(method, path, body=None):
+    """Build OKX authentication headers (HMAC-SHA256)."""
+    ts  = datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+    pre = ts + method + path + (json.dumps(body, separators=(',', ':')) if body else '')
+    sig = base64.b64encode(
+        hmac.new(OKX_SECRET_KEY.encode(), pre.encode(), hashlib.sha256).digest()
+    ).decode()
+    return {
+        'OK-ACCESS-KEY':        OKX_API_KEY,
+        'OK-ACCESS-SIGN':       sig,
+        'OK-ACCESS-TIMESTAMP':  ts,
+        'OK-ACCESS-PASSPHRASE': OKX_PASSPHRASE,
+        'Content-Type':         'application/json',
+    }
+
+def _okx_get(path):
+    r = requests.get(OKX_BASE + path, headers=_okx_sign('GET', path), timeout=15)
+    r.raise_for_status()
+    d = r.json()
+    if d.get('code') != '0':
+        raise Exception(f"OKX {d.get('code')}: {d.get('msg', '')}")
+    return d
+
+def _okx_post(path, body):
+    r = requests.post(OKX_BASE + path, headers=_okx_sign('POST', path, body), json=body, timeout=15)
+    r.raise_for_status()
+    d = r.json()
+    if d.get('code') != '0':
+        raise Exception(f"OKX {d.get('code')}: {d.get('msg', '')}")
+    return d
+
+
+# ── Option 3 break-even SL monitor ────────────────────────────────────────────
+def _fetch_option3_trades():
+    """Fetch all phase-1 Option 3 trades from Supabase."""
+    try:
+        r = requests.get(
+            f'{SUPABASE_URL}/rest/v1/option3_trades?phase=eq.1&select=*',
+            headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            return r.json()
+        print(f'  [Option3] Supabase fetch error: {r.status_code}')
+    except Exception as e:
+        print(f'  [Option3] Supabase fetch failed: {e}')
+    return []
+
+
+def _is_partial_tp_filled(partial_tp_id):
+    """Return True if the partial TP conditional order has triggered on OKX."""
+    try:
+        # Triggered orders leave 'live' and appear in history with state='effective'
+        d = _okx_get(f'/api/v5/trade/orders-algo-history?ordType=conditional&algoId={partial_tp_id}')
+        for order in d.get('data', []):
+            if order.get('algoId') == partial_tp_id and order.get('state') == 'effective':
+                return True
+    except Exception as e:
+        print(f'  [Option3] Order check error ({partial_tp_id}): {e}')
+    return False
+
+
+def _update_sl_to_breakeven(trade):
+    """Cancel original SL, place a new conditional SL at the entry price."""
+    symbol     = trade['symbol']
+    entry_px   = float(trade['entry_price'])
+    sl_id      = trade['sl_id']
+    sz_half    = trade['sz_half']
+
+    # Step 1 — cancel original SL
+    try:
+        _okx_post('/api/v5/trade/cancel-algos', [{'algoId': sl_id, 'instId': symbol}])
+        print(f'  [Option3] {symbol}: original SL ({sl_id}) canceled ✓')
+    except Exception as e:
+        # May already be gone (price passed through it) — proceed anyway
+        print(f'  [Option3] {symbol}: SL cancel warning: {e}')
+
+    # Step 2 — place break-even SL at entry price
+    try:
+        resp      = _okx_post('/api/v5/trade/order-algo', {
+            'instId':          symbol,
+            'tdMode':          'cash',
+            'side':            'sell',
+            'ordType':         'conditional',
+            'sz':              sz_half,
+            'slTriggerPx':     str(entry_px),
+            'slOrdPx':         '-1',
+            'slTriggerPxType': 'last',
+        })
+        new_sl_id = resp.get('data', [{}])[0].get('algoId', '')
+        print(f'  [Option3] {symbol}: break-even SL placed at {entry_px} (ID: {new_sl_id}) ✓')
+        return new_sl_id
+    except Exception as e:
+        print(f'  [Option3] {symbol}: break-even SL placement failed: {e}')
+        return None
+
+
+def _mark_phase2(trade_id, new_sl_id):
+    """Update Supabase: set phase=2 and store new SL order ID."""
+    try:
+        r = requests.patch(
+            f'{SUPABASE_URL}/rest/v1/option3_trades?id=eq.{trade_id}',
+            headers={
+                'apikey':        SUPABASE_KEY,
+                'Authorization': f'Bearer {SUPABASE_KEY}',
+                'Content-Type':  'application/json',
+            },
+            json={
+                'phase':      2,
+                'sl_id':      new_sl_id or '',
+                'updated_at': datetime.now(timezone.utc).isoformat(),
+            },
+            timeout=10,
+        )
+        if r.status_code in (200, 204):
+            print(f'  [Option3] Trade {trade_id}: marked phase 2 ✓')
+        else:
+            print(f'  [Option3] Supabase phase update failed: {r.status_code}')
+    except Exception as e:
+        print(f'  [Option3] Supabase phase update error: {e}')
+
+
+def monitor_option3_trades():
+    """
+    Check all active Option 3 trades.
+    When a partial TP order fills, cancel the original SL and place a new one
+    at the entry price (break-even), making the remaining 50% risk-free.
+    """
+    if not OKX_API_KEY or not OKX_SECRET_KEY or not OKX_PASSPHRASE:
+        return  # OKX secrets not in GitHub Actions yet — skip silently
+
+    trades = _fetch_option3_trades()
+    if not trades:
+        return
+
+    print(f'\n  [Option3] Monitoring {len(trades)} active trade(s)...')
+    for trade in trades:
+        symbol = trade['symbol']
+        try:
+            if _is_partial_tp_filled(trade['partial_tp_id']):
+                print(f'  [Option3] {symbol}: partial TP triggered — moving SL to break-even...')
+                new_sl_id = _update_sl_to_breakeven(trade)
+                _mark_phase2(trade['id'], new_sl_id)
+                send_telegram(
+                    f"✅ <b>Option 3 Phase 2 — {symbol.replace('-USDT', '')}</b>\n"
+                    f"50% sold at target profit ✓\n"
+                    f"SL moved to entry price (break-even) ✓\n"
+                    f"Trailing stop is protecting the remaining 50%.\n"
+                    f"⏰ {time.strftime('%H:%M UTC')}"
+                )
+            else:
+                print(f'  [Option3] {symbol}: partial TP not yet triggered')
+        except Exception as e:
+            print(f'  [Option3] {symbol}: error — {e}')
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 def main():
     cache    = load_cache()
@@ -383,6 +548,7 @@ def main():
 
         portfolio = fetch_portfolio_symbols()
         run_scan(cache, portfolio)
+        monitor_option3_trades()
         save_cache(cache)
 
         elapsed   = time.time() - start

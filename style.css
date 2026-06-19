@@ -722,6 +722,96 @@ tr:hover .btn-row-del { opacity: 1; }
   border-radius: 4px;
 }
 
+/* ─── TP/SL toggle buttons in trade confirm modal ─── */
+.tp-sl-toggles {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.tp-sl-toggles-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.tp-sl-toggles-row { display: flex; gap: 8px; }
+.toggle-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all .15s;
+  text-align: center;
+}
+.toggle-btn.active {
+  border-color: var(--green);
+  color: var(--green);
+  background: rgba(52,199,89,.08);
+}
+.toggle-btn:not(.active) {
+  border-color: var(--border);
+  color: var(--text-muted);
+  text-decoration: line-through;
+  opacity: .65;
+}
+.toggle-btn:hover { opacity: 1; }
+
+/* ─── Option 3 trade confirmation UI ─── */
+.o3-plan { display: flex; flex-direction: column; gap: 0; }
+
+.o3-phase-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 10px 0 6px;
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+}
+.o3-plan > .trade-detail-table:first-of-type { margin-bottom: 0; }
+
+.o3-inputs {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.o3-inp {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.o3-inp span {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.o3-inp input {
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-focus);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  text-align: center;
+}
+.o3-inp input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .ai-footer {
   display: flex;
   align-items: center;

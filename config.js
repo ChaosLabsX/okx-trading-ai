@@ -30,10 +30,11 @@ const CONFIG = {
   // Your holdings — leave empty, add via the + Add button
   DEFAULT_PORTFOLIO: [],
 
-  // Default coins to watch on OKX
+  // Default coins to watch on OKX — focused on high-volatility fast movers
   DEFAULT_SCANNER: [
-    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT', 'XRP-USDT',
-    'DOGE-USDT', 'ADA-USDT', 'AVAX-USDT', 'MATIC-USDT', 'DOT-USDT',
+    'AVAX-USDT', 'SOL-USDT',  'DOGE-USDT', 'PEPE-USDT', 'WIF-USDT',
+    'SUI-USDT',  'NEAR-USDT', 'INJ-USDT',  'APT-USDT',  'FET-USDT',
+    'TIA-USDT',  'LINK-USDT', 'SEI-USDT',
   ],
 
   RISK_PROFILE: 'moderate',   // conservative | moderate | aggressive

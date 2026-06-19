@@ -489,14 +489,35 @@ async function fetchOKXBalance() {
   const trading = await okxSignedGet('/api/v5/account/balance');
   const tradingDetails = trading.data[0]?.details ?? [];
 
-  // Funding account (wallet where deposits land)
+  // Funding account — fetch ALL coins (not just USDT).
+  // On Classic (non-Unified) OKX accounts, spot coins often live in the Funding wallet
+  // and don't appear in /api/v5/account/balance at all.
   let fundingUSDT = 0;
   try {
-    const funding = await okxSignedGet('/api/v5/asset/balances?ccy=USDT');
-    fundingUSDT = parseFloat(funding.data?.find(b => b.ccy === 'USDT')?.availBal ?? '0');
-  } catch { }
+    const funding = await okxSignedGet('/api/v5/asset/balances');
+    for (const fb of (funding.data ?? [])) {
+      const availBal = parseFloat(fb.availBal ?? '0') || 0;
+      if (fb.ccy === 'USDT') {
+        fundingUSDT = availBal;
+        continue;
+      }
+      if (availBal <= 0) continue;
+      const td = tradingDetails.find(d => d.ccy === fb.ccy);
+      if (!td) {
+        // Coin exists only in Funding — inject it so sync picks it up
+        tradingDetails.push({ ccy: fb.ccy, availBal: fb.availBal, cashBal: fb.availBal, eq: fb.availBal });
+        console.log(`[OKX] ${fb.ccy} found in Funding account (${availBal}) — not in Trading`);
+      }
+    }
+  } catch (e) {
+    console.warn('[OKX] Funding account fetch failed:', e.message);
+  }
 
-  // Merge: if trading USDT is lower than funding USDT, inject the funding balance
+  // Log trading-account coins for diagnostics (visible in browser console F12 → Console)
+  console.log('[OKX] Trading account coins:', tradingDetails.map(d =>
+    `${d.ccy}: avail=${d.availBal} cash=${d.cashBal} eq=${d.eq}`).join(' | '));
+
+  // Merge USDT: use whichever account has the higher balance
   const tradingUSDT = parseFloat(tradingDetails.find(d => d.ccy === 'USDT')?.cashBal ?? '0');
   if (fundingUSDT > tradingUSDT) {
     const existing = tradingDetails.find(d => d.ccy === 'USDT');
@@ -527,19 +548,22 @@ async function syncPortfolioFromOKX() {
     // where all coins are locked in an open order — the coin still belongs to the user.
     // NOTE: never use JS `||` here — `"0" || fallback` returns `"0"` (string "0" is truthy).
     function coinBal(d) {
-      const avail = parseFloat(d.availBal ?? 'NaN');
-      if (avail > 0) return avail;
+      // Prefer cashBal — it's the TOTAL (available + frozen in open orders).
+      // availBal is only the unfrozen portion, which can be near-zero when most
+      // coins are locked in active limit orders (DOGE/SOL case).
       const cash = parseFloat(d.cashBal ?? 'NaN');
       if (cash > 0) return cash;
+      const avail = parseFloat(d.availBal ?? 'NaN');
+      if (avail > 0) return avail;
       return parseFloat(d.eq ?? '0') || 0;
     }
 
-    // Build a ccy→cashBal map for stale-entry cleanup.
-    // Use cashBal (not availBal) so coins locked in open orders are NOT removed.
+    // Build a ccy→balance map for stale-entry cleanup.
+    // Use coinBal (same logic as the add loop) so a coin isn't flagged as zero
+    // just because cashBal is "0" while availBal is non-zero (or vice versa).
     const okxTotalMap = {};
     for (const d of details) {
-      const cash = parseFloat(d.cashBal ?? d.eq ?? '0');
-      okxTotalMap[d.ccy] = isNaN(cash) ? 0 : cash;
+      okxTotalMap[d.ccy] = coinBal(d);
     }
 
     for (const d of details) {
@@ -550,13 +574,15 @@ async function syncPortfolioFromOKX() {
       }
 
       const bal = coinBal(d);
-      if (bal <= 0) continue;
+      // Diagnostic log: open browser console (F12 → Console) to see this output
+      console.log(`[OKX Sync] ${d.ccy}: bal=${bal} | availBal=${d.availBal} cashBal=${d.cashBal} eq=${d.eq} frozenBal=${d.frozenBal}`);
+      if (bal <= 0) { console.log(`  → SKIPPED (bal=0)`); continue; }
 
       const symbol = d.ccy + '-USDT';
 
       if (!state.tickers[symbol]) await fetchSymbolData(symbol);
       const price = state.tickers[symbol]?.price ?? 0;
-      if (price > 0 && bal * price < 1) continue; // skip dust
+      if (price > 0 && bal * price < 1) { console.log(`  → SKIPPED (dust: ${bal} × $${price} = $${(bal*price).toFixed(4)})`); continue; }
 
       // OKX provides two avg-price fields:
       //   accAvgPx  — accumulated avg cost including fees (matches OKX UI "Spot PnL")
@@ -608,7 +634,6 @@ async function syncPortfolioFromOKX() {
     renderScanner();
 
     toast(`OKX synced: ${added} new, ${updated} updated`, 'success');
-    if (added > 0) toast('Tip: new positions use current price as avg buy price — update if needed', 'info');
   } catch (err) {
     toast('OKX sync failed: ' + err.message, 'error');
   } finally {
@@ -1037,21 +1062,31 @@ async function fetchNews(topic = '') {
   // RSS via corsproxy.io — free, no API key, CORS-safe.
   // CryptoPanic aggregates Twitter/X, Reddit, and all major outlets in one feed —
   // it's the closest free substitute for X since Twitter killed its free API in 2023.
+  // proxies: per-feed override — use when a site blocks corsproxy.io specifically.
+  const PROXY_CORSPROXY  = u => `https://corsproxy.io/?${encodeURIComponent(u)}`;
+  const PROXY_ALLORIGINS = u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`;
+
   const feeds = [
-    { rss: 'https://cryptopanic.com/news/rss/',                        source: 'CryptoPanic' },  // X/Twitter + Reddit + news aggregator
-    { rss: 'https://cointelegraph.com/rss',                            source: 'CoinTelegraph' },
-    { rss: 'https://decrypt.co/feed',                                   source: 'Decrypt' },
-    { rss: 'https://www.coindesk.com/arc/outboundfeeds/rss/',           source: 'CoinDesk' },
-    { rss: 'https://bitcoinmagazine.com/.rss/full/',                    source: 'Bitcoin Magazine' },
-    { rss: 'https://www.theblock.co/rss.xml',                           source: 'The Block' },
+    // CryptoPanic blocks corsproxy.io → use allorigins only (avoids the 403 console error)
+    { rss: 'https://cryptopanic.com/news/rss/',               source: 'CryptoPanic',     proxies: [PROXY_ALLORIGINS] },
+    { rss: 'https://cointelegraph.com/rss',                   source: 'CoinTelegraph',   proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
+    { rss: 'https://decrypt.co/feed',                          source: 'Decrypt',         proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
+    { rss: 'https://www.coindesk.com/arc/outboundfeeds/rss/', source: 'CoinDesk',        proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
+    { rss: 'https://bitcoinmagazine.com/.rss/full/',           source: 'Bitcoin Magazine',proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
+    { rss: 'https://www.theblock.co/rss.xml',                 source: 'The Block',       proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
   ];
 
   for (const feed of feeds) {
     try {
-      const url = `https://corsproxy.io/?${encodeURIComponent(feed.rss)}`;
-      const res = await fetchWithTimeout(url);
-      if (!res.ok) continue;
-      const text = await res.text();
+      let text = null;
+      for (const proxy of feed.proxies) {
+        try {
+          const res = await fetchWithTimeout(proxy(feed.rss));
+          if (!res.ok) continue;
+          text = await res.text();
+          if (text) break;
+        } catch { }
+      }
       if (!text) continue;
 
       const xml = new DOMParser().parseFromString(text, 'text/xml');
@@ -1220,13 +1255,35 @@ Rules:
 - IMPORTANT: Only recommend [SELL] for coins the user currently holds (listed above). Never suggest selling a coin they don't own.
 
 TRADE TAGS — REQUIRED for every actionable [BUY] or [SELL]:
-After each concrete BUY or SELL recommendation, append this tag on its own line (valid JSON, numbers only — no $ signs, no quotes around numbers):
-[TRADE:{"side":"buy","symbol":"ETH-USDT","amountUsdt":50,"tp":2800,"sl":2300}]
-  • side: exactly "buy" or "sell"
-  • symbol: exact OKX instrument ID (e.g. "BTC-USDT", "ETH-USDT")
-  • amountUsdt: USDT amount to spend (buy) or USDT value of coins to sell
-  • tp: take profit price (number only)
-  • sl: stop loss price (number only)
+Use the OPTION 3 format below for ALL buy trades — it maximizes profit with partial take-profit + trailing stop.
+After each concrete BUY recommendation, append this tag on its own line (valid JSON, numbers only — no $ signs, no quotes around numbers):
+
+[TRADE:{"side":"buy","symbol":"AVAX-USDT","amountUsdt":70,"partialTpPct":5,"trailingCallbackPct":3,"slPct":8}]
+
+  • side: "buy" or "sell"
+  • symbol: exact OKX instrument ID (e.g. "AVAX-USDT", "SOL-USDT")
+  • amountUsdt: USDT to spend
+  • partialTpPct: % gain at which to sell 50% and lock in profit (Phase 1)
+  • trailingCallbackPct: trailing stop callback % for remaining 50% after Phase 1 triggers (Phase 2)
+  • slPct: initial stop loss % below entry (protects full position before Phase 1 triggers)
+
+OPTION 3 GUIDELINES — choose values based on coin volatility tier:
+
+Extreme volatility (PEPE, WIF, DOGE): partialTpPct 6-8, trailingCallbackPct 3-4, slPct 8-10
+High volatility (AVAX, SOL, SUI, INJ, TIA): partialTpPct 4-6, trailingCallbackPct 2.5-3, slPct 7-8
+Medium-high (NEAR, APT, FET, LINK, SEI): partialTpPct 3-5, trailingCallbackPct 2-2.5, slPct 6-7
+
+Signal strength modifiers (adjust partialTpPct upward):
+  • score ≥ 4.5: +1–2% (strong conviction — let winners run more)
+  • RSI 1H < 25 (deeply oversold): +1%
+  • RSI 1H 30–40 (mild dip): −0.5% (more conservative)
+  • 4H RSI also oversold (<35): +1% (double confirmation of oversold)
+  • Bullish MACD crossover: +0.5–1%
+
+For SELL recommendations use the same format as before:
+[TRADE:{"side":"sell","symbol":"SOL-USDT","amountUsdt":50,"partialTpPct":0,"trailingCallbackPct":0,"slPct":0}]
+(Leave partialTpPct/trailingCallbackPct/slPct as 0 for sells — they are exits, not entries)
+
 Never include a TRADE tag after a [HOLD]. Use only plain numbers (no commas, no dollar signs).
 
 Always end your response with this exact line:
@@ -1329,7 +1386,11 @@ function parseTradeActions(text) {
     try {
       const a = JSON.parse(m[1]);
       if (a.side && a.symbol && a.amountUsdt) {
-        a.amountUsdt = parseFloat(a.amountUsdt) || 0;
+        a.amountUsdt          = parseFloat(a.amountUsdt)          || 0;
+        a.partialTpPct        = parseFloat(a.partialTpPct)        || 0;
+        a.trailingCallbackPct = parseFloat(a.trailingCallbackPct) || 0;
+        a.slPct               = parseFloat(a.slPct)               || 0;
+        // Legacy format compatibility
         a.tp = parseFloat(a.tp) || 0;
         a.sl = parseFloat(a.sl) || 0;
         results.push(a);
@@ -1349,8 +1410,12 @@ function renderAiResponse(text) {
       actions.map((a, i) => {
         const isBuy = a.side === 'buy';
         const coin = a.symbol.replace('-USDT', '');
+        const isO3 = isBuy && a.partialTpPct > 0;
+        const detail = isO3
+          ? `TP50% +${a.partialTpPct}% · Trail ${a.trailingCallbackPct}% · SL −${a.slPct}%`
+          : `$${a.amountUsdt.toLocaleString()} USDT`;
         return `<button class="btn-take-action ${isBuy ? '' : 'sell'}" data-idx="${i}">
-          ⚡ Take Action &nbsp;·&nbsp; ${isBuy ? '🟢 BUY' : '🔴 SELL'} ${coin} &nbsp;·&nbsp; $${a.amountUsdt.toLocaleString()} USDT
+          ⚡ ${isO3 ? 'Option 3 Trade' : 'Take Action'} &nbsp;·&nbsp; ${isBuy ? '🟢 BUY' : '🔴 SELL'} ${coin} &nbsp;·&nbsp; ${detail}
         </button>`;
       }).join('') +
       '</div>';
@@ -1388,37 +1453,173 @@ function showTradeConfirmation(action) {
 
   const price = state.tickers[action.symbol]?.price ?? 0;
   const isBuy = action.side === 'buy';
-  const coin = action.symbol.replace('-USDT', '');
+  const coin  = action.symbol.replace('-USDT', '');
 
-  // For sell: cap at actual portfolio holdings
   const portfolioEntry = state.portfolio.find(p => p.symbol === action.symbol);
   let coinAmt = price > 0 ? action.amountUsdt / price : null;
-  if (!isBuy && portfolioEntry && coinAmt > portfolioEntry.amount) {
-    coinAmt = portfolioEntry.amount;
-  }
-
-  const tpPct = price && action.tp ? ((action.tp - price) / price * 100).toFixed(1) : null;
-  const slPct = price && action.sl ? ((price - action.sl) / price * 100).toFixed(1) : null;
-
-  const rows = [
-    ['Order Type', `Spot Market ${isBuy ? 'Buy' : 'Sell'} — executes instantly`],
-    ['Amount', `$${action.amountUsdt.toLocaleString()} USDT${coinAmt ? ` ≈ ${parseFloat(coinAmt.toFixed(6))} ${coin}` : ''}`],
-    ['Entry Price', price ? `${fmtCrypto(price)} (current market)` : '? — refresh market data first'],
-    action.tp ? ['Take Profit', `${fmtCrypto(action.tp)}${tpPct ? ` <span class="pos">(+${tpPct}%)</span>` : ''}`] : null,
-    action.sl ? ['Stop Loss', `${fmtCrypto(action.sl)}${slPct ? ` <span class="neg">(-${slPct}%)</span>` : ''}`] : null,
-  ].filter(Boolean);
+  if (!isBuy && portfolioEntry && coinAmt > portfolioEntry.amount) coinAmt = portfolioEntry.amount;
 
   el('tradeConfirmTitle').textContent = `${isBuy ? '🟢 BUY' : '🔴 SELL'} ${coin}`;
-  el('tradeConfirmDetails').innerHTML =
-    `<table class="trade-detail-table">${rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table>
-     <p class="trade-warning">⚠ TP &amp; SL orders will be placed automatically after execution. Double-check the numbers before confirming.</p>`;
 
-  const btn = el('tradeConfirmBtn');
-  btn.disabled = false;
-  btn.textContent = '⚡ Confirm Trade';
-  btn.onclick = () => executeTrade(action, coinAmt);
+  const isO3 = isBuy && action.partialTpPct > 0;
+
+  if (isO3) {
+    // ─── Option 3: Partial TP + Trailing Stop ──────────────────────────────
+    el('tpSlToggles').style.display = 'none';
+
+    let pTpPct   = action.partialTpPct;
+    let trailPct = action.trailingCallbackPct || 2.5;
+    let slPct    = action.slPct || 8;
+
+    function calcO3Prices() {
+      return {
+        ptPrice: price * (1 + pTpPct / 100),
+        slPrice: price * (1 - slPct  / 100),
+      };
+    }
+
+    function updateO3Prices() {
+      const { ptPrice, slPrice } = calcO3Prices();
+      const ptEl = document.getElementById('o3_ptPrice');
+      const slEl = document.getElementById('o3_slPrice');
+      const taEl = document.getElementById('o3_trailAct');
+      if (ptEl) ptEl.textContent = fmtCrypto(ptPrice);
+      if (slEl) slEl.textContent = fmtCrypto(slPrice);
+      if (taEl) taEl.textContent = fmtCrypto(ptPrice);
+    }
+
+    const { ptPrice, slPrice } = calcO3Prices();
+    const coinDisplay = coinAmt ? ` ≈ ${parseFloat(coinAmt.toFixed(6))} ${coin}` : '';
+
+    el('tradeConfirmDetails').innerHTML = `
+      <div class="o3-plan">
+        <table class="trade-detail-table">
+          <tr><td>Buy</td><td>${fmtMoney(action.amountUsdt)} USDT${coinDisplay} at market</td></tr>
+        </table>
+        <div class="o3-phase-label">Phase 1 — takes effect immediately on OKX (24/7 active)</div>
+        <table class="trade-detail-table">
+          <tr><td>Sell 50% when price hits</td><td><b id="o3_ptPrice">${fmtCrypto(ptPrice)}</b> <span class="pos">+${pTpPct}%</span></td></tr>
+          <tr><td>Stop Loss (full position)</td><td><b id="o3_slPrice">${fmtCrypto(slPrice)}</b> <span class="neg">−${slPct}%</span></td></tr>
+        </table>
+        <div class="o3-phase-label">Phase 2 — trailing stop on remaining 50% (activates after Phase 1)</div>
+        <table class="trade-detail-table">
+          <tr><td>Trailing activates at</td><td><span id="o3_trailAct">${fmtCrypto(ptPrice)}</span></td></tr>
+          <tr><td>Callback %</td><td>${trailPct}% — follows price up, exits on first reversal</td></tr>
+        </table>
+        <div class="o3-inputs">
+          <label class="o3-inp"><span>Partial TP %</span><input type="number" id="i_pTpPct" value="${pTpPct}" min="1" max="50" step="0.5"></label>
+          <label class="o3-inp"><span>Trailing %</span><input type="number" id="i_trailPct" value="${trailPct}" min="0.5" max="20" step="0.5"></label>
+          <label class="o3-inp"><span>Stop Loss %</span><input type="number" id="i_slPct" value="${slPct}" min="1" max="50" step="0.5"></label>
+        </div>
+        <p class="trade-warning">⚠ All 3 orders are placed directly on OKX — they execute automatically 24/7 even when this app is closed.</p>
+      </div>`;
+
+    document.getElementById('i_pTpPct').addEventListener('input', e => {
+      const v = parseFloat(e.target.value); if (v > 0) { pTpPct = v; updateO3Prices(); }
+    });
+    document.getElementById('i_trailPct').addEventListener('input', e => {
+      const v = parseFloat(e.target.value); if (v > 0) trailPct = v;
+    });
+    document.getElementById('i_slPct').addEventListener('input', e => {
+      const v = parseFloat(e.target.value); if (v > 0) { slPct = v; updateO3Prices(); }
+    });
+
+    const btn = el('tradeConfirmBtn');
+    btn.disabled = false;
+    btn.textContent = '⚡ Confirm Option 3 Trade';
+    btn.onclick = () => executeTrade({ ...action, _pTpPct: pTpPct, _trailPct: trailPct, _slPct: slPct }, coinAmt);
+
+  } else {
+    // ─── Standard mode ────────────────────────────────────────────────────
+    const tpPct = price && action.tp ? ((action.tp - price) / price * 100).toFixed(1) : null;
+    const slPct = price && action.sl ? ((price - action.sl) / price * 100).toFixed(1) : null;
+
+    const rows = [
+      ['Order Type', `Spot Market ${isBuy ? 'Buy' : 'Sell'} — executes instantly`],
+      ['Amount', `${fmtMoney(action.amountUsdt)} USDT${coinAmt ? ` ≈ ${parseFloat(coinAmt.toFixed(6))} ${coin}` : ''}`],
+      ['Entry Price', price ? `${fmtCrypto(price)} (current market)` : '? — refresh market data first'],
+      action.tp ? ['Take Profit', `${fmtCrypto(action.tp)}${tpPct ? ` <span class="pos">(+${tpPct}%)</span>` : ''}`] : null,
+      action.sl ? ['Stop Loss',   `${fmtCrypto(action.sl)}${slPct ? ` <span class="neg">(-${slPct}%)</span>` : ''}`] : null,
+    ].filter(Boolean);
+
+    el('tradeConfirmDetails').innerHTML =
+      `<table class="trade-detail-table">${rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table>
+       <p class="trade-warning">⚠ TP/SL orders will be placed on OKX after execution based on your toggles below.</p>`;
+
+    const tpSlToggles = el('tpSlToggles');
+    const tpToggle    = el('tpToggle');
+    const slToggle    = el('slToggle');
+    const hasAlgo = action.tp || action.sl;
+    tpSlToggles.style.display = hasAlgo ? 'block' : 'none';
+    if (hasAlgo) {
+      tpToggle.classList.toggle('active', true);
+      tpToggle.textContent = '✓ Take Profit';
+      tpToggle.style.display = action.tp ? '' : 'none';
+      slToggle.classList.toggle('active', true);
+      slToggle.textContent = '✓ Stop Loss';
+      slToggle.style.display = action.sl ? '' : 'none';
+
+      function syncTpSlRows() {
+        const table = el('tradeConfirmDetails').querySelector('.trade-detail-table');
+        if (!table) return;
+        table.querySelectorAll('tr').forEach(row => {
+          const label = row.cells[0]?.textContent;
+          if (label === 'Take Profit') row.style.opacity = tpToggle.classList.contains('active') ? '' : '.35';
+          if (label === 'Stop Loss')   row.style.opacity = slToggle.classList.contains('active') ? '' : '.35';
+        });
+      }
+      tpToggle.onclick = () => {
+        const on = !tpToggle.classList.contains('active');
+        tpToggle.classList.toggle('active', on);
+        tpToggle.textContent = on ? '✓ Take Profit' : '✕ Take Profit';
+        syncTpSlRows();
+      };
+      slToggle.onclick = () => {
+        const on = !slToggle.classList.contains('active');
+        slToggle.classList.toggle('active', on);
+        slToggle.textContent = on ? '✓ Stop Loss' : '✕ Stop Loss';
+        syncTpSlRows();
+      };
+    }
+
+    const btn = el('tradeConfirmBtn');
+    btn.disabled = false;
+    btn.textContent = '⚡ Confirm Trade';
+    btn.onclick = () => executeTrade(action, coinAmt);
+  }
 
   openModal('tradeConfirmModal');
+}
+
+async function saveOption3Trade({ id, symbol, entryPrice, partialTpId, slId, trailingId, amountUsdt, szHalf, partialTpPct, slPct, trailingPct }) {
+  if (!isSupabaseConfigured()) return;
+  try {
+    const res = await fetch(`${getSupabaseCfg().url}/rest/v1/option3_trades`, {
+      method: 'POST',
+      headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+      body: JSON.stringify({
+        id, symbol,
+        entry_price:    entryPrice,
+        partial_tp_id:  partialTpId,
+        sl_id:          slId,
+        trailing_id:    trailingId,
+        amount_usdt:    amountUsdt,
+        sz_half:        szHalf,
+        partial_tp_pct: partialTpPct,
+        sl_pct:         slPct,
+        trailing_pct:   trailingPct,
+        phase:          1,
+      }),
+    });
+    if (res.ok) {
+      console.log(`[Option3] Trade saved to Supabase — break-even SL monitor active`);
+    } else {
+      const e = await res.json().catch(() => ({}));
+      console.warn('[Option3] Supabase save failed:', e.message || res.status);
+    }
+  } catch (e) {
+    console.warn('[Option3] Supabase save error:', e.message);
+  }
 }
 
 async function executeTrade(action, coinAmt) {
@@ -1440,46 +1641,127 @@ async function executeTrade(action, coinAmt) {
     await okxSignedPost('/api/v5/trade/order', orderBody);
     toast(`${action.side.toUpperCase()} order placed`, 'success');
 
-    // 2. TP/SL algo order placed on the opposite side.
-    // Apply 0.15% fee haircut so the algo size never exceeds actual received coins.
-    if (action.tp && action.sl && szCoin > 0) {
-      const algoSz = (szCoin * 0.9985).toFixed(8);
-      const algoSide = isBuy ? 'sell' : 'buy';
-      const baseAlgo = { instId: action.symbol, tdMode: 'cash', side: algoSide };
+    // ─── Option 3: Partial TP + SL + Trailing Stop ───────────────────────
+    if (action._pTpPct > 0 && szCoin > 0) {
+      const halfSz   = (szCoin * 0.5  * 0.9985).toFixed(8); // 50% with fee haircut
+      const fullSz   = (szCoin * 1.0  * 0.9985).toFixed(8); // 100% with fee haircut
+      const ptPrice  = price * (1 + action._pTpPct  / 100);
+      const slPrice  = price * (1 - action._slPct   / 100);
+      const baseAlgo = { instId: action.symbol, tdMode: 'cash', side: 'sell' };
 
-      // Primary: OCO (TP + SL in one atomic order — one cancels the other)
-      const ocoBody = {
-        ...baseAlgo,
-        ordType: 'oco',
-        sz: algoSz,
-        tpTriggerPx: String(action.tp),
-        tpOrdPx: '-1',
-        tpTriggerPxType: 'last',
-        slTriggerPx: String(action.sl),
-        slOrdPx: '-1',
-        slTriggerPxType: 'last',
-      };
-      try {
-        await okxSignedPost('/api/v5/trade/order-algo', ocoBody);
-        toast('TP/SL set (OCO order active)', 'success');
-      } catch (e) {
-        // OCO not supported on all spot account modes — fall back to two conditional orders
-        console.warn('[TP/SL] OCO failed, trying separate conditional orders:', e.message);
-        try {
-          await Promise.all([
-            okxSignedPost('/api/v5/trade/order-algo', {
+      btn.textContent = 'Setting up TP/SL/Trailing…';
+
+      const [ptResult, slResult, trailResult] = await Promise.allSettled([
+        // Order 2: Conditional — sell 50% at partial TP price
+        okxSignedPost('/api/v5/trade/order-algo', {
+          ...baseAlgo, ordType: 'conditional', sz: halfSz,
+          tpTriggerPx: ptPrice.toFixed(8), tpOrdPx: '-1', tpTriggerPxType: 'last',
+        }),
+        // Order 3: Conditional — sell 100% at stop loss price
+        okxSignedPost('/api/v5/trade/order-algo', {
+          ...baseAlgo, ordType: 'conditional', sz: fullSz,
+          slTriggerPx: slPrice.toFixed(8), slOrdPx: '-1', slTriggerPxType: 'last',
+        }),
+        // Order 4: Trailing stop — sell remaining 50%, activates at TP price
+        okxSignedPost('/api/v5/trade/order-algo', {
+          ...baseAlgo, ordType: 'move_order_stop', sz: halfSz,
+          activePx: ptPrice.toFixed(8),
+          callbackRatio: (action._trailPct / 100).toFixed(4),
+        }),
+      ]);
+
+      const labels = ['Partial TP (50%)', 'Stop Loss (100%)', 'Trailing Stop (50%)'];
+      const passed = [ptResult, slResult, trailResult].filter(r => r.status === 'fulfilled').length;
+
+      if (passed === 3) {
+        toast('Option 3 active: Partial TP + SL + Trailing Stop all set on OKX', 'success', 6000);
+
+        // Extract OKX algo order IDs and save to Supabase for break-even SL monitoring
+        const ptId    = ptResult.value?.data?.[0]?.algoId;
+        const slId    = slResult.value?.data?.[0]?.algoId;
+        const trailId = trailResult.value?.data?.[0]?.algoId;
+        if (ptId && slId && trailId) {
+          await saveOption3Trade({
+            id: ptId,
+            symbol:       action.symbol,
+            entryPrice:   price,
+            partialTpId:  ptId,
+            slId,
+            trailingId:   trailId,
+            amountUsdt:   action.amountUsdt,
+            szHalf:       halfSz,
+            partialTpPct: action._pTpPct,
+            slPct:        action._slPct,
+            trailingPct:  action._trailPct,
+          });
+        }
+      } else {
+        [ptResult, slResult, trailResult].forEach((r, i) => {
+          if (r.status === 'rejected') {
+            console.error(`[Option3] ${labels[i]} failed:`, r.reason?.message);
+            toast(`${labels[i]} could not be set — set manually on OKX. ${r.reason?.message ?? ''}`, 'error', 10000);
+          }
+        });
+        if (passed > 0) toast(`${passed}/3 orders placed — check OKX for details`, 'success', 6000);
+      }
+
+    } else {
+      // ─── Standard TP/SL (legacy / sell orders) ───────────────────────────
+      const useTP = action.tp && el('tpToggle')?.classList.contains('active');
+      const useSL = action.sl && el('slToggle')?.classList.contains('active');
+
+      if ((useTP || useSL) && szCoin > 0) {
+        const algoSz   = (szCoin * 0.9985).toFixed(8);
+        const algoSide = isBuy ? 'sell' : 'buy';
+        const baseAlgo = { instId: action.symbol, tdMode: 'cash', side: algoSide };
+
+        if (useTP && useSL) {
+          try {
+            await okxSignedPost('/api/v5/trade/order-algo', {
+              ...baseAlgo, ordType: 'oco', sz: algoSz,
+              tpTriggerPx: String(action.tp), tpOrdPx: '-1', tpTriggerPxType: 'last',
+              slTriggerPx: String(action.sl), slOrdPx: '-1', slTriggerPxType: 'last',
+            });
+            toast('TP/SL set (OCO order active)', 'success');
+          } catch (e) {
+            console.warn('[TP/SL] OCO failed, trying separate conditional orders:', e.message);
+            try {
+              await Promise.all([
+                okxSignedPost('/api/v5/trade/order-algo', {
+                  ...baseAlgo, ordType: 'conditional', sz: algoSz,
+                  tpTriggerPx: String(action.tp), tpOrdPx: '-1', tpTriggerPxType: 'last',
+                }),
+                okxSignedPost('/api/v5/trade/order-algo', {
+                  ...baseAlgo, ordType: 'conditional', sz: algoSz,
+                  slTriggerPx: String(action.sl), slOrdPx: '-1', slTriggerPxType: 'last',
+                }),
+              ]);
+              toast('TP/SL set (two conditional orders — cancel one manually after the other triggers)', 'success', 6000);
+            } catch (e2) {
+              console.error('[TP/SL] Both OCO and conditional orders failed:', e2.message);
+              toast('TP/SL could not be set — set manually on OKX. Error: ' + e2.message, 'error', 8000);
+            }
+          }
+        } else if (useTP) {
+          try {
+            await okxSignedPost('/api/v5/trade/order-algo', {
               ...baseAlgo, ordType: 'conditional', sz: algoSz,
               tpTriggerPx: String(action.tp), tpOrdPx: '-1', tpTriggerPxType: 'last',
-            }),
-            okxSignedPost('/api/v5/trade/order-algo', {
+            });
+            toast('Take Profit set', 'success');
+          } catch (e) {
+            toast('TP could not be set — set manually on OKX. Error: ' + e.message, 'error', 8000);
+          }
+        } else {
+          try {
+            await okxSignedPost('/api/v5/trade/order-algo', {
               ...baseAlgo, ordType: 'conditional', sz: algoSz,
               slTriggerPx: String(action.sl), slOrdPx: '-1', slTriggerPxType: 'last',
-            }),
-          ]);
-          toast('TP/SL set (two conditional orders — cancel one manually after the other triggers)', 'success', 6000);
-        } catch (e2) {
-          console.error('[TP/SL] Both OCO and conditional orders failed:', e2.message);
-          toast('TP/SL could not be set automatically — set it manually on OKX. Error: ' + e2.message, 'error', 8000);
+            });
+            toast('Stop Loss set', 'success');
+          } catch (e) {
+            toast('SL could not be set — set manually on OKX. Error: ' + e.message, 'error', 8000);
+          }
         }
       }
     }
