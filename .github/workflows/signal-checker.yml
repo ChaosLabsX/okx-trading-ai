@@ -44,10 +44,12 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-          # Optional: comma-separated symbols you hold — limits SELL alerts to those coins.
-          # Set as a GitHub Secret named PORTFOLIO_SYMBOLS, e.g. "BTC-USDT,ETH-USDT"
-          # Leave unset to receive SELL alerts for all scanned coins.
           PORTFOLIO_SYMBOLS:  ${{ secrets.PORTFOLIO_SYMBOLS }}
+          # OKX credentials — required for Option 3 break-even SL monitor.
+          # Add these as GitHub Secrets: OKX_API_KEY, OKX_SECRET_KEY, OKX_PASSPHRASE
+          OKX_API_KEY:        ${{ secrets.OKX_API_KEY }}
+          OKX_SECRET_KEY:     ${{ secrets.OKX_SECRET_KEY }}
+          OKX_PASSPHRASE:     ${{ secrets.OKX_PASSPHRASE }}
         run: python signal_checker.py
 
       - name: Save signal state
