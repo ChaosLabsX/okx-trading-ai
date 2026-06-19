@@ -550,13 +550,14 @@ async function syncPortfolioFromOKX() {
     // where all coins are locked in an open order — the coin still belongs to the user.
     // NOTE: never use JS `||` here — `"0" || fallback` returns `"0"` (string "0" is truthy).
     function coinBal(d) {
-      // Prefer cashBal — it's the TOTAL (available + frozen in open orders).
-      // availBal is only the unfrozen portion, which can be near-zero when most
-      // coins are locked in active limit orders (DOGE/SOL case).
-      const cash = parseFloat(d.cashBal ?? 'NaN');
-      if (cash > 0) return cash;
+      // Use availBal — what OKX's own UI shows (coins free to trade).
+      // cashBal includes coins frozen in active algo/limit orders, which would inflate
+      // the portfolio display and show locked coins as open positions.
       const avail = parseFloat(d.availBal ?? 'NaN');
       if (avail > 0) return avail;
+      // Fall back to cashBal only if availBal is genuinely missing
+      const cash = parseFloat(d.cashBal ?? 'NaN');
+      if (cash > 0) return cash;
       return parseFloat(d.eq ?? '0') || 0;
     }
 
@@ -621,8 +622,10 @@ async function syncPortfolioFromOKX() {
       return true;
     });
 
-    LS.set('portfolio', state.portfolio); // save locally first
-    await pushPortfolioSymbols();         // await so Supabase is updated before toast shows
+    LS.set('portfolio', state.portfolio);
+    LS.set('portfolioUpdated', Date.now());
+    await pushPortfolioSymbols();   // symbols list for signal checker
+    await pushFullPortfolio();      // full data for cross-device sync
 
     if (usdtBal > 0) {
       showUsdtBalance(usdtBal);
@@ -1880,7 +1883,9 @@ function restartAutoRefresh() {
 function loadPortfolio() { state.portfolio = LS.get('portfolio', CONFIG.DEFAULT_PORTFOLIO); }
 function savePortfolio() {
   LS.set('portfolio', state.portfolio);
-  pushPortfolioSymbols(); // keep Supabase in sync so GitHub Actions always knows what you hold
+  LS.set('portfolioUpdated', Date.now());
+  pushPortfolioSymbols();  // symbols list for signal checker
+  pushFullPortfolio();     // full data for cross-device sync
 }
 
 async function pushPortfolioSymbols() {
@@ -1896,6 +1901,47 @@ async function pushPortfolioSymbols() {
   } catch (e) {
     console.error('[portfolio sync] network error:', e.message);
   }
+}
+
+async function pushFullPortfolio() {
+  if (!isSupabaseConfigured() || !state.portfolio.length) return;
+  try {
+    await fetch(`${getSupabaseCfg().url}/rest/v1/app_settings?id=eq.main`, {
+      method: 'PATCH',
+      headers: { ...sbHeaders(), 'Prefer': 'return=minimal' },
+      body: JSON.stringify({
+        portfolio_data:    JSON.stringify(state.portfolio),
+        portfolio_updated: new Date().toISOString(),
+      }),
+    });
+  } catch { }
+}
+
+async function pullPortfolioFromCloud() {
+  if (!isSupabaseConfigured()) return false;
+  try {
+    const r = await fetch(
+      `${getSupabaseCfg().url}/rest/v1/app_settings?id=eq.main&select=portfolio_data,portfolio_updated`,
+      { headers: sbHeaders() },
+    );
+    if (!r.ok) return false;
+    const rows = await r.json();
+    const raw  = rows[0]?.portfolio_data;
+    if (!raw) return false;
+    const cloudPortfolio = JSON.parse(raw);
+    if (!Array.isArray(cloudPortfolio) || !cloudPortfolio.length) return false;
+
+    // Only overwrite local if cloud is newer (or local is empty)
+    const cloudTs = rows[0]?.portfolio_updated ? new Date(rows[0].portfolio_updated).getTime() : 0;
+    const localTs = LS.get('portfolioUpdated', 0);
+    if (cloudTs > localTs || !state.portfolio.length) {
+      state.portfolio = cloudPortfolio;
+      LS.set('portfolio', state.portfolio);
+      LS.set('portfolioUpdated', cloudTs || Date.now());
+      return true;
+    }
+  } catch { }
+  return false;
 }
 function loadScannerSymbols() { state.scannerSymbols = LS.get('scanner', CONFIG.DEFAULT_SCANNER); }
 function saveScannerSymbols() { LS.set('scanner', state.scannerSymbols); }
@@ -2086,6 +2132,9 @@ async function loadAppData() {
   // Restore last known USDT balance immediately (before sync)
   const lastBal = LS.get('lastUsdtBalance', 0);
   if (lastBal > 0) showUsdtBalance(lastBal);
+
+  // Pull portfolio from Supabase — keeps all devices in sync automatically
+  await pullPortfolioFromCloud();
 
   renderPortfolio();
   renderScanner();
