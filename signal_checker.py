@@ -97,6 +97,7 @@ def fetch_candles(symbol, bar='1H', limit=100):
         return None
     rows = list(reversed(d['data']))
     return {
+        'opens':   [float(c[1]) for c in rows],
         'closes':  [float(c[4]) for c in rows],
         'volumes': [float(c[5]) for c in rows],
     }
@@ -169,6 +170,33 @@ def calc_vol_ratio(volumes):
         return None
     avg = sum(volumes[-21:-1]) / 20
     return volumes[-1] / avg if avg > 0 else None
+
+
+def reversal_confirmed(opens, closes, zone):
+    """
+    Guards against alerting into a falling knife (BUY) or a rising knife (SELL).
+
+    A coin can be RSI-oversold for 16+ hours while still dropping. This check
+    requires the most recent 1H candle to show the move is actually turning:
+      BUY  → last candle green (close ≥ open)  AND RSI turning up   (rising vs prev bar)
+      SELL → last candle red   (close ≤ open)  AND RSI turning down (falling vs prev bar)
+
+    Returns True  = allow the alert
+            False = suppress — no reversal evidence yet
+    """
+    if len(closes) < 16 or len(opens) < 2:
+        return True  # not enough history — don't filter
+
+    rsi_now  = calc_rsi(closes)
+    rsi_prev = calc_rsi(closes[:-1])
+    if rsi_now is None or rsi_prev is None:
+        return True
+
+    if zone == 'up':    # BUY signal
+        return closes[-1] >= opens[-1] and rsi_now >= rsi_prev
+    if zone == 'down':  # SELL signal
+        return closes[-1] <= opens[-1] and rsi_now <= rsi_prev
+    return True
 
 
 def generate_signal(rsi, macd, bb, vol_ratio=None):
@@ -275,6 +303,7 @@ def run_scan(cache, portfolio_symbols):
                 print(f'  {symbol}: no data')
                 continue
 
+            opens     = candle_data['opens']
             closes    = candle_data['closes']
             volumes   = candle_data['volumes']
             vol_ratio = calc_vol_ratio(volumes)
@@ -302,6 +331,15 @@ def run_scan(cache, portfolio_symbols):
             # SELL filter — skip if coin not in portfolio
             if label in SELL_LABELS and symbol not in portfolio_symbols:
                 print(f'  {symbol}: SELL skipped — not in portfolio')
+                time.sleep(0.3)
+                continue
+
+            # Reversal confirmation — suppress until there is actual evidence the move
+            # is turning. Prevents alerting into a falling knife (BUY while still dropping)
+            # or a rising knife (SELL while still climbing). Applies to both new zone
+            # entries AND 4-hour re-alerts, so a sustained drop stays silent.
+            if not reversal_confirmed(opens, closes, zone):
+                print(f'  {symbol}: {label} — no reversal confirmation yet (candle/RSI still against signal)')
                 time.sleep(0.3)
                 continue
 

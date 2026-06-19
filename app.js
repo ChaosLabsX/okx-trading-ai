@@ -1005,11 +1005,16 @@ async function fetchWithTimeout(url, ms = 7000) {
 }
 
 async function fetchNews(topic = '') {
-  // RSS via corsproxy.io — free, no API key, CORS-safe
+  // RSS via corsproxy.io — free, no API key, CORS-safe.
+  // CryptoPanic aggregates Twitter/X, Reddit, and all major outlets in one feed —
+  // it's the closest free substitute for X since Twitter killed its free API in 2023.
   const feeds = [
-    { rss: 'https://cointelegraph.com/rss', source: 'CoinTelegraph' },
-    { rss: 'https://decrypt.co/feed', source: 'Decrypt' },
-    { rss: 'https://www.coindesk.com/arc/outboundfeeds/rss/', source: 'CoinDesk' },
+    { rss: 'https://cryptopanic.com/news/rss/',                        source: 'CryptoPanic' },  // X/Twitter + Reddit + news aggregator
+    { rss: 'https://cointelegraph.com/rss',                            source: 'CoinTelegraph' },
+    { rss: 'https://decrypt.co/feed',                                   source: 'Decrypt' },
+    { rss: 'https://www.coindesk.com/arc/outboundfeeds/rss/',           source: 'CoinDesk' },
+    { rss: 'https://bitcoinmagazine.com/.rss/full/',                    source: 'Bitcoin Magazine' },
+    { rss: 'https://www.theblock.co/rss.xml',                           source: 'The Block' },
   ];
 
   for (const feed of feeds) {
@@ -1323,9 +1328,24 @@ function renderAiResponse(text) {
     state._tradeActions = actions;
   }
 
-  el('aiResponseArea').innerHTML = `<div class="ai-response">${markdownToHtml(displayed)}</div>${actionsHtml}`;
+  // Actions appear first so the user can act immediately.
+  // Details are collapsed by default when actions exist, expanded when there are none.
+  const hasActions = actions.length > 0;
+  el('aiResponseArea').innerHTML =
+    actionsHtml +
+    `<button class="btn-read-details" id="readDetailsBtn">${hasActions ? 'Read Details ▼' : 'Hide Details ▲'}</button>` +
+    `<div class="ai-response" id="aiDetailsContent" style="${hasActions ? 'display:none' : ''}">${markdownToHtml(displayed)}</div>`;
+
   el('aiFooter').style.display = 'flex';
   el('aiTimestamp').textContent = 'Generated ' + new Date().toLocaleTimeString();
+
+  const detailsBtn = document.getElementById('readDetailsBtn');
+  const detailsContent = document.getElementById('aiDetailsContent');
+  detailsBtn.addEventListener('click', () => {
+    const open = detailsContent.style.display !== 'none';
+    detailsContent.style.display = open ? 'none' : 'block';
+    detailsBtn.textContent = open ? 'Read Details ▼' : 'Hide Details ▲';
+  });
 
   el('aiResponseArea').querySelectorAll('.btn-take-action').forEach(btn => {
     btn.addEventListener('click', () => showTradeConfirmation(state._tradeActions[+btn.dataset.idx]));
@@ -1761,6 +1781,7 @@ async function loadAppData() {
   await fetchAllData();
   renderPortfolio();
   renderScanner();
+  checkSignalAlerts();
   refreshNews();
   restartAutoRefresh();
   // Auto-sync OKX balance if credentials are available

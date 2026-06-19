@@ -648,6 +648,24 @@ tr:hover .btn-row-del { opacity: 1; }
   30%           { transform: translateY(-6px); opacity: 1; }
 }
 
+/* ─── Read Details toggle ─── */
+.btn-read-details {
+  display: block;
+  width: 100%;
+  margin: 10px 0 0;
+  padding: 8px 16px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color .15s, color .15s;
+}
+.btn-read-details:hover { border-color: var(--border-focus); color: var(--text); }
+
 /* ─── Take Action buttons (shown after AI response) ─── */
 .trade-actions-bar {
   display: flex;
