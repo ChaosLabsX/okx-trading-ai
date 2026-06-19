@@ -7,6 +7,11 @@ on:
   repository_dispatch:        # allows external trigger via GitHub API (used by cron-job.org)
     types: [run-signal-checker]
 
+# Only one run at a time — prevents duplicate Telegram alerts if two triggers fire close together.
+concurrency:
+  group: signal-checker
+  cancel-in-progress: false   # queue the new run rather than cancelling the active one
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
