@@ -381,10 +381,14 @@ function checkSignalAlerts() {
 
     const isSellSignal = sig.label === 'SELL' || sig.label === 'STRONG SELL';
     const isAlert = sig.label in EMOJI;
-    // Only alert on SELL/STRONG SELL if the coin is actually in the portfolio
     const holdsThisCoin = state.portfolio.some(p => p.symbol === sym);
     const shouldAlert = isAlert && (!isSellSignal || holdsThisCoin);
-    const alreadyNotified = state.notifiedSignals[sym] === sig.label;
+
+    // Zone-based dedup: BUY and STRONG BUY are the same zone — no repeat alert.
+    // Persisted in localStorage so page refreshes never re-trigger existing signals.
+    const currentZone = isSellSignal ? 'down' : isAlert ? 'up' : 'neutral';
+    const lastZone    = state.notifiedSignals[sym] ?? 'neutral';
+    const alreadyNotified = shouldAlert && currentZone === lastZone;
 
     if (shouldAlert && !alreadyNotified) {
       const coin = sym.replace('-USDT', '');
@@ -394,12 +398,14 @@ function checkSignalAlerts() {
         + `📊 ${sig.reasons.join('\n📊 ')}\n`
         + `⏰ ${new Date().toLocaleTimeString()}`;
       sendTelegramAlert(msg);
-      state.notifiedSignals[sym] = sig.label;
+      state.notifiedSignals[sym] = currentZone;
+      LS.set('notifiedSignals', state.notifiedSignals);
     }
 
-    // Reset when signal goes to HOLD so future alerts can fire again
-    if (!shouldAlert && state.notifiedSignals[sym]) {
-      delete state.notifiedSignals[sym];
+    // Reset to neutral when signal clears so future zone entries can alert again
+    if (!shouldAlert && state.notifiedSignals[sym] && state.notifiedSignals[sym] !== 'neutral') {
+      state.notifiedSignals[sym] = 'neutral';
+      LS.set('notifiedSignals', state.notifiedSignals);
     }
   }
 }
@@ -1793,6 +1799,7 @@ async function loadAppData() {
 async function init() {
   loadSettings();
   loadPortfolio();
+  state.notifiedSignals = LS.get('notifiedSignals', {});
   loadScannerSymbols();
   wireEvents();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => { });
