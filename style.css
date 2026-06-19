@@ -135,7 +135,7 @@ body {
   grid-template-columns: 1fr 1fr;
   grid-template-areas:
     "scanner  scanner"
-    "portfolio ai"
+    "ai       ai"
     "news     news";
   gap: 12px;
   padding: 12px;
@@ -143,10 +143,9 @@ body {
   margin: 0 auto;
 }
 
-#scannerSection   { grid-area: scanner; }
-#portfolioSection { grid-area: portfolio; }
-#aiSection        { grid-area: ai; }
-#newsSection      { grid-area: news; }
+#scannerSection { grid-area: scanner; }
+#aiSection      { grid-area: ai; }
+#newsSection    { grid-area: news; }
 
 /* ══════════════════════════════════════════════════════════
    CARD
@@ -355,7 +354,6 @@ body {
 
 .tag-buy  { background: var(--green-dim); color: var(--green); border-radius: 3px; padding: 1px 5px; font-size: 10px; font-weight: 600; }
 .tag-sell { background: var(--red-dim);   color: var(--red);   border-radius: 3px; padding: 1px 5px; font-size: 10px; font-weight: 600; }
-.tag-hold { background: var(--blue-dim);  color: var(--blue);  border-radius: 3px; padding: 1px 5px; font-size: 10px; font-weight: 600; }
 
 .btn-row-del {
   background: none;
@@ -722,48 +720,22 @@ tr:hover .btn-row-del { opacity: 1; }
   border-radius: 4px;
 }
 
-/* ─── TP/SL toggle buttons in trade confirm modal ─── */
-.tp-sl-toggles {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-}
-.tp-sl-toggles-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-bottom: 8px;
-  text-transform: uppercase;
-  letter-spacing: .04em;
-}
-.tp-sl-toggles-row { display: flex; gap: 8px; }
-.toggle-btn {
-  flex: 1;
-  padding: 8px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-input);
-  color: var(--text-dim);
-  font-size: 13px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: all .15s;
-  text-align: center;
-}
-.toggle-btn.active {
-  border-color: var(--green);
-  color: var(--green);
-  background: rgba(52,199,89,.08);
-}
-.toggle-btn:not(.active) {
-  border-color: var(--border);
-  color: var(--text-muted);
-  text-decoration: line-through;
-  opacity: .65;
-}
-.toggle-btn:hover { opacity: 1; }
-
 /* ─── Option 3 trade confirmation UI ─── */
 .o3-plan { display: flex; flex-direction: column; gap: 0; }
+
+.o3-amt-input {
+  width: 90px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  text-align: right;
+}
+.o3-amt-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(10,132,255,.18); }
+#o3_coinDisp { font-size: 12px; color: var(--text-muted); margin-left: 6px; }
 
 .o3-phase-label {
   font-size: 10px;
@@ -1157,7 +1129,6 @@ select.form-input option { background: var(--bg-card); }
     grid-template-columns: 1fr;
     grid-template-areas:
       "scanner"
-      "portfolio"
       "ai"
       "news";
   }
@@ -1242,26 +1213,6 @@ tr.sig-ssell:hover { background: rgba(239,68,68,.08) !important; }
 .vol-spike  { color: #f59e0b; font-weight: 700; }
 .vol-high   { color: #a78bfa; font-weight: 600; }
 .vol-normal { color: var(--text-dim); }
-
-/* ══════════════════════════════════════════════════════════
-   PORTFOLIO P&L SUBTEXT
-══════════════════════════════════════════════════════════ */
-.invested-sub {
-  display: block;
-  font-size: 10px;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
-.pnl-dollar {
-  display: block;
-  font-weight: 600;
-}
-.pnl-pct-sub {
-  display: block;
-  font-size: 11px;
-  margin-top: 1px;
-  opacity: .85;
-}
 
 /* ══════════════════════════════════════════════════════════
    COIN ICON  (replaces the old sym-badge for crypto)

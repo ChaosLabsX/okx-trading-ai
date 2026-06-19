@@ -60,21 +60,9 @@
 
   <!-- ═══════════════════════════════════════ SUMMARY BAR ═══════════════════════════════════════ -->
   <div class="summary-bar">
-    <div class="summary-item">
-      <span class="summary-label">Portfolio Value</span>
-      <span class="summary-value" id="totalPortfolioValue">—</span>
-    </div>
     <div class="summary-item" id="usdtBalanceItem" style="display:none;">
       <span class="summary-label">Free Cash (USDT)</span>
       <span class="summary-value pos" id="usdtBalance">—</span>
-    </div>
-    <div class="summary-item">
-      <span class="summary-label">Day P&L</span>
-      <span class="summary-value" id="totalDayPnl">—</span>
-    </div>
-    <div class="summary-item">
-      <span class="summary-label">Total P&L</span>
-      <span class="summary-value" id="totalPnl">—</span>
     </div>
     <div class="summary-item">
       <span class="summary-label">Best Signal Now</span>
@@ -155,52 +143,6 @@
       </div>
     </section>
 
-    <!-- ─────────── PORTFOLIO ─────────── -->
-    <section class="card" id="portfolioSection">
-      <div class="card-header">
-        <h2 class="card-title">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="3" width="20" height="14" rx="2" />
-            <line x1="8" y1="21" x2="16" y2="21" />
-            <line x1="12" y1="17" x2="12" y2="21" />
-          </svg>
-          My Portfolio
-        </h2>
-        <div class="card-actions">
-          <button class="btn-small btn-okx" id="okxSyncBtn" title="Sync your real OKX holdings automatically">⟳ Sync
-            OKX</button>
-          <button class="btn-small" id="addPositionBtn">+ Add Position</button>
-          <button class="btn-icon-sm" id="portfolioRefreshBtn" title="Refresh">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="23 4 23 10 17 10" />
-              <polyline points="1 20 1 14 7 14" />
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-            </svg>
-          </button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table class="data-table" id="portfolioTable">
-          <thead>
-            <tr>
-              <th>Coin</th>
-              <th class="num">Price</th>
-              <th class="num">24h%</th>
-              <th class="num">Amount</th>
-              <th class="num">Value</th>
-              <th class="num">P&amp;L</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="portfolioBody">
-            <tr class="loading-row">
-              <td colspan="7"><span class="spinner"></span> Loading portfolio...</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
     <!-- ─────────── AI ADVISOR ─────────── -->
     <section class="card card-ai" id="aiSection">
       <div class="card-header">
@@ -214,7 +156,6 @@
         <div class="card-actions">
           <select class="select-small" id="aiContextSelect">
             <option value="market">Best Opportunities Now</option>
-            <option value="portfolio">Review My Portfolio</option>
             <option value="risk">Risk Analysis</option>
             <option value="custom">Custom Question</option>
           </select>
@@ -280,37 +221,6 @@
     </section>
 
   </main>
-
-  <!-- ═══════════════════════════════════════ ADD POSITION MODAL ═══════════════════════════════════════ -->
-  <div class="modal-overlay" id="addPositionModal">
-    <div class="modal">
-      <div class="modal-header">
-        <h3>Add Position</h3>
-        <button class="btn-icon modal-close" data-modal="addPositionModal">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="form-group">
-          <label>Coin Symbol</label>
-          <input type="text" id="newSymbol" placeholder="BTC  or  BTC-USDT" class="form-input" maxlength="15" />
-          <span class="field-hint">Type BTC, ETH, SOL — the app adds -USDT automatically</span>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Amount (how many coins)</label>
-            <input type="number" id="newAmount" placeholder="0.5" class="form-input" min="0" step="any" />
-          </div>
-          <div class="form-group">
-            <label>Avg Buy Price (USDT)</label>
-            <input type="number" id="newAvgCost" placeholder="0.00" class="form-input" min="0" step="any" />
-          </div>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn-secondary modal-close" data-modal="addPositionModal">Cancel</button>
-        <button class="btn-primary" id="confirmAddPosition">Add Position</button>
-      </div>
-    </div>
-  </div>
 
   <!-- ═══════════════════════════════════════ SETTINGS MODAL ═══════════════════════════════════════ -->
   <div class="modal-overlay" id="settingsModal">
@@ -438,8 +348,8 @@
         <div class="settings-section">
           <h4 class="settings-heading">Data</h4>
           <div class="settings-actions">
-            <button class="btn-secondary" id="exportDataBtn">Export Portfolio JSON</button>
-            <button class="btn-secondary" id="importDataBtn">Import Portfolio JSON</button>
+            <button class="btn-secondary" id="exportDataBtn">Export Scanner JSON</button>
+            <button class="btn-secondary" id="importDataBtn">Import Scanner JSON</button>
             <button class="btn-danger" id="clearDataBtn">Reset All Data</button>
           </div>
           <input type="file" id="importFileInput" accept=".json" style="display:none;" />
@@ -462,13 +372,6 @@
       </div>
       <div class="modal-body">
         <div id="tradeConfirmDetails"></div>
-        <div class="tp-sl-toggles" id="tpSlToggles" style="display:none;">
-          <div class="tp-sl-toggles-label">Include in trade:</div>
-          <div class="tp-sl-toggles-row">
-            <button class="toggle-btn active" id="tpToggle">✓ Take Profit</button>
-            <button class="toggle-btn active" id="slToggle">✓ Stop Loss</button>
-          </div>
-        </div>
       </div>
       <div class="modal-footer">
         <button class="btn-secondary modal-close" data-modal="tradeConfirmModal">✕ Cancel</button>

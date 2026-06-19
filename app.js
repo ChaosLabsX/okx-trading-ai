@@ -4,7 +4,7 @@
 //  STATE
 // ═══════════════════════════════════════════════════════════
 const state = {
-  portfolio: [],        // [{symbol, amount, avgBuyPrice}]
+  portfolio: [],        // populated transiently during AI analysis from live OKX data
   scannerSymbols: [],   // ['BTC-USDT', ...]
   tickers: {},          // {symbol: {price, change, changePercent, high24h, low24h, vol24h, source}}
   indicators: {},       // {symbol: {rsi, macd, bb, signal}}
@@ -150,10 +150,7 @@ async function fetchSymbolData(symbol) {
 }
 
 async function fetchAllData() {
-  const symbols = [...new Set([
-    ...state.scannerSymbols,
-    ...state.portfolio.map(p => p.symbol),
-  ])];
+  const symbols = [...state.scannerSymbols];
   // Fetch in batches of 2 with a 250 ms gap — prevents OKX 429 rate-limit errors.
   // Each symbol fires 3 requests (ticker + 1H + 4H), so batch-of-2 = 6 concurrent.
   for (let i = 0; i < symbols.length; i += 2) {
@@ -386,12 +383,6 @@ function reversalConfirmedBrowser(ind, zone) {
 }
 
 function checkSignalAlerts() {
-  const EMOJI = {
-    'STRONG BUY': '🟢',
-    'BUY': '🔵',
-    'SELL': '🟠',
-    'STRONG SELL': '🔴',
-  };
 
   for (const sym of state.scannerSymbols) {
     const sig = state.indicators[sym]?.signal;
@@ -399,14 +390,8 @@ function checkSignalAlerts() {
     const price = state.tickers[sym]?.price;
     if (!sig || !price) continue;
 
-    const isSellSignal = sig.label === 'SELL' || sig.label === 'STRONG SELL';
-    const isAlert = sig.label in EMOJI;
-    const holdsThisCoin = state.portfolio.some(p => p.symbol === sym);
-    const shouldAlert = isAlert && (!isSellSignal || holdsThisCoin);
-
-    // Zone-based dedup: BUY and STRONG BUY are the same zone — no repeat alert.
-    // Persisted in localStorage so page refreshes never re-trigger existing signals.
-    const currentZone = isSellSignal ? 'down' : isAlert ? 'up' : 'neutral';
+    const shouldAlert = sig.label === 'STRONG BUY';
+    const currentZone = shouldAlert ? 'up' : 'neutral';
     const lastZone = state.notifiedSignals[sym] ?? 'neutral';
     const alreadyNotified = shouldAlert && currentZone === lastZone;
 
@@ -416,8 +401,7 @@ function checkSignalAlerts() {
 
     if (shouldAlert && !alreadyNotified) {
       const coin = sym.replace('-USDT', '');
-      const emoji = EMOJI[sig.label];
-      const msg = `${emoji} <b>${sig.label}: ${coin}</b>\n`
+      const msg = `🟢 <b>STRONG BUY: ${coin}</b>\n`
         + `💰 Price: ${fmtCrypto(price)}\n`
         + `📊 ${sig.reasons.join('\n📊 ')}\n`
         + `⏰ ${new Date().toLocaleTimeString()}`;
@@ -534,115 +518,6 @@ function showUsdtBalance(amount) {
   state.usdtBalance = amount;
   el('usdtBalance').textContent = '$' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   el('usdtBalanceItem').style.display = '';
-}
-
-async function syncPortfolioFromOKX() {
-  const btn = el('okxSyncBtn');
-  try {
-    btn.disabled = true;
-    btn.textContent = 'Syncing…';
-    const details = await fetchOKXBalance();
-    let added = 0, updated = 0, usdtBal = 0;
-
-    // Parse a coin balance from OKX account details.
-    // Prefer availBal (what OKX app shows) when positive; fall back to cashBal (total
-    // including frozen-in-orders) when availBal is missing or zero. This handles the case
-    // where all coins are locked in an open order — the coin still belongs to the user.
-    // NOTE: never use JS `||` here — `"0" || fallback` returns `"0"` (string "0" is truthy).
-    function coinBal(d) {
-      // Use availBal — what OKX's own UI shows (coins free to trade).
-      // cashBal includes coins frozen in active algo/limit orders, which would inflate
-      // the portfolio display and show locked coins as open positions.
-      const avail = parseFloat(d.availBal ?? 'NaN');
-      if (avail > 0) return avail;
-      // Fall back to cashBal only if availBal is genuinely missing
-      const cash = parseFloat(d.cashBal ?? 'NaN');
-      if (cash > 0) return cash;
-      return parseFloat(d.eq ?? '0') || 0;
-    }
-
-    // Build a ccy→balance map for stale-entry cleanup.
-    // Use coinBal (same logic as the add loop) so a coin isn't flagged as zero
-    // just because cashBal is "0" while availBal is non-zero (or vice versa).
-    const okxTotalMap = {};
-    for (const d of details) {
-      okxTotalMap[d.ccy] = coinBal(d);
-    }
-
-    for (const d of details) {
-      if (d.ccy === 'USDT') {
-        usdtBal = parseFloat(d.cashBal ?? d.eq ?? '0');
-        state.usdtBalance = usdtBal;
-        continue;
-      }
-
-      const bal = coinBal(d);
-      if (bal <= 0) continue;
-
-      const symbol = d.ccy + '-USDT';
-
-      if (!state.tickers[symbol]) await fetchSymbolData(symbol);
-      const price = state.tickers[symbol]?.price ?? 0;
-      if (price > 0 && bal * price < 1) continue;
-
-      // OKX provides two avg-price fields:
-      //   accAvgPx  — accumulated avg cost including fees (matches OKX UI "Spot PnL")
-      //   openAvgPx — raw open avg price (no fees included)
-      // Try accAvgPx first; it should produce the same P&L as the OKX portfolio page.
-      const accAvgPx = parseFloat(d.accAvgPx ?? '0') || 0;
-      const openAvgPx = parseFloat(d.openAvgPx ?? '0') || 0;
-      const apiAvgPx = accAvgPx > 0 ? accAvgPx : openAvgPx;
-      // Never fall back to current price — that would show $0 P&L which is wrong.
-      // If OKX returns no avg price, leave avgBuyPrice as 0 (P&L displays '—').
-
-      const existing = state.portfolio.find(p => p.symbol === symbol);
-      if (existing) {
-        existing.amount = bal;
-        if (apiAvgPx > 0) existing.avgBuyPrice = apiAvgPx;
-        updated++;
-      } else {
-        state.portfolio.push({ symbol, amount: bal, avgBuyPrice: apiAvgPx });
-        added++;
-      }
-
-      if (!state.scannerSymbols.includes(symbol)) {
-        state.scannerSymbols.push(symbol);
-        saveScannerSymbols();
-      }
-    }
-
-    // Remove stale entries: coins whose total OKX balance is now zero or dust.
-    // Uses cashBal (total including frozen) so a coin locked in an open order is kept.
-    state.portfolio = state.portfolio.filter(p => {
-      const ccy = p.symbol.replace('-USDT', '');
-      if (!(ccy in okxTotalMap)) return true; // not in OKX response — keep (manual entry)
-      const total = okxTotalMap[ccy];
-      const price = state.tickers[p.symbol]?.price ?? 0;
-      if (total <= 0 || (price > 0 && total * price < 1)) return false; // truly zero/dust — remove
-      return true;
-    });
-
-    LS.set('portfolio', state.portfolio);
-    LS.set('portfolioUpdated', Date.now());
-    await pushPortfolioSymbols();   // symbols list for signal checker
-    await pushFullPortfolio();      // full data for cross-device sync
-
-    if (usdtBal > 0) {
-      showUsdtBalance(usdtBal);
-      LS.set('lastUsdtBalance', usdtBal);
-    }
-
-    await fetchAllData();
-    renderPortfolio();
-    renderScanner();
-
-    toast(`OKX synced: ${added} new, ${updated} updated`, 'success');
-  } catch (err) {
-    toast('OKX sync failed: ' + err.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '⟳ Sync OKX';
-  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -844,6 +719,7 @@ function renderScanner() {
   if (!symbols.length) {
     tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:28px">No results for this filter.</td></tr>';
     updateBestPickBanner();
+    updateSummaryBar();
     return;
   }
 
@@ -889,7 +765,6 @@ function renderScanner() {
     // Score chip inside signal badge
     const scoreStr = (score >= 0 ? '+' : '') + score.toFixed(1);
 
-    const inPort = state.portfolio.some(p => p.symbol === sym);
     const reason = sig?.reasons?.join(' · ') || 'Neutral — no strong signal';
     const coin = sym.replace('-USDT', '').replace('-BTC', '');
     const tooltip = escHtml(`Score: ${scoreStr} | ${reason}`);
@@ -898,7 +773,6 @@ function renderScanner() {
       <td>
         <div class="sym-cell">
           <span class="coin-icon">${coin}</span>
-          ${inPort ? '<span class="tag-hold" style="font-size:9px;margin-left:3px">HELD</span>' : ''}
           ${isDemo ? '<span class="demo-tag">DEMO</span>' : ''}
         </div>
       </td>
@@ -923,6 +797,7 @@ function renderScanner() {
   });
 
   updateBestPickBanner();
+  updateSummaryBar();
 }
 
 function updateBestPickBanner() {
@@ -952,82 +827,9 @@ function removeScannerSymbol(sym) {
   toast(`Removed ${sym}`, 'info');
 }
 
-// ═══════════════════════════════════════════════════════════
-//  RENDER — PORTFOLIO
-// ═══════════════════════════════════════════════════════════
-function renderPortfolio() {
-  const tbody = el('portfolioBody');
-
-  if (!state.portfolio.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:28px;font-size:12px">
-      No positions yet. Click <strong>+ Add Position</strong> to track your OKX holdings.
-    </td></tr>`;
-    updateSummaryBar();
-    return;
-  }
-
-  let totalValue = 0, totalCost = 0, totalDayPnl = 0;
-
-  const rows = state.portfolio.map(pos => {
-    const t = state.tickers[pos.symbol];
-    const price = t?.price ?? 0;
-    const chgPct = t?.changePercent ?? 0;
-    const value = price * pos.amount;
-    const cost = pos.avgBuyPrice * pos.amount;
-    const pnl = value - cost;
-    const pnlPct = cost ? (pnl / cost) * 100 : 0;
-    const dayPnl = t ? t.change * pos.amount : 0;
-
-    totalValue += value;
-    totalCost += cost;
-    totalDayPnl += dayPnl;
-
-    const chgCls = chgPct >= 0 ? 'pos' : 'neg';
-    const pnlCls = pnl >= 0 ? 'pos' : 'neg';
-    const coin = pos.symbol.replace('-USDT', '');
-
-    return `<tr>
-      <td><div class="sym-cell"><span class="coin-icon">${coin}</span></div></td>
-      <td class="num price-cell">${price ? fmtCrypto(price) : '—'}</td>
-      <td class="num ${chgCls}">${price ? (chgPct >= 0 ? '+' : '') + chgPct.toFixed(2) + '%' : '—'}</td>
-      <td class="num">${pos.amount}</td>
-      <td class="num price-cell">
-        ${price ? fmtMoney(value) : '—'}
-        ${cost > 0 ? `<div class="invested-sub">invested ${fmtMoney(cost)}</div>` : ''}
-      </td>
-      <td class="num ${pnlCls} pnl-cell">
-        ${price ? `<span class="pnl-dollar">${pnl >= 0 ? '+' : ''}${fmtMoney(pnl)}</span>` : '—'}
-        ${price && cost > 0 ? `<div class="pnl-pct-sub">${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%</div>` : ''}
-      </td>
-      <td><button class="btn-row-del" data-symbol="${pos.symbol}" title="Remove">✕</button></td>
-    </tr>`;
-  }).join('');
-
-  tbody.innerHTML = rows;
-  tbody.querySelectorAll('.btn-row-del').forEach(btn => {
-    btn.addEventListener('click', () => removePosition(btn.dataset.symbol));
-  });
-
-  updateSummaryBar(totalValue, totalCost, totalDayPnl);
-}
-
-function updateSummaryBar(totalValue = 0, totalCost = 0, totalDayPnl = 0) {
-  const totalPnl = totalValue - totalCost;
-  const totalPnlPct = totalCost ? (totalPnl / totalCost) * 100 : 0;
-
-  el('totalPortfolioValue').textContent = totalValue ? fmtMoney(totalValue) : '—';
-
-  const dayEl = el('totalDayPnl');
-  dayEl.textContent = totalDayPnl ? (totalDayPnl >= 0 ? '+' : '') + fmtMoney(totalDayPnl) : '—';
-  dayEl.className = 'summary-value ' + (totalDayPnl >= 0 ? 'pos' : 'neg');
-
-  const pnlEl = el('totalPnl');
-  pnlEl.textContent = totalPnl ? `${totalPnl >= 0 ? '+' : ''}${fmtMoney(totalPnl)} (${totalPnlPct >= 0 ? '+' : ''}${totalPnlPct.toFixed(2)}%)` : '—';
-  pnlEl.className = 'summary-value ' + (totalPnl >= 0 ? 'pos' : 'neg');
-
+function updateSummaryBar() {
   el('lastUpdated').textContent = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
-  // Best signal in the top bar
   const topEl = el('topSignal');
   let best = null, bestScore = -99;
   for (const sym of state.scannerSymbols) {
@@ -1042,13 +844,6 @@ function updateSummaryBar(totalValue = 0, totalCost = 0, totalDayPnl = 0) {
     topEl.textContent = 'No strong signal';
     topEl.className = 'summary-value';
   }
-}
-
-function removePosition(symbol) {
-  state.portfolio = state.portfolio.filter(p => p.symbol !== symbol);
-  savePortfolio();
-  renderPortfolio();
-  toast(`Removed ${symbol}`, 'info');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1196,7 +991,40 @@ async function runAiAnalysis() {
 
   showAiThinking();
 
+  // Fetch live OKX portfolio data so the AI always sees your real current holdings,
+  // not a potentially stale snapshot. Falls back to app state if credentials are missing.
+  const prevUsdtBal  = state.usdtBalance;
+  const prevPortfolio = state.portfolio;
+  if (CONFIG.OKX_API_KEY && CONFIG.OKX_SECRET_KEY && CONFIG.OKX_PASSPHRASE) {
+    try {
+      const details    = await fetchOKXBalance();
+      const usdtDetail = details.find(d => d.ccy === 'USDT');
+      const liveBal    = parseFloat(usdtDetail?.cashBal ?? usdtDetail?.availBal ?? '0') || 0;
+      if (liveBal > 0) state.usdtBalance = liveBal;
+
+      const liveHoldings = [];
+      for (const d of details) {
+        if (d.ccy === 'USDT') continue;
+        const avail = parseFloat(d.availBal ?? '0') || 0;
+        if (avail <= 0) continue;
+        const sym   = d.ccy + '-USDT';
+        const price = state.tickers[sym]?.price ?? 0;
+        if (price > 0 && avail * price < 1) continue; // skip dust
+        const avgPx = parseFloat(d.accAvgPx ?? '0') || parseFloat(d.openAvgPx ?? '0') || 0;
+        liveHoldings.push({ symbol: sym, amount: avail, avgBuyPrice: avgPx });
+      }
+      if (liveHoldings.length) state.portfolio = liveHoldings;
+    } catch { /* OKX unreachable — use existing app state */ }
+  }
+
   try {
+    const systemPrompt = buildSystemPrompt();
+    const userPrompt   = buildPrompt(contextType, customText);
+
+    // Restore state after prompt is built — don't affect the UI display
+    state.usdtBalance = prevUsdtBal;
+    state.portfolio   = prevPortfolio;
+
     const res = await fetch(CONFIG.CLAUDE_API_URL, {
       method: 'POST',
       headers: {
@@ -1208,8 +1036,8 @@ async function runAiAnalysis() {
       body: JSON.stringify({
         model: CONFIG.CLAUDE_MODEL,
         max_tokens: 1800,
-        system: buildSystemPrompt(),
-        messages: [{ role: 'user', content: buildPrompt(contextType, customText) }],
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
       }),
     });
 
@@ -1221,6 +1049,9 @@ async function runAiAnalysis() {
     const data = await res.json();
     renderAiResponse(data.content?.[0]?.text ?? '(No response)');
   } catch (err) {
+    // Ensure state is always restored even if Claude call fails
+    state.usdtBalance = prevUsdtBal;
+    state.portfolio   = prevPortfolio;
     renderAiError('API error: ' + err.message);
   }
 }
@@ -1238,56 +1069,55 @@ function buildSystemPrompt() {
     ? state.portfolio.map(p => p.symbol).join(', ')
     : 'none';
 
-  return `You are an expert cryptocurrency trading advisor specializing in technical analysis for OKX spot markets. The user is a retail trader who wants clear, actionable guidance.
+  return `You are an expert cryptocurrency trading advisor specializing in technical analysis for OKX spot markets. The user relies on you 100% for trade decisions — your analysis must be rigorous, data-driven, and conservative. Only recommend trades with genuine multi-indicator confluence.
 
-Rules:
-- Be direct and concise. Use ### headings and bullet points.
-- Always tag recommendations: [BUY], [SELL], or [HOLD]
-- For every BUY or SELL, give:
-  • Entry price (exact or range)
-  • How much USDT to spend (based on their capital and risk profile)
-  • How many coins that buys at entry price
-  • Take Profit target (+%)
-  • Stop Loss (-%)
-  • Confidence level: High / Medium / Low
+CONTEXT:
 - Risk profile: ${CONFIG.RISK_PROFILE}
 - ${capital}
 - ${positionSize}
-- Platform: OKX Spot Trading (not futures/leverage)
-- Coins user currently holds: ${ownedCoins}
-- IMPORTANT: Only recommend [SELL] for coins the user currently holds (listed above). Never suggest selling a coin they don't own.
+- Platform: OKX Spot Trading (no leverage, no futures)
+- Coins user currently holds (live from OKX): ${ownedCoins}
 
-TRADE TAGS — REQUIRED for every actionable [BUY] or [SELL]:
-Use the OPTION 3 format below for ALL buy trades — it maximizes profit with partial take-profit + trailing stop.
-After each concrete BUY recommendation, append this tag on its own line (valid JSON, numbers only — no $ signs, no quotes around numbers):
+ANALYSIS RULES — apply these strictly:
+1. Only recommend BUY when ALL of the following are true:
+   • Signal score ≥ 4.0 (STRONG BUY zone)
+   • At least 2 of these confirm: RSI oversold, MACD bullish crossover, BB lower band touch, volume spike
+   • 4H RSI < 55 (not overbought on the higher timeframe)
+   • Funding rate is not extreme (avoid buying when funding > 0.05% — longs are overheated)
+2. WHEN NOT TO TRADE — explicitly say "SKIP" when:
+   • Score is 2–3 (BUY zone) but indicators are mixed — weak setup, not worth the risk
+   • Price is near a recent high (BB %B > 75%) — late entry, bad risk/reward
+   • 4H RSI > 65 — higher timeframe is overbought, pullback likely
+   • Funding rate > 0.05% — market is overleveraged long, squeeze risk
+   • News sentiment is bearish — macro headwind against the trade
+   • Volume is below average — move lacks conviction
+3. Confidence level: High (3+ confirmations), Medium (2 confirmations), Low (1 — avoid or reduce size)
+4. Use ### headings and bullet points. Be direct and concise.
+
+TRADE TAGS — for every actionable BUY, append this tag on its own line (valid JSON, numbers only):
 
 [TRADE:{"side":"buy","symbol":"AVAX-USDT","amountUsdt":70,"partialTpPct":5,"trailingCallbackPct":3,"slPct":8}]
 
-  • side: "buy" or "sell"
   • symbol: exact OKX instrument ID (e.g. "AVAX-USDT", "SOL-USDT")
-  • amountUsdt: USDT to spend
-  • partialTpPct: % gain at which to sell 50% and lock in profit (Phase 1)
-  • trailingCallbackPct: trailing stop callback % for remaining 50% after Phase 1 triggers (Phase 2)
-  • slPct: initial stop loss % below entry (protects full position before Phase 1 triggers)
+  • amountUsdt: USDT to spend (user can edit this in the confirmation dialog)
+  • partialTpPct: % gain at which to sell 50% and lock profit (Phase 1)
+  • trailingCallbackPct: trailing stop callback % for remaining 50% after Phase 1 (Phase 2)
+  • slPct: initial stop loss % below entry (full position protection before Phase 1)
 
-OPTION 3 GUIDELINES — choose values based on coin volatility tier:
+OPTION 3 PARAMETERS — base on coin volatility AND signal strength:
 
 Extreme volatility (PEPE, WIF, DOGE): partialTpPct 6-8, trailingCallbackPct 3-4, slPct 8-10
 High volatility (AVAX, SOL, SUI, INJ, TIA): partialTpPct 4-6, trailingCallbackPct 2.5-3, slPct 7-8
 Medium-high (NEAR, APT, FET, LINK, SEI): partialTpPct 3-5, trailingCallbackPct 2-2.5, slPct 6-7
 
-Signal strength modifiers (adjust partialTpPct upward):
-  • score ≥ 4.5: +1–2% (strong conviction — let winners run more)
-  • RSI 1H < 25 (deeply oversold): +1%
-  • RSI 1H 30–40 (mild dip): −0.5% (more conservative)
-  • 4H RSI also oversold (<35): +1% (double confirmation of oversold)
-  • Bullish MACD crossover: +0.5–1%
+Adjust partialTpPct upward for stronger signals:
+  • Score ≥ 4.5: +1–2% (strong conviction — let winners run)
+  • 1H RSI < 25 (deeply oversold): +1%
+  • 4H RSI also oversold (< 35): +1% (double timeframe confirmation)
+  • Bullish MACD crossover confirmed: +0.5–1%
+  • Funding rate negative (shorts overheated, squeeze setup): +0.5%
 
-For SELL recommendations use the same format as before:
-[TRADE:{"side":"sell","symbol":"SOL-USDT","amountUsdt":50,"partialTpPct":0,"trailingCallbackPct":0,"slPct":0}]
-(Leave partialTpPct/trailingCallbackPct/slPct as 0 for sells — they are exits, not entries)
-
-Never include a TRADE tag after a [HOLD]. Use only plain numbers (no commas, no dollar signs).
+Never include a TRADE tag after a [HOLD] or a [SKIP]. Use only plain numbers (no commas, no $ signs).
 
 Always end your response with this exact line:
 "⚠ Not financial advice. Crypto is high-risk — only invest what you can afford to lose completely."`;
@@ -1458,9 +1288,7 @@ function showTradeConfirmation(action) {
   const isBuy = action.side === 'buy';
   const coin = action.symbol.replace('-USDT', '');
 
-  const portfolioEntry = state.portfolio.find(p => p.symbol === action.symbol);
   let coinAmt = price > 0 ? action.amountUsdt / price : null;
-  if (!isBuy && portfolioEntry && coinAmt > portfolioEntry.amount) coinAmt = portfolioEntry.amount;
 
   el('tradeConfirmTitle').textContent = `${isBuy ? '🟢 BUY' : '🔴 SELL'} ${coin}`;
 
@@ -1468,8 +1296,7 @@ function showTradeConfirmation(action) {
 
   if (isO3) {
     // ─── Option 3: Partial TP + Trailing Stop ──────────────────────────────
-    el('tpSlToggles').style.display = 'none';
-
+    let amtUsdt = action.amountUsdt;
     let pTpPct = action.partialTpPct;
     let trailPct = action.trailingCallbackPct || 2.5;
     let slPct = action.slPct || 8;
@@ -1481,23 +1308,28 @@ function showTradeConfirmation(action) {
       };
     }
 
-    function updateO3Prices() {
+    function updateO3Display() {
       const { ptPrice, slPrice } = calcO3Prices();
       const ptEl = document.getElementById('o3_ptPrice');
       const slEl = document.getElementById('o3_slPrice');
       const taEl = document.getElementById('o3_trailAct');
+      const cdEl = document.getElementById('o3_coinDisp');
       if (ptEl) ptEl.textContent = fmtCrypto(ptPrice);
       if (slEl) slEl.textContent = fmtCrypto(slPrice);
       if (taEl) taEl.textContent = fmtCrypto(ptPrice);
+      if (cdEl && price > 0) cdEl.textContent = ` ≈ ${parseFloat((amtUsdt / price).toFixed(6))} ${coin}`;
     }
 
     const { ptPrice, slPrice } = calcO3Prices();
-    const coinDisplay = coinAmt ? ` ≈ ${parseFloat(coinAmt.toFixed(6))} ${coin}` : '';
+    const coinDispInit = price > 0 ? ` ≈ ${parseFloat((amtUsdt / price).toFixed(6))} ${coin}` : '';
 
     el('tradeConfirmDetails').innerHTML = `
       <div class="o3-plan">
         <table class="trade-detail-table">
-          <tr><td>Buy</td><td>${fmtMoney(action.amountUsdt)} USDT${coinDisplay} at market</td></tr>
+          <tr>
+            <td>Trade Amount</td>
+            <td><input type="number" id="i_amtUsdt" class="o3-amt-input" value="${amtUsdt}" min="1" step="1"> USDT<span id="o3_coinDisp">${coinDispInit}</span></td>
+          </tr>
         </table>
         <div class="o3-phase-label">Phase 1 — takes effect immediately on OKX (24/7 active)</div>
         <table class="trade-detail-table">
@@ -1517,77 +1349,35 @@ function showTradeConfirmation(action) {
         <p class="trade-warning">⚠ All 3 orders are placed directly on OKX — they execute automatically 24/7 even when this app is closed.</p>
       </div>`;
 
+    document.getElementById('i_amtUsdt').addEventListener('input', e => {
+      const v = parseFloat(e.target.value); if (v > 0) { amtUsdt = v; updateO3Display(); }
+    });
     document.getElementById('i_pTpPct').addEventListener('input', e => {
-      const v = parseFloat(e.target.value); if (v > 0) { pTpPct = v; updateO3Prices(); }
+      const v = parseFloat(e.target.value); if (v > 0) { pTpPct = v; updateO3Display(); }
     });
     document.getElementById('i_trailPct').addEventListener('input', e => {
       const v = parseFloat(e.target.value); if (v > 0) trailPct = v;
     });
     document.getElementById('i_slPct').addEventListener('input', e => {
-      const v = parseFloat(e.target.value); if (v > 0) { slPct = v; updateO3Prices(); }
+      const v = parseFloat(e.target.value); if (v > 0) { slPct = v; updateO3Display(); }
     });
 
     const btn = el('tradeConfirmBtn');
     btn.disabled = false;
     btn.textContent = '⚡ Confirm Option 3 Trade';
-    btn.onclick = () => executeTrade({ ...action, _pTpPct: pTpPct, _trailPct: trailPct, _slPct: slPct }, coinAmt);
+    btn.onclick = () => executeTrade({ ...action, amountUsdt: amtUsdt, _pTpPct: pTpPct, _trailPct: trailPct, _slPct: slPct }, null);
 
   } else {
-    // ─── Standard mode ────────────────────────────────────────────────────
-    const tpPct = price && action.tp ? ((action.tp - price) / price * 100).toFixed(1) : null;
-    const slPct = price && action.sl ? ((price - action.sl) / price * 100).toFixed(1) : null;
-
-    const rows = [
-      ['Order Type', `Spot Market ${isBuy ? 'Buy' : 'Sell'} — executes instantly`],
-      ['Amount', `${fmtMoney(action.amountUsdt)} USDT${coinAmt ? ` ≈ ${parseFloat(coinAmt.toFixed(6))} ${coin}` : ''}`],
-      ['Entry Price', price ? `${fmtCrypto(price)} (current market)` : '? — refresh market data first'],
-      action.tp ? ['Take Profit', `${fmtCrypto(action.tp)}${tpPct ? ` <span class="pos">(+${tpPct}%)</span>` : ''}`] : null,
-      action.sl ? ['Stop Loss', `${fmtCrypto(action.sl)}${slPct ? ` <span class="neg">(-${slPct}%)</span>` : ''}`] : null,
-    ].filter(Boolean);
-
-    el('tradeConfirmDetails').innerHTML =
-      `<table class="trade-detail-table">${rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table>
-       <p class="trade-warning">⚠ TP/SL orders will be placed on OKX after execution based on your toggles below.</p>`;
-
-    const tpSlToggles = el('tpSlToggles');
-    const tpToggle = el('tpToggle');
-    const slToggle = el('slToggle');
-    const hasAlgo = action.tp || action.sl;
-    tpSlToggles.style.display = hasAlgo ? 'block' : 'none';
-    if (hasAlgo) {
-      tpToggle.classList.toggle('active', true);
-      tpToggle.textContent = '✓ Take Profit';
-      tpToggle.style.display = action.tp ? '' : 'none';
-      slToggle.classList.toggle('active', true);
-      slToggle.textContent = '✓ Stop Loss';
-      slToggle.style.display = action.sl ? '' : 'none';
-
-      function syncTpSlRows() {
-        const table = el('tradeConfirmDetails').querySelector('.trade-detail-table');
-        if (!table) return;
-        table.querySelectorAll('tr').forEach(row => {
-          const label = row.cells[0]?.textContent;
-          if (label === 'Take Profit') row.style.opacity = tpToggle.classList.contains('active') ? '' : '.35';
-          if (label === 'Stop Loss') row.style.opacity = slToggle.classList.contains('active') ? '' : '.35';
-        });
-      }
-      tpToggle.onclick = () => {
-        const on = !tpToggle.classList.contains('active');
-        tpToggle.classList.toggle('active', on);
-        tpToggle.textContent = on ? '✓ Take Profit' : '✕ Take Profit';
-        syncTpSlRows();
-      };
-      slToggle.onclick = () => {
-        const on = !slToggle.classList.contains('active');
-        slToggle.classList.toggle('active', on);
-        slToggle.textContent = on ? '✓ Stop Loss' : '✕ Stop Loss';
-        syncTpSlRows();
-      };
-    }
+    // ─── Simple market sell ───────────────────────────────────────────────
+    el('tradeConfirmDetails').innerHTML = `
+      <table class="trade-detail-table">
+        <tr><td>Order Type</td><td>Spot Market Sell — executes instantly</td></tr>
+        <tr><td>Amount</td><td>${fmtMoney(action.amountUsdt)} USDT${coinAmt ? ` ≈ ${parseFloat(coinAmt.toFixed(6))} ${coin}` : ''}</td></tr>
+      </table>`;
 
     const btn = el('tradeConfirmBtn');
     btn.disabled = false;
-    btn.textContent = '⚡ Confirm Trade';
+    btn.textContent = '⚡ Confirm Sell';
     btn.onclick = () => executeTrade(action, coinAmt);
   }
 
@@ -1708,75 +1498,15 @@ async function executeTrade(action, coinAmt) {
         if (passed > 0) toast(`${passed}/3 orders placed — check OKX for details`, 'success', 6000);
       }
 
-    } else {
-      // ─── Standard TP/SL (legacy / sell orders) ───────────────────────────
-      const useTP = action.tp && el('tpToggle')?.classList.contains('active');
-      const useSL = action.sl && el('slToggle')?.classList.contains('active');
-
-      if ((useTP || useSL) && szCoin > 0) {
-        const algoSz = (szCoin * 0.9985).toFixed(8);
-        const algoSide = isBuy ? 'sell' : 'buy';
-        const baseAlgo = { instId: action.symbol, tdMode: 'cash', side: algoSide };
-
-        if (useTP && useSL) {
-          try {
-            await okxSignedPost('/api/v5/trade/order-algo', {
-              ...baseAlgo, ordType: 'oco', sz: algoSz,
-              tpTriggerPx: String(action.tp), tpOrdPx: '-1', tpTriggerPxType: 'last',
-              slTriggerPx: String(action.sl), slOrdPx: '-1', slTriggerPxType: 'last',
-            });
-            toast('TP/SL set (OCO order active)', 'success');
-          } catch (e) {
-            console.warn('[TP/SL] OCO failed, trying separate conditional orders:', e.message);
-            try {
-              await Promise.all([
-                okxSignedPost('/api/v5/trade/order-algo', {
-                  ...baseAlgo, ordType: 'conditional', sz: algoSz,
-                  tpTriggerPx: String(action.tp), tpOrdPx: '-1', tpTriggerPxType: 'last',
-                }),
-                okxSignedPost('/api/v5/trade/order-algo', {
-                  ...baseAlgo, ordType: 'conditional', sz: algoSz,
-                  slTriggerPx: String(action.sl), slOrdPx: '-1', slTriggerPxType: 'last',
-                }),
-              ]);
-              toast('TP/SL set (two conditional orders — cancel one manually after the other triggers)', 'success', 6000);
-            } catch (e2) {
-              console.error('[TP/SL] Both OCO and conditional orders failed:', e2.message);
-              toast('TP/SL could not be set — set manually on OKX. Error: ' + e2.message, 'error', 8000);
-            }
-          }
-        } else if (useTP) {
-          try {
-            await okxSignedPost('/api/v5/trade/order-algo', {
-              ...baseAlgo, ordType: 'conditional', sz: algoSz,
-              tpTriggerPx: String(action.tp), tpOrdPx: '-1', tpTriggerPxType: 'last',
-            });
-            toast('Take Profit set', 'success');
-          } catch (e) {
-            toast('TP could not be set — set manually on OKX. Error: ' + e.message, 'error', 8000);
-          }
-        } else {
-          try {
-            await okxSignedPost('/api/v5/trade/order-algo', {
-              ...baseAlgo, ordType: 'conditional', sz: algoSz,
-              slTriggerPx: String(action.sl), slOrdPx: '-1', slTriggerPxType: 'last',
-            });
-            toast('Stop Loss set', 'success');
-          } catch (e) {
-            toast('SL could not be set — set manually on OKX. Error: ' + e.message, 'error', 8000);
-          }
-        }
-      }
     }
 
     closeModal('tradeConfirmModal');
-    // Refresh balance + portfolio after 2 s
+    // Refresh balance after 2 s
     setTimeout(() => {
       fetchOKXBalance().then(details => {
-        const usdt = parseFloat(details.find(d => d.ccy === 'USDT')?.cashBal ?? 0);
-        showUsdtBalance(usdt);
+        const usdt = parseFloat(details.find(d => d.ccy === 'USDT')?.cashBal ?? '0') || 0;
+        if (usdt > 0) { showUsdtBalance(usdt); LS.set('lastUsdtBalance', usdt); }
       }).catch(() => { });
-      syncPortfolioFromOKX().catch(() => { });
     }, 2000);
 
   } catch (err) {
@@ -1813,38 +1543,6 @@ function markdownToHtml(text) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  ADD POSITION
-// ═══════════════════════════════════════════════════════════
-async function handleAddPosition() {
-  const raw = el('newSymbol').value.trim().toUpperCase();
-  const amount = parseFloat(el('newAmount').value);
-  const avgBuyPrice = parseFloat(el('newAvgCost').value);
-  const symbol = raw.includes('-') ? raw : raw + '-USDT';
-
-  if (!raw) { toast('Enter a coin symbol', 'error'); return; }
-  if (isNaN(amount) || amount <= 0) { toast('Enter a valid amount', 'error'); return; }
-  if (isNaN(avgBuyPrice) || avgBuyPrice <= 0) { toast('Enter a valid buy price', 'error'); return; }
-  if (state.portfolio.some(p => p.symbol === symbol)) { toast(`${symbol} already in portfolio`, 'error'); return; }
-
-  closeModal('addPositionModal');
-  state.portfolio.push({ symbol, amount, avgBuyPrice });
-  savePortfolio();
-
-  if (!state.scannerSymbols.includes(symbol)) {
-    state.scannerSymbols.push(symbol);
-    saveScannerSymbols();
-  }
-
-  toast(`Fetching live data for ${symbol}...`, 'info');
-  await fetchSymbolData(symbol);
-  renderPortfolio();
-  renderScanner();
-
-  ['newSymbol', 'newAmount', 'newAvgCost'].forEach(id => el(id).value = '');
-  toast(`Added ${symbol} to portfolio`, 'success');
-}
-
-// ═══════════════════════════════════════════════════════════
 //  REFRESH
 // ═══════════════════════════════════════════════════════════
 async function refreshAll() {
@@ -1853,7 +1551,6 @@ async function refreshAll() {
   el('refreshBtn').classList.add('spinning');
 
   await fetchAllData();
-  renderPortfolio();
   renderScanner();
   checkSignalAlerts();
 
@@ -1880,69 +1577,6 @@ function restartAutoRefresh() {
 // ═══════════════════════════════════════════════════════════
 //  PERSISTENCE
 // ═══════════════════════════════════════════════════════════
-function loadPortfolio() { state.portfolio = LS.get('portfolio', CONFIG.DEFAULT_PORTFOLIO); }
-function savePortfolio() {
-  LS.set('portfolio', state.portfolio);
-  LS.set('portfolioUpdated', Date.now());
-  pushPortfolioSymbols();  // symbols list for signal checker
-  pushFullPortfolio();     // full data for cross-device sync
-}
-
-async function pushPortfolioSymbols() {
-  if (!isSupabaseConfigured()) return;
-  const symbols = state.portfolio.map(p => p.symbol).join(',');
-  try {
-    const r = await fetch(`${getSupabaseCfg().url}/rest/v1/app_settings?id=eq.main`, {
-      method: 'PATCH',
-      headers: { ...sbHeaders(), 'Prefer': 'return=minimal' },
-      body: JSON.stringify({ portfolio_symbols: symbols }),
-    });
-    if (!r.ok) console.error('[portfolio sync] Supabase PATCH failed:', r.status, await r.text().catch(() => ''));
-  } catch (e) {
-    console.error('[portfolio sync] network error:', e.message);
-  }
-}
-
-async function pushFullPortfolio() {
-  if (!isSupabaseConfigured() || !state.portfolio.length) return;
-  try {
-    await fetch(`${getSupabaseCfg().url}/rest/v1/app_settings?id=eq.main`, {
-      method: 'PATCH',
-      headers: { ...sbHeaders(), 'Prefer': 'return=minimal' },
-      body: JSON.stringify({
-        portfolio_data:    JSON.stringify(state.portfolio),
-        portfolio_updated: new Date().toISOString(),
-      }),
-    });
-  } catch { }
-}
-
-async function pullPortfolioFromCloud() {
-  if (!isSupabaseConfigured()) return false;
-  try {
-    const r = await fetch(
-      `${getSupabaseCfg().url}/rest/v1/app_settings?id=eq.main&select=portfolio_data,portfolio_updated`,
-      { headers: sbHeaders() },
-    );
-    if (!r.ok) return false;
-    const rows = await r.json();
-    const raw  = rows[0]?.portfolio_data;
-    if (!raw) return false;
-    const cloudPortfolio = JSON.parse(raw);
-    if (!Array.isArray(cloudPortfolio) || !cloudPortfolio.length) return false;
-
-    // Only overwrite local if cloud is newer (or local is empty)
-    const cloudTs = rows[0]?.portfolio_updated ? new Date(rows[0].portfolio_updated).getTime() : 0;
-    const localTs = LS.get('portfolioUpdated', 0);
-    if (cloudTs > localTs || !state.portfolio.length) {
-      state.portfolio = cloudPortfolio;
-      LS.set('portfolio', state.portfolio);
-      LS.set('portfolioUpdated', cloudTs || Date.now());
-      return true;
-    }
-  } catch { }
-  return false;
-}
 function loadScannerSymbols() { state.scannerSymbols = LS.get('scanner', CONFIG.DEFAULT_SCANNER); }
 function saveScannerSymbols() { LS.set('scanner', state.scannerSymbols); }
 
@@ -1950,9 +1584,9 @@ function saveScannerSymbols() { LS.set('scanner', state.scannerSymbols); }
 //  EXPORT / IMPORT
 // ═══════════════════════════════════════════════════════════
 function exportData() {
-  const blob = new Blob([JSON.stringify({ portfolio: state.portfolio, scanner: state.scannerSymbols }, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify({ scanner: state.scannerSymbols }, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const a = Object.assign(document.createElement('a'), { href: url, download: `crypto-advisor-${new Date().toISOString().slice(0, 10)}.json` });
+  const a = Object.assign(document.createElement('a'), { href: url, download: `trading-scanner-${new Date().toISOString().slice(0, 10)}.json` });
   a.click();
   URL.revokeObjectURL(url);
   toast('Exported', 'success');
@@ -1963,7 +1597,6 @@ function importData(file) {
   reader.onload = e => {
     try {
       const data = JSON.parse(e.target.result);
-      if (data.portfolio) { state.portfolio = data.portfolio; savePortfolio(); }
       if (data.scanner) { state.scannerSymbols = data.scanner; saveScannerSymbols(); }
       toast('Imported successfully', 'success');
       closeModal('settingsModal');
@@ -1974,11 +1607,9 @@ function importData(file) {
 }
 
 function clearAllData() {
-  if (!confirm('Reset all portfolio data and settings? This cannot be undone.')) return;
+  if (!confirm('Reset all data and settings? This cannot be undone.')) return;
   localStorage.clear();
-  state.portfolio = [];
   state.scannerSymbols = [...CONFIG.DEFAULT_SCANNER];
-  savePortfolio();
   saveScannerSymbols();
   toast('Reset to defaults', 'info');
   closeModal('settingsModal');
@@ -2034,15 +1665,6 @@ function toast(msg, type = 'info', duration = 3500) {
 function wireEvents() {
   el('refreshBtn').addEventListener('click', refreshAll);
   el('settingsBtn').addEventListener('click', () => { populateSettingsForm(); openModal('settingsModal'); });
-
-  // Portfolio
-  el('okxSyncBtn').addEventListener('click', syncPortfolioFromOKX);
-  el('addPositionBtn').addEventListener('click', () => openModal('addPositionModal'));
-  el('portfolioRefreshBtn').addEventListener('click', refreshAll);
-  el('confirmAddPosition').addEventListener('click', handleAddPosition);
-  el('newSymbol').addEventListener('keydown', e => { if (e.key === 'Enter') el('newAmount').focus(); });
-  el('newAmount').addEventListener('keydown', e => { if (e.key === 'Enter') el('newAvgCost').focus(); });
-  el('newAvgCost').addEventListener('keydown', e => { if (e.key === 'Enter') handleAddPosition(); });
 
   // Scanner
   el('scannerAddBtn').addEventListener('click', () => {
@@ -2129,30 +1751,27 @@ function wireEvents() {
 //  INIT
 // ═══════════════════════════════════════════════════════════
 async function loadAppData() {
-  // Restore last known USDT balance immediately (before sync)
+  // Restore last known USDT balance immediately (before first network call)
   const lastBal = LS.get('lastUsdtBalance', 0);
   if (lastBal > 0) showUsdtBalance(lastBal);
 
-  // Pull portfolio from Supabase — keeps all devices in sync automatically
-  await pullPortfolioFromCloud();
-
-  renderPortfolio();
   renderScanner();
   await fetchAllData();
-  renderPortfolio();
   renderScanner();
   checkSignalAlerts();
   refreshNews();
   restartAutoRefresh();
   // Auto-sync OKX balance if credentials are available
   if (CONFIG.OKX_API_KEY && CONFIG.OKX_SECRET_KEY && CONFIG.OKX_PASSPHRASE) {
-    syncPortfolioFromOKX().catch(err => toast('OKX auto-sync failed: ' + err.message, 'error'));
+    fetchOKXBalance().then(details => {
+      const usdt = parseFloat(details.find(d => d.ccy === 'USDT')?.cashBal ?? '0') || 0;
+      if (usdt > 0) { showUsdtBalance(usdt); LS.set('lastUsdtBalance', usdt); }
+    }).catch(() => { });
   }
 }
 
 async function init() {
   loadSettings();
-  loadPortfolio();
   state.notifiedSignals = LS.get('notifiedSignals', {});
   loadScannerSymbols();
   wireEvents();

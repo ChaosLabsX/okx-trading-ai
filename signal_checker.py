@@ -8,7 +8,7 @@ Alert rules:
 - SELL and STRONG SELL are the same zone — same rule.
 - A new alert fires only when the zone CHANGES (entering BUY zone, flipping to SELL, etc.).
 - 2-minute safety cooldown prevents false alerts from rapid back-and-forth oscillation.
-- SELL/STRONG SELL alerts are filtered to coins you actually hold (read live from Supabase).
+- SELL/STRONG SELL alerts fire for all watched coins (not filtered by portfolio).
 """
 
 import base64
@@ -66,33 +66,6 @@ def direction_zone(label):
     if label in ('STRONG BUY', 'BUY'):   return 'up'
     if label in ('STRONG SELL', 'SELL'): return 'down'
     return 'neutral'
-
-
-# ── Portfolio from Supabase ───────────────────────────────────────────────────
-def fetch_portfolio_symbols():
-    """
-    Returns the set of OKX symbols in your portfolio (e.g. {'BTC-USDT', 'ETH-USDT'}).
-    The browser app pushes this to Supabase automatically on every portfolio change.
-    Returns empty set if Supabase is unreachable — SELL alerts are skipped in that case.
-    """
-    try:
-        r = requests.get(
-            f'{SUPABASE_URL}/rest/v1/app_settings?id=eq.main&select=portfolio_symbols',
-            headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
-            timeout=10,
-        )
-        if r.status_code == 200:
-            data = r.json()
-            raw  = (data[0].get('portfolio_symbols') or '') if data else ''
-            syms = {s.strip() for s in raw.split(',') if s.strip()}
-            if syms:
-                print(f'  Portfolio: {", ".join(sorted(syms))}')
-            else:
-                print('  Portfolio: empty — SELL alerts will be skipped')
-            return syms
-    except Exception as e:
-        print(f'  Portfolio fetch failed: {e} — SELL alerts skipped')
-    return set()
 
 
 # ── OKX data fetching ─────────────────────────────────────────────────────────
@@ -301,7 +274,7 @@ def save_cache(data):
 
 
 # ── Single scan ───────────────────────────────────────────────────────────────
-def run_scan(cache, portfolio_symbols):
+def run_scan(cache):
     now = time.time()
     for symbol in SYMBOLS:
         try:
@@ -336,9 +309,8 @@ def run_scan(cache, portfolio_symbols):
                 time.sleep(0.3)
                 continue
 
-            # SELL filter — skip if coin not in portfolio
-            if label in SELL_LABELS and symbol not in portfolio_symbols:
-                print(f'  {symbol}: SELL skipped — not in portfolio')
+            # Only alert on STRONG BUY — user relies on auto-exit orders for sells
+            if label != 'STRONG BUY':
                 time.sleep(0.3)
                 continue
 
@@ -411,12 +383,13 @@ def _okx_post(path, body):
     return d
 
 
-# ── Option 3 break-even SL monitor ────────────────────────────────────────────
+# ── Option 3 trade monitor ────────────────────────────────────────────────────
 def _fetch_option3_trades():
-    """Fetch all phase-1 Option 3 trades from Supabase."""
+    """Fetch all active Option 3 trades (phase 1 and 2) from Supabase."""
     try:
         r = requests.get(
-            f'{SUPABASE_URL}/rest/v1/option3_trades?phase=eq.1&select=*',
+            # phase < 3 means active (1=waiting for TP/SL, 2=partial TP filled/trailing active)
+            f'{SUPABASE_URL}/rest/v1/option3_trades?phase=lt.3&select=*',
             headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
             timeout=10,
         )
@@ -428,35 +401,46 @@ def _fetch_option3_trades():
     return []
 
 
-def _is_partial_tp_filled(partial_tp_id):
-    """Return True if the partial TP conditional order has triggered on OKX."""
+def _is_algo_triggered(algo_id, ord_type='conditional'):
+    """Return True if an OKX algo order has triggered (state=effective in history)."""
     try:
-        # Triggered orders leave 'live' and appear in history with state='effective'
-        d = _okx_get(f'/api/v5/trade/orders-algo-history?ordType=conditional&algoId={partial_tp_id}')
+        d = _okx_get(f'/api/v5/trade/orders-algo-history?ordType={ord_type}&algoId={algo_id}')
         for order in d.get('data', []):
-            if order.get('algoId') == partial_tp_id and order.get('state') == 'effective':
+            if order.get('algoId') == algo_id and order.get('state') == 'effective':
                 return True
     except Exception as e:
-        print(f'  [Option3] Order check error ({partial_tp_id}): {e}')
+        print(f'  [Option3] Algo check error ({algo_id}): {e}')
     return False
+
+
+def _get_fill_price(algo_id, ord_type='conditional'):
+    """Get the actual fill price of a triggered OKX algo order."""
+    try:
+        d = _okx_get(f'/api/v5/trade/orders-algo-history?ordType={ord_type}&algoId={algo_id}')
+        for order in d.get('data', []):
+            if order.get('algoId') == algo_id and order.get('state') == 'effective':
+                px = float(order.get('avgPx', '0') or '0')
+                return px if px > 0 else None
+    except Exception:
+        return None
+    return None
 
 
 def _update_sl_to_breakeven(trade):
     """Cancel original SL, place a new conditional SL at the entry price."""
-    symbol     = trade['symbol']
-    entry_px   = float(trade['entry_price'])
-    sl_id      = trade['sl_id']
-    sz_half    = trade['sz_half']
+    symbol   = trade['symbol']
+    entry_px = float(trade['entry_price'])
+    sl_id    = trade['sl_id']
+    sz_half  = trade['sz_half']
 
-    # Step 1 — cancel original SL
+    # Cancel original SL (may already be gone — proceed anyway)
     try:
         _okx_post('/api/v5/trade/cancel-algos', [{'algoId': sl_id, 'instId': symbol}])
         print(f'  [Option3] {symbol}: original SL ({sl_id}) canceled ✓')
     except Exception as e:
-        # May already be gone (price passed through it) — proceed anyway
         print(f'  [Option3] {symbol}: SL cancel warning: {e}')
 
-    # Step 2 — place break-even SL at entry price
+    # Place break-even SL at entry price
     try:
         resp      = _okx_post('/api/v5/trade/order-algo', {
             'instId':          symbol,
@@ -477,7 +461,7 @@ def _update_sl_to_breakeven(trade):
 
 
 def _mark_phase2(trade_id, new_sl_id):
-    """Update Supabase: set phase=2 and store new SL order ID."""
+    """Update Supabase: set phase=2 and store the new break-even SL order ID."""
     try:
         r = requests.patch(
             f'{SUPABASE_URL}/rest/v1/option3_trades?id=eq.{trade_id}',
@@ -486,11 +470,7 @@ def _mark_phase2(trade_id, new_sl_id):
                 'Authorization': f'Bearer {SUPABASE_KEY}',
                 'Content-Type':  'application/json',
             },
-            json={
-                'phase':      2,
-                'sl_id':      new_sl_id or '',
-                'updated_at': datetime.now(timezone.utc).isoformat(),
-            },
+            json={'phase': 2, 'sl_id': new_sl_id or ''},
             timeout=10,
         )
         if r.status_code in (200, 204):
@@ -501,36 +481,133 @@ def _mark_phase2(trade_id, new_sl_id):
         print(f'  [Option3] Supabase phase update error: {e}')
 
 
+def _mark_trade_closed(trade_id):
+    """Mark a trade as phase=3 (fully closed) in Supabase."""
+    try:
+        r = requests.patch(
+            f'{SUPABASE_URL}/rest/v1/option3_trades?id=eq.{trade_id}',
+            headers={
+                'apikey':        SUPABASE_KEY,
+                'Authorization': f'Bearer {SUPABASE_KEY}',
+                'Content-Type':  'application/json',
+            },
+            json={'phase': 3},
+            timeout=10,
+        )
+        if r.status_code in (200, 204):
+            print(f'  [Option3] Trade {trade_id}: marked closed ✓')
+        else:
+            print(f'  [Option3] Close update failed: {r.status_code}')
+    except Exception as e:
+        print(f'  [Option3] Close update error: {e}')
+
+
 def monitor_option3_trades():
     """
-    Check all active Option 3 trades.
-    When a partial TP order fills, cancel the original SL and place a new one
-    at the entry price (break-even), making the remaining 50% risk-free.
+    Monitor all active Option 3 trades (phase 1 and 2).
+    Phase 1: detect partial TP fill → move SL to break-even, advance to phase 2.
+             detect SL hit before TP  → report loss, close trade.
+    Phase 2: detect trailing stop exit → report profit, close trade.
+             detect break-even SL hit → report zero-loss exit, close trade.
     """
     if not OKX_API_KEY or not OKX_SECRET_KEY or not OKX_PASSPHRASE:
-        return  # OKX secrets not in GitHub Actions yet — skip silently
+        return
 
     trades = _fetch_option3_trades()
     if not trades:
         return
 
     print(f'\n  [Option3] Monitoring {len(trades)} active trade(s)...')
+
     for trade in trades:
-        symbol = trade['symbol']
+        symbol   = trade['symbol']
+        phase    = trade.get('phase', 1)
+        entry_px = float(trade.get('entry_price', 0) or 0)
+        amt_usdt = float(trade.get('amount_usdt', 0) or 0)
+        sz_half  = float(trade.get('sz_half', '0') or 0)
+        ptp_pct  = float(trade.get('partial_tp_pct', 0) or 0)
+        sl_pct   = float(trade.get('sl_pct', 0) or 0)
+        coin     = symbol.replace('-USDT', '')
+
         try:
-            if _is_partial_tp_filled(trade['partial_tp_id']):
-                print(f'  [Option3] {symbol}: partial TP triggered — moving SL to break-even...')
-                new_sl_id = _update_sl_to_breakeven(trade)
-                _mark_phase2(trade['id'], new_sl_id)
-                send_telegram(
-                    f"✅ <b>Option 3 Phase 2 — {symbol.replace('-USDT', '')}</b>\n"
-                    f"50% sold at target profit ✓\n"
-                    f"SL moved to entry price (break-even) ✓\n"
-                    f"Trailing stop is protecting the remaining 50%.\n"
-                    f"⏰ {time.strftime('%H:%M UTC')}"
-                )
-            else:
-                print(f'  [Option3] {symbol}: partial TP not yet triggered')
+            if phase == 1:
+                # ─── Check if partial TP filled ──────────────────────────────────
+                if _is_algo_triggered(trade['partial_tp_id'], 'conditional'):
+                    print(f'  [Option3] {symbol}: partial TP triggered — moving SL to break-even...')
+                    fill_px = _get_fill_price(trade['partial_tp_id'], 'conditional')
+                    if fill_px and entry_px > 0:
+                        profit_usdt = (fill_px - entry_px) * sz_half
+                        profit_str  = f'+${profit_usdt:.2f} USDT'
+                    else:
+                        profit_str  = f'+{ptp_pct}% on 50% of position'
+
+                    new_sl_id = _update_sl_to_breakeven(trade)
+                    _mark_phase2(trade['id'], new_sl_id)
+                    send_telegram(
+                        f"✅ <b>Partial TP Hit — {coin}</b>\n"
+                        f"💰 Profit locked: {profit_str}\n"
+                        f"🛡️ SL moved to entry (break-even) — 2nd half is now risk-free\n"
+                        f"🔄 Trailing stop protecting remaining 50%\n"
+                        f"⏰ {time.strftime('%H:%M UTC')}"
+                    )
+
+                # ─── Check if full SL hit before partial TP ───────────────────
+                elif _is_algo_triggered(trade['sl_id'], 'conditional'):
+                    fill_px = _get_fill_price(trade['sl_id'], 'conditional')
+                    if fill_px and entry_px > 0:
+                        loss_usdt = (entry_px - fill_px) * sz_half * 2
+                        loss_str  = f'−${loss_usdt:.2f} USDT'
+                    else:
+                        loss_str  = f'−{sl_pct}% on full position'
+
+                    _mark_trade_closed(trade['id'])
+                    send_telegram(
+                        f"🔴 <b>Stop Loss Hit — {coin}</b>\n"
+                        f"💸 Loss: {loss_str}\n"
+                        f"📍 Entry: {fmt_price(entry_px)}\n"
+                        f"⏰ {time.strftime('%H:%M UTC')}"
+                    )
+
+                else:
+                    print(f'  [Option3] {symbol}: phase 1 — waiting for TP or SL')
+
+            elif phase == 2:
+                trailing_id = trade.get('trailing_id')
+                be_sl_id    = trade.get('sl_id')  # updated to break-even SL in _mark_phase2
+
+                # ─── Check if trailing stop exited ───────────────────────────
+                if trailing_id and _is_algo_triggered(trailing_id, 'move_order_stop'):
+                    fill_px = _get_fill_price(trailing_id, 'move_order_stop')
+                    if fill_px and entry_px > 0 and fill_px > entry_px:
+                        profit_usdt = (fill_px - entry_px) * sz_half
+                        gain_pct    = (fill_px / entry_px - 1) * 100
+                        profit_str  = f'+${profit_usdt:.2f} USDT (+{gain_pct:.1f}%)'
+                    elif fill_px and entry_px > 0:
+                        profit_str  = 'near break-even'
+                    else:
+                        profit_str  = 'exited via trailing stop'
+
+                    _mark_trade_closed(trade['id'])
+                    send_telegram(
+                        f"🏁 <b>Trade Closed — {coin}</b>\n"
+                        f"🔄 Trailing stop exit: {profit_str}\n"
+                        f"✅ Phase 1 profit already secured earlier\n"
+                        f"⏰ {time.strftime('%H:%M UTC')}"
+                    )
+
+                # ─── Check if break-even SL hit (zero loss on 2nd half) ──────
+                elif be_sl_id and _is_algo_triggered(be_sl_id, 'conditional'):
+                    _mark_trade_closed(trade['id'])
+                    send_telegram(
+                        f"⚪ <b>Break-Even Exit — {coin}</b>\n"
+                        f"🛡️ Break-even SL hit — 2nd half exited at entry price\n"
+                        f"✅ Phase 1 profit is secured — net result is positive\n"
+                        f"⏰ {time.strftime('%H:%M UTC')}"
+                    )
+
+                else:
+                    print(f'  [Option3] {symbol}: phase 2 — waiting for trailing stop or break-even SL')
+
         except Exception as e:
             print(f'  [Option3] {symbol}: error — {e}')
 
@@ -546,8 +623,7 @@ def main():
         elapsed = time.time() - start
         print(f'\n=== Scan #{scan_num} | +{elapsed:.0f}s | {time.strftime("%H:%M:%S UTC")} ===')
 
-        portfolio = fetch_portfolio_symbols()
-        run_scan(cache, portfolio)
+        run_scan(cache)
         monitor_option3_trades()
         save_cache(cache)
 
