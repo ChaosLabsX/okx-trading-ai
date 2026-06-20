@@ -376,7 +376,7 @@ function reversalConfirmedBrowser(ind, zone) {
   // SELL → red candle   AND RSI turning down AND volume ≥ 1.2× avg
   // Returns true when data is insufficient — don't block on missing history.
   if (!ind || ind.lastOpen == null || ind.lastClose == null || ind.rsi == null || ind.rsiPrev == null) return true;
-  const volOk = ind.volRatio == null || ind.volRatio >= 1.2;
+  const volOk = ind.volRatio == null || ind.volRatio >= 1.0;
   if (zone === 'up') return ind.lastClose >= ind.lastOpen && ind.rsi >= ind.rsiPrev && volOk;
   if (zone === 'down') return ind.lastClose <= ind.lastOpen && ind.rsi <= ind.rsiPrev && volOk;
   return true;

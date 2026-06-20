@@ -32,9 +32,12 @@ const CONFIG = {
 
   // Default coins to watch on OKX — focused on high-volatility fast movers
   DEFAULT_SCANNER: [
+    'BTC-USDT',  'ETH-USDT',  'XRP-USDT',  'ADA-USDT',
     'AVAX-USDT', 'SOL-USDT',  'DOGE-USDT', 'PEPE-USDT', 'WIF-USDT',
     'SUI-USDT',  'NEAR-USDT', 'INJ-USDT',  'APT-USDT',  'FET-USDT',
-    'TIA-USDT',  'LINK-USDT', 'SEI-USDT',
+    'TIA-USDT',  'LINK-USDT', 'SEI-USDT',  'OP-USDT',   'ARB-USDT',
+    'DOT-USDT',  'ATOM-USDT', 'RUNE-USDT', 'JUP-USDT',  'BONK-USDT',
+    'FLOKI-USDT',
   ],
 
   RISK_PROFILE: 'moderate',   // conservative | moderate | aggressive

@@ -24,9 +24,12 @@ import requests
 
 # ── Config ────────────────────────────────────────────────────────────────────
 SYMBOLS = [
+    'BTC-USDT',  'ETH-USDT',  'XRP-USDT',  'ADA-USDT',
     'AVAX-USDT', 'SOL-USDT',  'DOGE-USDT', 'PEPE-USDT', 'WIF-USDT',
     'SUI-USDT',  'NEAR-USDT', 'INJ-USDT',  'APT-USDT',  'FET-USDT',
-    'TIA-USDT',  'LINK-USDT', 'SEI-USDT',
+    'TIA-USDT',  'LINK-USDT', 'SEI-USDT',  'OP-USDT',   'ARB-USDT',
+    'DOT-USDT',  'ATOM-USDT', 'RUNE-USDT', 'JUP-USDT',  'BONK-USDT',
+    'FLOKI-USDT',
 ]
 
 OKX_BASE           = 'https://www.okx.com'
@@ -176,11 +179,11 @@ def reversal_confirmed(opens, closes, volumes, zone):
     if rsi_now is None or rsi_prev is None:
         return True
 
-    # Volume confirmation: last candle must be at least 1.2× the 20-bar average
+    # Volume confirmation: last candle must be at least 1.0× the 20-bar average
     vol_ok = True
     if volumes and len(volumes) >= 21:
         avg_vol = sum(volumes[-21:-1]) / 20
-        vol_ok  = avg_vol > 0 and volumes[-1] >= avg_vol * 1.2
+        vol_ok  = avg_vol > 0 and volumes[-1] >= avg_vol * 1.0
 
     if zone == 'up':    # BUY signal
         return closes[-1] >= opens[-1] and rsi_now >= rsi_prev and vol_ok
