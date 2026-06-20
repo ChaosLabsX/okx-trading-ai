@@ -701,6 +701,8 @@ function generateSignal(rsi, macd, bb, rsi4h = null, volRatio = null) {
 // ═══════════════════════════════════════════════════════════
 function renderScanner() {
   const tbody = el('scannerBody');
+  const countEl = el('scannerCount');
+  if (countEl) countEl.textContent = state.scannerSymbols.length;
   let symbols = [...state.scannerSymbols];
 
   // Filter
@@ -1577,7 +1579,20 @@ function restartAutoRefresh() {
 // ═══════════════════════════════════════════════════════════
 //  PERSISTENCE
 // ═══════════════════════════════════════════════════════════
-function loadScannerSymbols() { state.scannerSymbols = LS.get('scanner', CONFIG.DEFAULT_SCANNER); }
+function loadScannerSymbols() {
+  const saved = LS.get('scanner', null);
+  if (!saved) {
+    state.scannerSymbols = [...CONFIG.DEFAULT_SCANNER];
+  } else {
+    // Merge any new coins from DEFAULT_SCANNER that aren't already saved
+    const merged = [...saved];
+    for (const sym of CONFIG.DEFAULT_SCANNER) {
+      if (!merged.includes(sym)) merged.push(sym);
+    }
+    state.scannerSymbols = merged;
+  }
+  saveScannerSymbols();
+}
 function saveScannerSymbols() { LS.set('scanner', state.scannerSymbols); }
 
 // ═══════════════════════════════════════════════════════════
