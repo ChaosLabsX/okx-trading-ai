@@ -304,13 +304,6 @@
           <h4 class="settings-heading">Cloud Security</h4>
           <p class="settings-desc">Encrypt all your keys with a password and save them to Supabase. The app will ask for
             this password every time it loads.</p>
-          <div class="form-group">
-            <label>Cloud Password <span class="badge-required">Required to save</span></label>
-            <input type="password" id="settingsCloudPassword" class="form-input" placeholder="Choose a strong password"
-              autocomplete="new-password" />
-            <span class="field-hint">⚠ If you forget this password your cloud keys cannot be recovered — keep it
-              safe.</span>
-          </div>
           <div class="settings-actions">
             <button class="btn-primary" id="saveToCloudBtn">Save All to Cloud</button>
           </div>
@@ -323,16 +316,9 @@
               <label>Risk Profile</label>
               <select class="form-input" id="settingsRiskProfile">
                 <option value="conservative">Conservative — small, safe positions</option>
-                <option value="moderate" selected>Moderate — balanced risk/reward</option>
-                <option value="aggressive">Aggressive — high risk, high reward</option>
+                <option value="moderate">Moderate — balanced risk/reward</option>
+                <option value="aggressive" selected>Aggressive — high risk, high reward</option>
               </select>
-            </div>
-            <div class="form-group">
-              <label>Trading Capital (USDT)</label>
-              <input type="number" id="settingsTradingCapital" class="form-input" placeholder="e.g. 500" min="0"
-                step="any" />
-              <span class="field-hint">Your total USDT budget for trading — used by AI to calculate how much to buy per
-                trade</span>
             </div>
             <div class="form-group">
               <label>Auto-Refresh Interval</label>

@@ -40,7 +40,7 @@ const CONFIG = {
     'FLOKI-USDT',
   ],
 
-  RISK_PROFILE: 'moderate',   // conservative | moderate | aggressive
+  RISK_PROFILE: 'aggressive', // conservative | moderate | aggressive
   TRADING_CAPITAL: 0,         // total USDT you trade with — used for position sizing
   CURRENCY_SYMBOL: '$',
 };
