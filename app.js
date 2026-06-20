@@ -356,25 +356,41 @@ async function handleUnlock() {
 //  TELEGRAM ALERTS
 // ═══════════════════════════════════════════════════════════
 async function sendTelegramAlert(message) {
-  if (!CONFIG.TELEGRAM_BOT_TOKEN || !CONFIG.TELEGRAM_CHAT_ID) return;
+  if (!CONFIG.TELEGRAM_BOT_TOKEN || !CONFIG.TELEGRAM_CHAT_ID) {
+    toast('⚠ Telegram not configured — add Bot Token and Chat ID in Settings', 'error', 8000);
+    return false;
+  }
   try {
-    await fetch(`https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${CONFIG.TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: CONFIG.TELEGRAM_CHAT_ID,
-        text: message,
-        parse_mode: 'HTML',
-      }),
+      body: JSON.stringify({ chat_id: CONFIG.TELEGRAM_CHAT_ID, text: message, parse_mode: 'HTML' }),
     });
-  } catch { }
+    const data = await res.json();
+    if (!data.ok) {
+      toast(`⚠ Telegram error: ${data.description ?? 'unknown error'}`, 'error', 8000);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    toast(`⚠ Telegram send failed: ${e.message}`, 'error', 8000);
+    return false;
+  }
+}
+
+function reversalWhyFailed(ind) {
+  if (!ind) return 'no indicator data';
+  const reasons = [];
+  if (ind.lastClose != null && ind.lastOpen != null && ind.lastClose < ind.lastOpen)
+    reasons.push('candle still red');
+  if (ind.rsi != null && ind.rsiPrev != null && ind.rsi < ind.rsiPrev)
+    reasons.push('RSI still falling');
+  if (ind.volRatio != null && ind.volRatio < 1.0)
+    reasons.push(`volume only ${ind.volRatio.toFixed(2)}× avg (need ≥ 1.0×)`);
+  return reasons.length ? reasons.join(', ') : 'unknown';
 }
 
 function reversalConfirmedBrowser(ind, zone) {
-  // Mirrors signal_checker.py's reversal_confirmed():
-  // BUY  → green candle AND RSI turning up AND volume ≥ 1.2× avg
-  // SELL → red candle   AND RSI turning down AND volume ≥ 1.2× avg
-  // Returns true when data is insufficient — don't block on missing history.
   if (!ind || ind.lastOpen == null || ind.lastClose == null || ind.rsi == null || ind.rsiPrev == null) return true;
   const volOk = ind.volRatio == null || ind.volRatio >= 1.0;
   if (zone === 'up') return ind.lastClose >= ind.lastOpen && ind.rsi >= ind.rsiPrev && volOk;
@@ -382,8 +398,7 @@ function reversalConfirmedBrowser(ind, zone) {
   return true;
 }
 
-function checkSignalAlerts() {
-
+async function checkSignalAlerts() {
   for (const sym of state.scannerSymbols) {
     const sig = state.indicators[sym]?.signal;
     const ind = state.indicators[sym];
@@ -394,18 +409,23 @@ function checkSignalAlerts() {
     const currentZone = shouldAlert ? 'up' : 'neutral';
     const lastZone = state.notifiedSignals[sym] ?? 'neutral';
     const alreadyNotified = shouldAlert && currentZone === lastZone;
-
-    // Reversal confirmation: same filter as signal_checker.py — prevents alerting
-    // into a falling knife (BUY while candle is still red and RSI still falling).
-    if (shouldAlert && !alreadyNotified && !reversalConfirmedBrowser(ind, currentZone)) continue;
+    const coin = sym.replace('-USDT', '');
 
     if (shouldAlert && !alreadyNotified) {
-      const coin = sym.replace('-USDT', '');
+      if (!reversalConfirmedBrowser(ind, currentZone)) {
+        // Signal is STRONG BUY but reversal not confirmed yet — tell the user why
+        toast(`⏳ STRONG BUY: ${coin} — waiting for reversal (${reversalWhyFailed(ind)})`, 'info', 7000);
+        continue;
+      }
+
       const msg = `🟢 <b>STRONG BUY: ${coin}</b>\n`
         + `💰 Price: ${fmtCrypto(price)}\n`
         + `📊 ${sig.reasons.join('\n📊 ')}\n`
         + `⏰ ${new Date().toLocaleTimeString()}`;
-      sendTelegramAlert(msg);
+
+      const sent = await sendTelegramAlert(msg);
+      if (sent) toast(`📲 Telegram sent — STRONG BUY ${coin}`, 'success', 5000);
+
       state.notifiedSignals[sym] = currentZone;
       LS.set('notifiedSignals', state.notifiedSignals);
     }
@@ -1556,7 +1576,7 @@ async function refreshAll() {
 
   await fetchAllData();
   renderScanner();
-  checkSignalAlerts();
+  await checkSignalAlerts();
 
   state.isRefreshing = false;
   el('refreshBtn').classList.remove('spinning');
@@ -1775,7 +1795,7 @@ async function loadAppData() {
   renderScanner();
   await fetchAllData();
   renderScanner();
-  checkSignalAlerts();
+  await checkSignalAlerts();
   refreshNews();
   restartAutoRefresh();
   // Auto-sync OKX balance if credentials are available
