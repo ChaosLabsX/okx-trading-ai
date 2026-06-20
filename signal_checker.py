@@ -493,6 +493,15 @@ def _mark_phase2(trade_id, new_sl_id):
         print(f'  [Option3] Supabase phase update error: {e}')
 
 
+def _cancel_algo(symbol, algo_id):
+    """Cancel an OKX algo order silently — already gone is fine."""
+    try:
+        _okx_post('/api/v5/trade/cancel-algos', [{'algoId': algo_id, 'instId': symbol}])
+        print(f'  [Option3] {symbol}: cancelled algo {algo_id} ✓')
+    except Exception as e:
+        print(f'  [Option3] {symbol}: cancel algo {algo_id} warning: {e}')
+
+
 def _mark_trade_closed(trade_id):
     """Mark a trade as phase=3 (fully closed) in Supabase."""
     try:
@@ -563,9 +572,33 @@ def monitor_option3_trades():
                         f"⏰ {time.strftime('%H:%M UTC')}"
                     )
 
-                # ─── Check if full SL hit before partial TP ───────────────────
+                # ─── Check if SL hit before partial TP ───────────────────────
+                # SL order is halfSz only (OKX spot reserves balance per order,
+                # so TP+SL can't both be fullSz). Monitor sells the other half here.
                 elif _is_algo_triggered(trade['sl_id'], 'conditional'):
                     fill_px = _get_fill_price(trade['sl_id'], 'conditional')
+
+                    # Cancel TP and trailing — no longer needed
+                    _cancel_algo(symbol, trade['partial_tp_id'])
+                    trailing_id = trade.get('trailing_id')
+                    if trailing_id:
+                        _cancel_algo(symbol, trailing_id)
+
+                    # Sell the remaining 50% at market to complete the full exit
+                    second_half_sold = False
+                    try:
+                        _okx_post('/api/v5/trade/order', {
+                            'instId': symbol,
+                            'tdMode': 'cash',
+                            'side':   'sell',
+                            'ordType':'market',
+                            'sz':     str(sz_half),
+                        })
+                        second_half_sold = True
+                        print(f'  [Option3] {symbol}: remaining 50% market-sold ✓')
+                    except Exception as e:
+                        print(f'  [Option3] {symbol}: could not sell remaining 50%: {e}')
+
                     if fill_px and entry_px > 0:
                         loss_usdt = (entry_px - fill_px) * sz_half * 2
                         loss_str  = f'−${loss_usdt:.2f} USDT'
@@ -573,10 +606,12 @@ def monitor_option3_trades():
                         loss_str  = f'−{sl_pct}% on full position'
 
                     _mark_trade_closed(trade['id'])
+                    extra = '' if second_half_sold else '\n⚠️ Could not auto-sell remaining 50% — check OKX'
                     send_telegram(
                         f"🔴 <b>Stop Loss Hit — {coin}</b>\n"
                         f"💸 Loss: {loss_str}\n"
                         f"📍 Entry: {fmt_price(entry_px)}\n"
+                        f"✅ Full position closed (both halves){extra}\n"
                         f"⏰ {time.strftime('%H:%M UTC')}"
                     )
 

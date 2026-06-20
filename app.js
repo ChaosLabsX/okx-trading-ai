@@ -1336,7 +1336,7 @@ function showTradeConfirmation(action) {
         <div class="o3-phase-label">Phase 1 — takes effect immediately on OKX (24/7 active)</div>
         <table class="trade-detail-table">
           <tr><td>Sell 50% when price hits</td><td><b id="o3_ptPrice">${fmtCrypto(ptPrice)}</b> <span class="pos">+${pTpPct}%</span></td></tr>
-          <tr><td>Stop Loss (full position)</td><td><b id="o3_slPrice">${fmtCrypto(slPrice)}</b> <span class="neg">−${slPct}%</span></td></tr>
+          <tr><td>Stop Loss (50%)</td><td><b id="o3_slPrice">${fmtCrypto(slPrice)}</b> <span class="neg">−${slPct}%</span></td></tr>
         </table>
         <div class="o3-phase-label">Phase 2 — trailing stop on remaining 50% (activates after Phase 1)</div>
         <table class="trade-detail-table">
@@ -1439,7 +1439,6 @@ async function executeTrade(action, coinAmt) {
     // ─── Option 3: Partial TP + SL + Trailing Stop ───────────────────────
     if (action._pTpPct > 0 && szCoin > 0) {
       const halfSz = (szCoin * 0.5 * 0.9985).toFixed(8); // 50% with fee haircut
-      const fullSz = (szCoin * 1.0 * 0.9985).toFixed(8); // 100% with fee haircut
       const ptPrice = price * (1 + action._pTpPct / 100);
       const slPrice = price * (1 - action._slPct / 100);
       const baseAlgo = { instId: action.symbol, tdMode: 'cash', side: 'sell' };
@@ -1452,9 +1451,12 @@ async function executeTrade(action, coinAmt) {
           ...baseAlgo, ordType: 'conditional', sz: halfSz,
           tpTriggerPx: ptPrice.toFixed(8), tpOrdPx: '-1', tpTriggerPxType: 'last',
         }),
-        // Order 3: Conditional — sell 100% at stop loss price
+        // Order 3: Conditional — sell 50% at stop loss price.
+        // SL is halfSz (not 100%) because OKX spot reserves balance per order —
+        // placing TP(50%) + SL(100%) exceeds available balance. The monitor sells
+        // the remaining 50% via a market order when SL triggers.
         okxSignedPost('/api/v5/trade/order-algo', {
-          ...baseAlgo, ordType: 'conditional', sz: fullSz,
+          ...baseAlgo, ordType: 'conditional', sz: halfSz,
           slTriggerPx: slPrice.toFixed(8), slOrdPx: '-1', slTriggerPxType: 'last',
         }),
         // Order 4: Trailing stop — sell remaining 50%, activates at TP price
@@ -1465,7 +1467,7 @@ async function executeTrade(action, coinAmt) {
         }),
       ]);
 
-      const labels = ['Partial TP (50%)', 'Stop Loss (100%)', 'Trailing Stop (50%)'];
+      const labels = ['Partial TP (50%)', 'Stop Loss (50%)', 'Trailing Stop (50%)'];
       const passed = [ptResult, slResult, trailResult].filter(r => r.status === 'fulfilled').length;
 
       if (passed === 3) {
