@@ -30,6 +30,8 @@ SYMBOLS = [
     'TIA-USDT',  'LINK-USDT', 'SEI-USDT',  'OP-USDT',   'ARB-USDT',
     'DOT-USDT',  'ATOM-USDT', 'RUNE-USDT', 'JUP-USDT',  'BONK-USDT',
     'FLOKI-USDT',
+    'TON-USDT',  'TRX-USDT',  'HBAR-USDT', 'ENA-USDT',
+    'STRK-USDT', 'ONDO-USDT', 'POL-USDT',  'LDO-USDT',
 ]
 
 OKX_BASE           = 'https://www.okx.com'
