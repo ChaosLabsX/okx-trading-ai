@@ -132,13 +132,14 @@ async function fetchOKXCandles(instId, bar = CONFIG.CANDLE_BAR) {
 
 async function fetchSymbolData(symbol) {
   try {
-    const [ticker, candles1H, candles4H] = await Promise.all([
+    const [ticker, candles1H, candles4H, candles30m] = await Promise.all([
       fetchOKXTicker(symbol),
       fetchOKXCandles(symbol, '1H'),
       fetchOKXCandles(symbol, '4H'),
+      fetchOKXCandles(symbol, '30m'),
     ]);
     state.tickers[symbol] = ticker;
-    state.indicators[symbol] = computeIndicators(candles1H, candles4H);
+    state.indicators[symbol] = computeIndicators(candles1H, candles4H, candles30m);
   } catch (err) {
     // Keep stale data if any; otherwise use demo
     if (!state.tickers[symbol]) {
@@ -380,21 +381,35 @@ async function sendTelegramAlert(message) {
 
 function reversalWhyFailed(ind) {
   if (!ind) return 'no indicator data';
-  const reasons = [];
-  if (ind.lastClose != null && ind.lastOpen != null && ind.lastClose < ind.lastOpen)
-    reasons.push('candle still red');
-  if (ind.rsi != null && ind.rsiPrev != null && ind.rsi < ind.rsiPrev)
-    reasons.push('RSI still falling');
-  if (ind.volRatio != null && ind.volRatio < 1.0)
-    reasons.push(`volume only ${ind.volRatio.toFixed(2)}× avg (need ≥ 1.0×)`);
+  // Use 30min data for the message if available, fall back to 1H
+  const close    = ind.lastClose30m ?? ind.lastClose;
+  const open     = ind.lastOpen30m  ?? ind.lastOpen;
+  const rsi      = ind.rsi30m       ?? ind.rsi;
+  const rsiPrev  = ind.rsiPrev30m   ?? ind.rsiPrev;
+  const volRatio = ind.volRatio30m  ?? ind.volRatio;
+  const tf       = ind.lastClose30m != null ? '30min' : '1H';
+  const reasons  = [];
+  if (close != null && open != null && close < open)
+    reasons.push(`${tf} candle still red`);
+  if (rsi != null && rsiPrev != null && rsi < rsiPrev)
+    reasons.push(`${tf} RSI still falling`);
+  if (volRatio != null && volRatio < 1.0)
+    reasons.push(`${tf} volume only ${volRatio.toFixed(2)}× avg (need ≥ 1.0×)`);
   return reasons.length ? reasons.join(', ') : 'unknown';
 }
 
 function reversalConfirmedBrowser(ind, zone) {
-  if (!ind || ind.lastOpen == null || ind.lastClose == null || ind.rsi == null || ind.rsiPrev == null) return true;
-  const volOk = ind.volRatio == null || ind.volRatio >= 1.0;
-  if (zone === 'up') return ind.lastClose >= ind.lastOpen && ind.rsi >= ind.rsiPrev && volOk;
-  if (zone === 'down') return ind.lastClose <= ind.lastOpen && ind.rsi <= ind.rsiPrev && volOk;
+  if (!ind) return true;
+  // Prefer 30min candle for earlier entry — fall back to 1H if 30min unavailable
+  const open     = ind.lastOpen30m  ?? ind.lastOpen;
+  const close    = ind.lastClose30m ?? ind.lastClose;
+  const rsi      = ind.rsi30m       ?? ind.rsi;
+  const rsiPrev  = ind.rsiPrev30m   ?? ind.rsiPrev;
+  const volRatio = ind.volRatio30m  ?? ind.volRatio;
+  if (open == null || close == null || rsi == null || rsiPrev == null) return true;
+  const volOk = volRatio == null || volRatio >= 1.0;
+  if (zone === 'up')   return close >= open && rsi >= rsiPrev && volOk;
+  if (zone === 'down') return close <= open && rsi <= rsiPrev && volOk;
   return true;
 }
 
@@ -628,7 +643,7 @@ function calcBB(closes, period = 20) {
   return { upper, middle: mean, lower, pctB: upper > lower ? (price - lower) / (upper - lower) : 0.5 };
 }
 
-function computeIndicators(candles1H, candles4H = []) {
+function computeIndicators(candles1H, candles4H = [], candles30m = []) {
   const closes = candles1H.map(c => c.close);
   const opens = candles1H.map(c => c.open);
   const volumes = candles1H.map(c => c.vol);
@@ -642,18 +657,34 @@ function computeIndicators(candles1H, candles4H = []) {
   const closes4H = candles4H.map(c => c.close);
   const rsi4h = closes4H.length > 14 ? calcRSI(closes4H) : null;
 
-  // Volume ratio: latest candle vs 20-bar average
+  // 1H volume ratio: latest candle vs 20-bar average
   let volRatio = null;
   if (volumes.length >= 21) {
     const avg = volumes.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
     if (avg > 0) volRatio = volumes[volumes.length - 1] / avg;
   }
 
-  // Last candle direction + RSI momentum — used by reversal confirmation filter
+  // 1H last candle — fallback if 30m unavailable
   const lastOpen = opens.at(-1) ?? null;
   const lastClose = closes.at(-1) ?? null;
 
-  return { rsi, rsiPrev, rsi4h, macd, bb, volRatio, lastOpen, lastClose, signal: generateSignal(rsi, macd, bb, rsi4h, volRatio) };
+  // 30min reversal data — used for earlier entry confirmation
+  const opens30m   = candles30m.map(c => c.open);
+  const closes30m  = candles30m.map(c => c.close);
+  const volumes30m = candles30m.map(c => c.vol);
+  const lastOpen30m  = opens30m.at(-1) ?? null;
+  const lastClose30m = closes30m.at(-1) ?? null;
+  const rsi30m     = closes30m.length > 14 ? calcRSI(closes30m) : null;
+  const rsiPrev30m = closes30m.length > 15 ? calcRSI(closes30m.slice(0, -1)) : null;
+  let volRatio30m = null;
+  if (volumes30m.length >= 21) {
+    const avg = volumes30m.slice(-21, -1).reduce((a, b) => a + b, 0) / 20;
+    if (avg > 0) volRatio30m = volumes30m[volumes30m.length - 1] / avg;
+  }
+
+  return { rsi, rsiPrev, rsi4h, macd, bb, volRatio, lastOpen, lastClose,
+           lastOpen30m, lastClose30m, rsi30m, rsiPrev30m, volRatio30m,
+           signal: generateSignal(rsi, macd, bb, rsi4h, volRatio) };
 }
 
 // ═══════════════════════════════════════════════════════════

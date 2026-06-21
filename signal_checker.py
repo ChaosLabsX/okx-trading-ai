@@ -160,13 +160,12 @@ def reversal_confirmed(opens, closes, volumes, zone):
     """
     Guards against alerting into a falling knife (BUY) or a rising knife (SELL).
 
-    A coin can be RSI-oversold for 16+ hours while still dropping. Requires ALL
-    three conditions on the most recent 1H candle:
-      BUY  → candle green (close ≥ open)  AND RSI turning up   AND volume ≥ 1.2× avg
-      SELL → candle red   (close ≤ open)  AND RSI turning down AND volume ≥ 1.2× avg
+    Uses 30min candle data (passed from run_scan) for earlier entry detection.
+    Falls back gracefully if 30min data is unavailable.
 
-    The volume check filters dead-cat bounces — real reversals attract buyers
-    (or sellers) and show up as above-average volume.
+    Requires ALL three conditions on the most recent candle:
+      BUY  → candle green (close ≥ open)  AND RSI turning up   AND volume ≥ 1.0× avg
+      SELL → candle red   (close ≤ open)  AND RSI turning down AND volume ≥ 1.0× avg
 
     Returns True  = allow the alert
             False = suppress — no reversal evidence yet
@@ -288,6 +287,11 @@ def save_cache(data):
 # ── Single scan ───────────────────────────────────────────────────────────────
 def run_scan(cache):
     now = time.time()
+
+    # Fetch active trades once so every coin check is O(1) — no per-coin Supabase call
+    active_trades   = _fetch_option3_trades()
+    active_symbols  = {t['symbol'] for t in active_trades}
+
     for symbol in SYMBOLS:
         try:
             candle_data = fetch_candles(symbol)
@@ -300,6 +304,15 @@ def run_scan(cache):
             closes    = candle_data['closes']
             volumes   = candle_data['volumes']
             vol_ratio = calc_vol_ratio(volumes)
+
+            # 30min candles for earlier reversal confirmation
+            candle_30m = fetch_candles(symbol, bar='30m', limit=50)
+            if candle_30m:
+                r_opens   = candle_30m['opens']
+                r_closes  = candle_30m['closes']
+                r_volumes = candle_30m['volumes']
+            else:
+                r_opens, r_closes, r_volumes = opens, closes, volumes
 
             sig   = generate_signal(calc_rsi(closes), calc_macd(closes), calc_bb(closes), vol_ratio)
             if TEST_FORCE_SIGNAL and symbol == 'BTC-USDT':
@@ -326,12 +339,10 @@ def run_scan(cache):
                 time.sleep(0.3)
                 continue
 
-            # Reversal confirmation — suppress until there is actual evidence the move
-            # is turning. Prevents alerting into a falling knife (BUY while still dropping)
-            # or a rising knife (SELL while still climbing). Applies to both new zone
-            # entries AND 4-hour re-alerts, so a sustained drop stays silent.
-            if not reversal_confirmed(opens, closes, volumes, zone):
-                print(f'  {symbol}: {label} — no reversal confirmation yet (candle/RSI still against signal)')
+            # Reversal confirmation on 30min candles — earlier entry than 1H,
+            # falls back to 1H data if 30min fetch failed.
+            if not reversal_confirmed(r_opens, r_closes, r_volumes, zone):
+                print(f'  {symbol}: {label} — no 30min reversal confirmation yet (candle/RSI still against signal)')
                 time.sleep(0.3)
                 continue
 
@@ -350,6 +361,12 @@ def run_scan(cache):
             if now - alerted_at < FLIP_COOLDOWN:
                 secs_left = int(FLIP_COOLDOWN - (now - alerted_at))
                 print(f'  {symbol}: zone flip within cooldown ({secs_left}s left) — suppressed')
+                time.sleep(0.3)
+                continue
+
+            # Skip if there is already an active Option 3 trade on this coin
+            if symbol in active_symbols:
+                print(f'  {symbol}: STRONG BUY suppressed — active trade already running')
                 time.sleep(0.3)
                 continue
 
