@@ -571,39 +571,84 @@ def monitor_option3_trades():
 
         try:
             if phase == 1:
-                # ─── Check if partial TP filled ──────────────────────────────────
-                if _is_algo_triggered(trade['partial_tp_id'], 'conditional'):
-                    print(f'  [Option3] {symbol}: partial TP triggered — moving SL to break-even...')
-                    fill_px = _get_fill_price(trade['partial_tp_id'], 'conditional')
-                    if fill_px and entry_px > 0:
-                        profit_usdt = (fill_px - entry_px) * sz_half
-                        profit_str  = f'+${profit_usdt:.2f} USDT'
+                tp_id  = trade['partial_tp_id']
+                sl_id  = trade.get('sl_id')
+                # OCO format: both IDs are identical (single order covers TP and SL).
+                # Old format: separate IDs. Backwards-compatible check.
+                is_oco = (tp_id and sl_id and tp_id == sl_id)
+
+                if _is_algo_triggered(tp_id, 'conditional'):
+                    fill_px = _get_fill_price(tp_id, 'conditional')
+
+                    # Determine which side of the OCO fired using fill price.
+                    # Old separate-order trades: tp_id check always means TP fired.
+                    tp_fired = (not is_oco) or (fill_px is not None and fill_px > entry_px)
+
+                    if tp_fired:
+                        # ─── Partial TP filled ───────────────────────────────────
+                        print(f'  [Option3] {symbol}: partial TP triggered — moving SL to break-even...')
+                        if fill_px and entry_px > 0:
+                            profit_usdt = (fill_px - entry_px) * sz_half
+                            profit_str  = f'+${profit_usdt:.2f} USDT'
+                        else:
+                            profit_str  = f'+{ptp_pct}% on 50% of position'
+
+                        new_sl_id = _update_sl_to_breakeven(trade)
+                        _mark_phase2(trade['id'], new_sl_id)
+                        send_telegram(
+                            f"✅ <b>Partial TP Hit — {coin}</b>\n"
+                            f"💰 Profit locked: {profit_str}\n"
+                            f"🛡️ SL moved to entry (break-even) — 2nd half is now risk-free\n"
+                            f"🔄 Trailing stop protecting remaining 50%\n"
+                            f"⏰ {time.strftime('%H:%M UTC')}"
+                        )
+
                     else:
-                        profit_str  = f'+{ptp_pct}% on 50% of position'
+                        # ─── SL side of OCO fired ────────────────────────────────
+                        print(f'  [Option3] {symbol}: SL triggered (OCO order) — closing full position...')
+                        trailing_id = trade.get('trailing_id')
+                        if trailing_id:
+                            _cancel_algo(symbol, trailing_id)
 
-                    new_sl_id = _update_sl_to_breakeven(trade)
-                    _mark_phase2(trade['id'], new_sl_id)
-                    send_telegram(
-                        f"✅ <b>Partial TP Hit — {coin}</b>\n"
-                        f"💰 Profit locked: {profit_str}\n"
-                        f"🛡️ SL moved to entry (break-even) — 2nd half is now risk-free\n"
-                        f"🔄 Trailing stop protecting remaining 50%\n"
-                        f"⏰ {time.strftime('%H:%M UTC')}"
-                    )
+                        second_half_sold = False
+                        try:
+                            _okx_post('/api/v5/trade/order', {
+                                'instId': symbol,
+                                'tdMode': 'cash',
+                                'side':   'sell',
+                                'ordType':'market',
+                                'sz':     str(sz_half),
+                            })
+                            second_half_sold = True
+                            print(f'  [Option3] {symbol}: remaining 50% market-sold ✓')
+                        except Exception as e:
+                            print(f'  [Option3] {symbol}: could not sell remaining 50%: {e}')
 
-                # ─── Check if SL hit before partial TP ───────────────────────
-                # SL order is halfSz only (OKX spot reserves balance per order,
-                # so TP+SL can't both be fullSz). Monitor sells the other half here.
-                elif _is_algo_triggered(trade['sl_id'], 'conditional'):
-                    fill_px = _get_fill_price(trade['sl_id'], 'conditional')
+                        if fill_px and entry_px > 0:
+                            loss_usdt = (entry_px - fill_px) * sz_half * 2
+                            loss_str  = f'−${loss_usdt:.2f} USDT'
+                        else:
+                            loss_str  = f'−{sl_pct}% on full position'
 
-                    # Cancel TP and trailing — no longer needed
-                    _cancel_algo(symbol, trade['partial_tp_id'])
+                        _mark_trade_closed(trade['id'])
+                        extra = '' if second_half_sold else '\n⚠️ Could not auto-sell remaining 50% — check OKX'
+                        send_telegram(
+                            f"🔴 <b>Stop Loss Hit — {coin}</b>\n"
+                            f"💸 Loss: {loss_str}\n"
+                            f"📍 Entry: {fmt_price(entry_px)}\n"
+                            f"✅ Full position closed (both halves){extra}\n"
+                            f"⏰ {time.strftime('%H:%M UTC')}"
+                        )
+
+                # ─── Old format: separate SL order (backwards compat) ─────────
+                elif not is_oco and sl_id and _is_algo_triggered(sl_id, 'conditional'):
+                    fill_px = _get_fill_price(sl_id, 'conditional')
+
+                    _cancel_algo(symbol, tp_id)
                     trailing_id = trade.get('trailing_id')
                     if trailing_id:
                         _cancel_algo(symbol, trailing_id)
 
-                    # Sell the remaining 50% at market to complete the full exit
                     second_half_sold = False
                     try:
                         _okx_post('/api/v5/trade/order', {

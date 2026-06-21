@@ -8,6 +8,7 @@ const state = {
   scannerSymbols: [],   // ['BTC-USDT', ...]
   tickers: {},          // {symbol: {price, change, changePercent, high24h, low24h, vol24h, source}}
   indicators: {},       // {symbol: {rsi, macd, bb, signal}}
+  signalTimes: JSON.parse(localStorage.getItem('signalTimes') || '{}'), // {symbol: {label, enteredAt}}
   news: [],
   scannerFilter: 'all',
   scannerSort: 'signal',
@@ -747,6 +748,29 @@ function generateSignal(rsi, macd, bb, rsi4h = null, volRatio = null) {
   return { score, label, cls, reasons };
 }
 
+function fmtAge(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60)  return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60)  return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24)  return `${h}h ${m % 60}m ago`;
+  return `${Math.floor(h / 24)}d ${h % 24}h ago`;
+}
+
+function updateSignalTimes() {
+  const now = Date.now();
+  for (const sym of state.scannerSymbols) {
+    const label = state.indicators[sym]?.signal?.label;
+    if (!label) continue;
+    const stored = state.signalTimes[sym];
+    if (!stored || stored.label !== label) {
+      state.signalTimes[sym] = { label, enteredAt: now };
+    }
+  }
+  localStorage.setItem('signalTimes', JSON.stringify(state.signalTimes));
+}
+
 // ═══════════════════════════════════════════════════════════
 //  RENDER — SCANNER
 // ═══════════════════════════════════════════════════════════
@@ -822,6 +846,14 @@ function renderScanner() {
     const coin = sym.replace('-USDT', '').replace('-BTC', '');
     const tooltip = escHtml(`Score: ${scoreStr} | ${reason}`);
 
+    const st = state.signalTimes[sym];
+    const sigAge = (st && st.label === sig?.label)
+      ? fmtAge(Date.now() - st.enteredAt)
+      : '—';
+    const sigAgeTitle = (st && st.label === sig?.label)
+      ? escHtml(`${sig.label} since ${new Date(st.enteredAt).toLocaleTimeString()}`)
+      : '';
+
     return `<tr class="scanner-row ${sig?.cls ?? ''}">
       <td>
         <div class="sym-cell">
@@ -841,6 +873,7 @@ function renderScanner() {
           ${sig?.label ?? '—'} <span class="score-chip">${scoreStr}</span>
         </span>
       </td>
+      <td class="num signal-age-cell" title="${sigAgeTitle}">${sigAge}</td>
       <td><button class="btn-row-del" data-sym="${sym}" title="Remove from scanner">✕</button></td>
     </tr>`;
   }).join('');
@@ -1496,21 +1529,16 @@ async function executeTrade(action, coinAmt) {
 
       btn.textContent = 'Setting up TP/SL/Trailing…';
 
-      const [ptResult, slResult, trailResult] = await Promise.allSettled([
-        // Order 2: Conditional — sell 50% at partial TP price
+      // Order 2: OCO conditional — TP and SL in ONE order so OKX only reserves
+      // halfSz balance once (they're mutually exclusive). Separate orders would
+      // reserve halfSz each → 3 orders × 50% = 150% of owned coins → rejected.
+      // Order 3: Trailing stop on the remaining 50%, activates when TP price is reached.
+      const [ocoResult, trailResult] = await Promise.allSettled([
         okxSignedPost('/api/v5/trade/order-algo', {
           ...baseAlgo, ordType: 'conditional', sz: halfSz,
           tpTriggerPx: ptPrice.toFixed(8), tpOrdPx: '-1', tpTriggerPxType: 'last',
-        }),
-        // Order 3: Conditional — sell 50% at stop loss price.
-        // SL is halfSz (not 100%) because OKX spot reserves balance per order —
-        // placing TP(50%) + SL(100%) exceeds available balance. The monitor sells
-        // the remaining 50% via a market order when SL triggers.
-        okxSignedPost('/api/v5/trade/order-algo', {
-          ...baseAlgo, ordType: 'conditional', sz: halfSz,
           slTriggerPx: slPrice.toFixed(8), slOrdPx: '-1', slTriggerPxType: 'last',
         }),
-        // Order 4: Trailing stop — sell remaining 50%, activates at TP price
         okxSignedPost('/api/v5/trade/order-algo', {
           ...baseAlgo, ordType: 'move_order_stop', sz: halfSz,
           activePx: ptPrice.toFixed(8),
@@ -1518,23 +1546,22 @@ async function executeTrade(action, coinAmt) {
         }),
       ]);
 
-      const labels = ['Partial TP (50%)', 'Stop Loss (50%)', 'Trailing Stop (50%)'];
-      const passed = [ptResult, slResult, trailResult].filter(r => r.status === 'fulfilled').length;
+      const labels = ['TP/SL (OCO 50%)', 'Trailing Stop (50%)'];
+      const passed = [ocoResult, trailResult].filter(r => r.status === 'fulfilled').length;
 
-      if (passed === 3) {
-        toast('Option 3 active: Partial TP + SL + Trailing Stop all set on OKX', 'success', 6000);
+      if (passed === 2) {
+        toast('Option 3 active: TP/SL (OCO) + Trailing Stop set on OKX', 'success', 6000);
 
-        // Extract OKX algo order IDs and save to Supabase for break-even SL monitoring
-        const ptId = ptResult.value?.data?.[0]?.algoId;
-        const slId = slResult.value?.data?.[0]?.algoId;
+        // Both orders share the OCO algoId — monitor uses fill price to tell TP vs SL
+        const ocoId   = ocoResult.value?.data?.[0]?.algoId;
         const trailId = trailResult.value?.data?.[0]?.algoId;
-        if (ptId && slId && trailId) {
+        if (ocoId && trailId) {
           await saveOption3Trade({
-            id: ptId,
+            id: ocoId,
             symbol: action.symbol,
             entryPrice: price,
-            partialTpId: ptId,
-            slId,
+            partialTpId: ocoId,
+            slId: ocoId,       // same ID — monitor compares fill px to entry to detect which side
             trailingId: trailId,
             amountUsdt: action.amountUsdt,
             szHalf: halfSz,
@@ -1544,13 +1571,13 @@ async function executeTrade(action, coinAmt) {
           });
         }
       } else {
-        [ptResult, slResult, trailResult].forEach((r, i) => {
+        [ocoResult, trailResult].forEach((r, i) => {
           if (r.status === 'rejected') {
             console.error(`[Option3] ${labels[i]} failed:`, r.reason?.message);
             toast(`${labels[i]} could not be set — set manually on OKX. ${r.reason?.message ?? ''}`, 'error', 10000);
           }
         });
-        if (passed > 0) toast(`${passed}/3 orders placed — check OKX for details`, 'success', 6000);
+        if (passed > 0) toast(`${passed}/2 orders placed — check OKX for details`, 'success', 6000);
       }
 
     }
@@ -1606,6 +1633,7 @@ async function refreshAll() {
   el('refreshBtn').classList.add('spinning');
 
   await fetchAllData();
+  updateSignalTimes();
   renderScanner();
   await checkSignalAlerts();
 
@@ -1825,6 +1853,7 @@ async function loadAppData() {
 
   renderScanner();
   await fetchAllData();
+  updateSignalTimes();
   renderScanner();
   await checkSignalAlerts();
   refreshNews();
