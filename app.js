@@ -813,7 +813,14 @@ function renderScanner() {
 
   // Sort
   symbols.sort((a, b) => {
-    if (state.scannerSort === 'signal') return (state.indicators[b]?.signal.score ?? 0) - (state.indicators[a]?.signal.score ?? 0);
+    if (state.scannerSort === 'signal') {
+      const order = { 'STRONG BUY': 0, 'BUY': 1, 'STRONG SELL': 2, 'SELL': 3, 'HOLD': 4 };
+      const aLbl = state.indicators[a]?.signal.label ?? 'HOLD';
+      const bLbl = state.indicators[b]?.signal.label ?? 'HOLD';
+      const pri = (order[aLbl] ?? 4) - (order[bLbl] ?? 4);
+      if (pri !== 0) return pri;
+      return Math.abs(state.indicators[b]?.signal.score ?? 0) - Math.abs(state.indicators[a]?.signal.score ?? 0);
+    }
     if (state.scannerSort === 'change') return (state.tickers[b]?.changePercent ?? 0) - (state.tickers[a]?.changePercent ?? 0);
     if (state.scannerSort === 'price') return (state.tickers[b]?.price ?? 0) - (state.tickers[a]?.price ?? 0);
     return a.localeCompare(b);
@@ -1769,10 +1776,14 @@ function wireEvents() {
   el('scannerSortSelect').addEventListener('change', () => { state.scannerSort = el('scannerSortSelect').value; renderScanner(); });
 
   document.querySelectorAll('.filter-chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    chip.addEventListener('mouseenter', () => {
       chip.classList.add('active');
       state.scannerFilter = chip.dataset.filter;
+      renderScanner();
+    });
+    chip.addEventListener('mouseleave', () => {
+      chip.classList.remove('active');
+      state.scannerFilter = 'all';
       renderScanner();
     });
   });
