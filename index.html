@@ -89,8 +89,6 @@
           <span id="scannerCount" class="scanner-count">0</span>
         </h2>
         <div class="card-actions">
-          <input class="scanner-input" type="text" id="scannerAddInput" placeholder="BTC or BTC-USDT" maxlength="15" />
-          <button class="btn-small" id="scannerAddBtn">Add</button>
           <select class="select-small" id="scannerSortSelect">
             <option value="signal">Sort: Signal</option>
             <option value="change">Sort: 24h%</option>
@@ -132,7 +130,7 @@
               <th
                 title="Signal label + score. Score range: −9 (extreme sell) to +9 (extreme buy). Hover for full breakdown.">
                 Signal ⓘ</th>
-              <th></th>
+              <th class="num" title="How long this coin has been in its current signal state.">In Signal ⓘ</th>
             </tr>
           </thead>
           <tbody id="scannerBody">
@@ -155,19 +153,8 @@
           AI Advisor
         </h2>
         <div class="card-actions">
-          <select class="select-small" id="aiContextSelect">
-            <option value="market">Best Opportunities Now</option>
-            <option value="risk">Risk Analysis</option>
-            <option value="custom">Custom Question</option>
-          </select>
           <button class="btn-primary" id="aiAnalyzeBtn">Analyze</button>
         </div>
-      </div>
-
-      <div class="ai-custom-query" id="aiCustomQuery" style="display:none;">
-        <textarea class="ai-textarea" id="aiCustomInput"
-          placeholder="Ask anything: 'Should I buy ETH now?', 'What's my biggest risk?', 'When should I take profits on BTC?'"
-          rows="3"></textarea>
       </div>
 
       <div class="ai-response-area" id="aiResponseArea">
@@ -304,6 +291,12 @@
           <h4 class="settings-heading">Cloud Security</h4>
           <p class="settings-desc">Encrypt all your keys with a password and save them to Supabase. The app will ask for
             this password every time it loads.</p>
+          <div class="form-group">
+            <label>Cloud Password</label>
+            <input type="password" id="settingsCloudPassword" class="form-input"
+              placeholder="Password to encrypt your keys" autocomplete="new-password" />
+            <span class="field-hint">You will enter this password every time you open the app.</span>
+          </div>
           <div class="settings-actions">
             <button class="btn-primary" id="saveToCloudBtn">Save All to Cloud</button>
           </div>

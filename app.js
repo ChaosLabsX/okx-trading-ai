@@ -342,7 +342,7 @@ async function handleUnlock() {
     });
 
     state.sessionPassword = password;
-    localStorage.setItem('sp', password);
+    sessionStorage.setItem('sp', password);
     el('lockScreen').style.display = 'none';
     toast('Unlocked — settings loaded from cloud ✓', 'success');
     await loadAppData();
@@ -416,6 +416,7 @@ function reversalConfirmedBrowser(ind, zone) {
 
 async function checkSignalAlerts() {
   for (const sym of state.scannerSymbols) {
+    if (state.tickers[sym]?.source === 'Demo') continue;
     const sig = state.indicators[sym]?.signal;
     const ind = state.indicators[sym];
     const price = state.tickers[sym]?.price;
@@ -466,11 +467,26 @@ async function hmacSHA256base64(secret, message) {
   return btoa(String.fromCharCode(...new Uint8Array(sig)));
 }
 
+async function okxProxyFetch(url, options = {}) {
+  // Two proxy attempts with a 1-second gap — guards against temporary corsproxy.io outages.
+  // OKX signatures are timestamp-bound so we must re-sign on retry (handled by callers).
+  const proxy = u => `https://corsproxy.io/?${encodeURIComponent(u)}`;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await fetch(proxy(url), options);
+      if (res.ok) return res;
+      throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      if (attempt === 2) throw err;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+}
+
 async function okxSignedGet(path) {
   const timestamp = new Date().toISOString();
   const sign = await hmacSHA256base64(CONFIG.OKX_SECRET_KEY, timestamp + 'GET' + path);
-  const url = 'https://corsproxy.io/?' + encodeURIComponent(CONFIG.OKX_BASE + path);
-  const res = await fetch(url, {
+  const res = await okxProxyFetch(CONFIG.OKX_BASE + path, {
     headers: {
       'OK-ACCESS-KEY': CONFIG.OKX_API_KEY,
       'OK-ACCESS-SIGN': sign,
@@ -479,7 +495,6 @@ async function okxSignedGet(path) {
       'Content-Type': 'application/json',
     },
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const d = await res.json();
   if (d.code !== '0') throw new Error(d.msg || `OKX error code ${d.code}`);
   return d;
@@ -489,8 +504,7 @@ async function okxSignedPost(path, body) {
   const timestamp = new Date().toISOString();
   const bodyStr = JSON.stringify(body);
   const sign = await hmacSHA256base64(CONFIG.OKX_SECRET_KEY, timestamp + 'POST' + path + bodyStr);
-  const url = 'https://corsproxy.io/?' + encodeURIComponent(CONFIG.OKX_BASE + path);
-  const res = await fetch(url, {
+  const res = await okxProxyFetch(CONFIG.OKX_BASE + path, {
     method: 'POST',
     headers: {
       'OK-ACCESS-KEY': CONFIG.OKX_API_KEY,
@@ -501,7 +515,6 @@ async function okxSignedPost(path, body) {
     },
     body: bodyStr,
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const d = await res.json();
   if (d.code !== '0') throw new Error(d.data?.[0]?.sMsg || d.msg || `OKX error ${d.code}`);
   return d;
@@ -752,10 +765,23 @@ function fmtAge(ms) {
   const s = Math.floor(ms / 1000);
   if (s < 60)  return `${s}s ago`;
   const m = Math.floor(s / 60);
-  if (m < 60)  return `${m}m ago`;
+  if (m < 60)  return `${m}m ${String(s % 60).padStart(2, '0')}s ago`;
   const h = Math.floor(m / 60);
   if (h < 24)  return `${h}h ${m % 60}m ago`;
   return `${Math.floor(h / 24)}d ${h % 24}h ago`;
+}
+
+function startAgeTicker() {
+  setInterval(() => {
+    document.querySelectorAll('.signal-age-cell[data-sym]').forEach(cell => {
+      const sym = cell.dataset.sym;
+      const st  = state.signalTimes[sym];
+      const sig = state.indicators[sym]?.signal;
+      if (!st || !sig || st.label !== sig.label) return;
+      cell.textContent = fmtAge(Date.now() - st.enteredAt);
+      cell.title = `${sig.label} since ${new Date(st.enteredAt).toLocaleTimeString()}`;
+    });
+  }, 1000);
 }
 
 function updateSignalTimes() {
@@ -778,7 +804,7 @@ function renderScanner() {
   const tbody = el('scannerBody');
   const countEl = el('scannerCount');
   if (countEl) countEl.textContent = state.scannerSymbols.length;
-  let symbols = [...state.scannerSymbols];
+  let symbols = state.scannerSymbols.filter(s => state.tickers[s]?.source !== 'Demo');
 
   // Filter
   if (state.scannerFilter === 'buy') symbols = symbols.filter(s => (state.indicators[s]?.signal.score ?? 0) >= 2);
@@ -813,8 +839,6 @@ function renderScanner() {
     const bb = ind?.bb ?? null;
     const volRatio = ind?.volRatio ?? null;
     const score = sig?.score ?? 0;
-    const isDemo = t?.source === 'Demo';
-
     const chgCls = chgPct >= 0 ? 'pos' : 'neg';
 
     // 1H RSI badge
@@ -858,7 +882,6 @@ function renderScanner() {
       <td>
         <div class="sym-cell">
           <span class="coin-icon">${coin}</span>
-          ${isDemo ? '<span class="demo-tag">DEMO</span>' : ''}
         </div>
       </td>
       <td class="num price-cell">${price ? fmtCrypto(price) : '—'}</td>
@@ -873,14 +896,9 @@ function renderScanner() {
           ${sig?.label ?? '—'} <span class="score-chip">${scoreStr}</span>
         </span>
       </td>
-      <td class="num signal-age-cell" title="${sigAgeTitle}">${sigAge}</td>
-      <td><button class="btn-row-del" data-sym="${sym}" title="Remove from scanner">✕</button></td>
+      <td class="num signal-age-cell" data-sym="${sym}" title="${sigAgeTitle}">${sigAge}</td>
     </tr>`;
   }).join('');
-
-  tbody.querySelectorAll('.btn-row-del').forEach(btn => {
-    btn.addEventListener('click', () => removeScannerSymbol(btn.dataset.sym));
-  });
 
   updateBestPickBanner();
   updateSummaryBar();
@@ -890,6 +908,7 @@ function updateBestPickBanner() {
   const banner = el('bestPickBar');
   let best = null, bestScore = -99;
   for (const sym of state.scannerSymbols) {
+    if (state.tickers[sym]?.source === 'Demo') continue;
     const sig = state.indicators[sym]?.signal;
     if (sig && sig.score > bestScore) { bestScore = sig.score; best = { sym, sig }; }
   }
@@ -906,19 +925,13 @@ function updateBestPickBanner() {
   `;
 }
 
-function removeScannerSymbol(sym) {
-  state.scannerSymbols = state.scannerSymbols.filter(s => s !== sym);
-  saveScannerSymbols();
-  renderScanner();
-  toast(`Removed ${sym}`, 'info');
-}
-
 function updateSummaryBar() {
   el('lastUpdated').textContent = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
   const topEl = el('topSignal');
   let best = null, bestScore = -99;
   for (const sym of state.scannerSymbols) {
+    if (state.tickers[sym]?.source === 'Demo') continue;
     const sig = state.indicators[sym]?.signal;
     if (sig && sig.score > bestScore) { bestScore = sig.score; best = { sym, sig }; }
   }
@@ -1064,12 +1077,6 @@ function renderNews() {
 //  AI ADVISOR  (Claude API, called directly from browser)
 // ═══════════════════════════════════════════════════════════
 async function runAiAnalysis() {
-  const contextType = el('aiContextSelect').value;
-  const customText = el('aiCustomInput').value.trim();
-
-  if (contextType === 'custom' && !customText) {
-    toast('Enter a question for the AI', 'error'); return;
-  }
   if (!CONFIG.CLAUDE_API_KEY) {
     renderAiError('Add your Claude API key in Settings (⚙ icon) to enable AI analysis. Get a free key at console.anthropic.com');
     return;
@@ -1105,7 +1112,7 @@ async function runAiAnalysis() {
 
   try {
     const systemPrompt = buildSystemPrompt();
-    const userPrompt   = buildPrompt(contextType, customText);
+    const userPrompt   = buildPrompt();
 
     // Restore state after prompt is built — don't affect the UI display
     state.usdtBalance = prevUsdtBal;
@@ -1209,7 +1216,7 @@ Always end your response with this exact line:
 "⚠ Not financial advice. Crypto is high-risk — only invest what you can afford to lose completely."`;
 }
 
-function buildPrompt(type, custom) {
+function buildPrompt() {
   const techData = state.scannerSymbols.map(sym => {
     const t = state.tickers[sym];
     const ind = state.indicators[sym];
@@ -1281,11 +1288,7 @@ ${capitalLine}
 Time: ${new Date().toUTCString()}
 `;
 
-  if (type === 'market') return `Give me the best crypto trading opportunities RIGHT NOW based on the technical data.\n\nSpecifically:\n1. Top 2-3 [BUY] opportunities — entry price, take profit %, stop loss %, and why\n2. Any coins I should [SELL] or avoid buying\n3. Overall market direction (bull/bear/sideways)\n4. How long do these signals typically take to play out?\n\n${ctx}`;
-  if (type === 'portfolio') return `Review my portfolio and give me specific guidance.\n\nFor each of my holdings:\n1. [HOLD], [BUY MORE], or [SELL] — with reasoning\n2. Suggested take profit level if I should exit\n3. Stop loss level to protect against big drops\n\nAlso identify the best new buying opportunity from the scanner.\n\n${ctx}`;
-  if (type === 'risk') return `Perform a risk analysis of my current situation.\n\n1. What is the biggest risk right now in the overall market?\n2. For each of my holdings — what is the worst-case downside scenario?\n3. Suggested stop-loss levels for each position\n4. Should I reduce exposure to anything?\n5. Am I too concentrated in one coin?\n\n${ctx}`;
-  if (type === 'custom') return `${custom}\n\n${ctx}`;
-  return `Analyze my trading situation.\n\n${ctx}`;
+  return `Give me the best crypto trading opportunities RIGHT NOW based on the technical data.\n\nSpecifically:\n1. Top 2-3 [BUY] opportunities — entry price, take profit %, stop loss %, and why\n2. Any coins I should [SELL] or avoid buying\n3. Overall market direction (bull/bear/sideways)\n4. How long do these signals typically take to play out?\n\n${ctx}`;
 }
 
 function showAiThinking() {
@@ -1763,18 +1766,6 @@ function wireEvents() {
   el('settingsBtn').addEventListener('click', () => { populateSettingsForm(); openModal('settingsModal'); });
 
   // Scanner
-  el('scannerAddBtn').addEventListener('click', () => {
-    const raw = el('scannerAddInput').value.trim().toUpperCase();
-    const sym = raw.includes('-') ? raw : raw + '-USDT';
-    if (!raw) return;
-    if (state.scannerSymbols.includes(sym)) { toast(`${sym} already tracked`, 'info'); return; }
-    state.scannerSymbols.push(sym);
-    saveScannerSymbols();
-    el('scannerAddInput').value = '';
-    fetchSymbolData(sym).then(() => renderScanner());
-    toast(`Added ${sym} to scanner`, 'success');
-  });
-  el('scannerAddInput').addEventListener('keydown', e => { if (e.key === 'Enter') el('scannerAddBtn').click(); });
   el('scannerSortSelect').addEventListener('change', () => { state.scannerSort = el('scannerSortSelect').value; renderScanner(); });
 
   document.querySelectorAll('.filter-chip').forEach(chip => {
@@ -1792,10 +1783,6 @@ function wireEvents() {
 
   // AI
   el('aiAnalyzeBtn').addEventListener('click', runAiAnalysis);
-  el('aiContextSelect').addEventListener('change', () => {
-    el('aiCustomQuery').style.display = el('aiContextSelect').value === 'custom' ? 'block' : 'none';
-  });
-  el('aiCustomInput').addEventListener('keydown', e => { if (e.key === 'Enter' && e.ctrlKey) runAiAnalysis(); });
 
   // Lock screen
   el('lockUnlockBtn').addEventListener('click', handleUnlock);
@@ -1841,6 +1828,19 @@ function wireEvents() {
   document.querySelectorAll('.modal-close').forEach(btn => btn.addEventListener('click', () => closeModal(btn.dataset.modal)));
   document.querySelectorAll('.modal-overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) closeModal(o.id); }));
   document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => closeModal(m.id)); });
+
+  // Pause auto-refresh when the tab is hidden — saves API calls and prevents
+  // duplicate Telegram alerts (GitHub Actions already covers background monitoring).
+  // Resume immediately with a fresh fetch when the tab becomes visible again.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      clearInterval(state.refreshTimer);
+      clearInterval(state.newsTimer);
+    } else {
+      refreshAll();
+      restartAutoRefresh();
+    }
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1872,11 +1872,12 @@ async function init() {
   state.notifiedSignals = LS.get('notifiedSignals', {});
   loadScannerSymbols();
   wireEvents();
+  startAgeTicker();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => { });
 
   // If Supabase is configured, try auto-unlock from session first
   if (isSupabaseConfigured()) {
-    const saved = localStorage.getItem('sp');
+    const saved = sessionStorage.getItem('sp');
     if (saved) {
       try {
         const data = await loadFromCloud(saved);
@@ -1892,7 +1893,7 @@ async function init() {
         await loadAppData();
         return;
       } catch {
-        localStorage.removeItem('sp');
+        sessionStorage.removeItem('sp');
       }
     }
     el('lockScreen').style.display = 'flex';

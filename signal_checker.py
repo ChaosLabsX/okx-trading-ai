@@ -193,7 +193,7 @@ def reversal_confirmed(opens, closes, volumes, zone):
     return True
 
 
-def generate_signal(rsi, macd, bb, vol_ratio=None):
+def generate_signal(rsi, macd, bb, vol_ratio=None, rsi_4h=None):
     score, reasons = 0.0, []
 
     if rsi is not None:
@@ -219,6 +219,17 @@ def generate_signal(rsi, macd, bb, vol_ratio=None):
     if vol_ratio is not None:
         if   vol_ratio >= 2.0: score += 1; reasons.append(f'Volume {vol_ratio:.1f}× avg — strong buying interest')
         elif vol_ratio >= 1.5:             reasons.append(f'Volume {vol_ratio:.1f}× avg — elevated')
+
+    # 4H RSI confirmation — mirrors the browser dashboard logic (max ±1 point)
+    if rsi_4h is not None:
+        if   score > 0 and rsi_4h <= 45:
+            score += 1;   reasons.append(f'4H RSI {rsi_4h:.0f} — higher-TF uptrend confirmed')
+        elif score < 0 and rsi_4h >= 55:
+            score -= 1;   reasons.append(f'4H RSI {rsi_4h:.0f} — higher-TF downtrend confirmed')
+        elif score > 0 and rsi_4h >= 70:
+            score -= 0.5; reasons.append(f'4H RSI {rsi_4h:.0f} — caution: overbought on 4H')
+        elif score < 0 and rsi_4h <= 30:
+            score += 0.5; reasons.append(f'4H RSI {rsi_4h:.0f} — caution: oversold on 4H')
 
     label = ('STRONG BUY'  if score >= 4  else
              'BUY'         if score >= 2  else
@@ -287,7 +298,12 @@ def save_cache(data):
 
 
 # ── Single scan ───────────────────────────────────────────────────────────────
-def run_scan(cache):
+def run_scan(cache, warm_up=False):
+    """
+    warm_up=True → cache was empty (expired or first run).
+    Just populate state for every coin without sending any alerts.
+    This prevents a flood of simultaneous messages on the first scan after cache loss.
+    """
     now = time.time()
 
     # Fetch active trades once so every coin check is O(1) — no per-coin Supabase call
@@ -316,7 +332,11 @@ def run_scan(cache):
             else:
                 r_opens, r_closes, r_volumes = opens, closes, volumes
 
-            sig   = generate_signal(calc_rsi(closes), calc_macd(closes), calc_bb(closes), vol_ratio)
+            # 4H candles for higher-timeframe RSI confirmation (mirrors dashboard logic)
+            candle_4h = fetch_candles(symbol, bar='4H', limit=50)
+            rsi_4h    = calc_rsi(candle_4h['closes']) if candle_4h and len(candle_4h['closes']) > 14 else None
+
+            sig   = generate_signal(calc_rsi(closes), calc_macd(closes), calc_bb(closes), vol_ratio, rsi_4h)
             if TEST_FORCE_SIGNAL and symbol == 'BTC-USDT':
                 sig = {'label': 'STRONG BUY', 'score': 5.0, 'reasons': ['TEST — forced signal, not real']}
             label = sig['label']
@@ -328,6 +348,15 @@ def run_scan(cache):
 
             # Always persist latest label
             cache[symbol] = {**prev, 'label': label, 'zone': zone}
+
+            # Warm-up run: cache was empty (expired or first deploy).
+            # Mark every coin as already alerted in its current zone so the next
+            # real scan starts clean — no flood of simultaneous messages.
+            if warm_up:
+                cache[symbol] = {'label': label, 'zone': zone, 'alerted_zone': zone, 'alerted_at': now}
+                print(f'  {symbol}: {label} — warm-up, state saved, no alert')
+                time.sleep(0.1)
+                continue
 
             print(f'  {symbol}: {label} (zone={zone}, last_alerted={alerted_zone or "—"})')
 
@@ -725,16 +754,20 @@ def monitor_option3_trades():
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 def main():
-    cache    = load_cache()
-    start    = time.time()
-    scan_num = 0
+    cache     = load_cache()
+    fresh     = not bool(cache)   # True when cache was missing or empty
+    start     = time.time()
+    scan_num  = 0
+
+    if fresh:
+        print('Cache is empty — first scan will populate state only (no alerts).')
 
     while True:
         scan_num += 1
         elapsed = time.time() - start
         print(f'\n=== Scan #{scan_num} | +{elapsed:.0f}s | {time.strftime("%H:%M:%S UTC")} ===')
 
-        run_scan(cache)
+        run_scan(cache, warm_up=(fresh and scan_num == 1))
         monitor_option3_trades()
         save_cache(cache)
 
