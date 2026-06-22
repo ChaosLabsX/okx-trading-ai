@@ -16,6 +16,7 @@ const state = {
   newsTimer: null,
   isRefreshing: false,
   notifiedSignals: {},   // {symbol: lastNotifiedLabel} — prevents duplicate alerts
+  alertsWarmedUp: false, // true after first scan — suppresses alerts on page load
   usdtBalance: 0,        // free USDT from OKX sync
   sessionPassword: null, // set after successful cloud unlock
   derivData: {},         // {symbol: {fundingRate, nextFundingRate, openInterest}}
@@ -415,6 +416,21 @@ function reversalConfirmedBrowser(ind, zone) {
 }
 
 async function checkSignalAlerts() {
+  // On the first scan after page load, silently mark all active STRONG BUY coins
+  // as already notified so we don't duplicate an alert the Python script already sent.
+  if (!state.alertsWarmedUp) {
+    for (const sym of state.scannerSymbols) {
+      if (state.tickers[sym]?.source === 'Demo') continue;
+      const sig = state.indicators[sym]?.signal;
+      if (sig?.label === 'STRONG BUY') {
+        state.notifiedSignals[sym] = 'up';
+      }
+    }
+    LS.set('notifiedSignals', state.notifiedSignals);
+    state.alertsWarmedUp = true;
+    return;
+  }
+
   for (const sym of state.scannerSymbols) {
     if (state.tickers[sym]?.source === 'Demo') continue;
     const sig = state.indicators[sym]?.signal;
