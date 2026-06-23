@@ -730,7 +730,7 @@ function generateSignal(rsi, macd, bb, rsi4h = null, volRatio = null) {
   if (rsi !== null) {
     if (rsi <= 20) { score += 3; reasons.push(`RSI ${rsi.toFixed(0)} — extremely oversold`); }
     else if (rsi <= 30) { score += 2; reasons.push(`RSI ${rsi.toFixed(0)} — oversold`); }
-    else if (rsi <= 40) { score += 1; reasons.push(`RSI ${rsi.toFixed(0)} — below neutral`); }
+    else if (rsi <= 40) { reasons.push(`RSI ${rsi.toFixed(0)} — below neutral`); }  // no score bonus
     else if (rsi >= 80) { score -= 3; reasons.push(`RSI ${rsi.toFixed(0)} — extremely overbought`); }
     else if (rsi >= 70) { score -= 2; reasons.push(`RSI ${rsi.toFixed(0)} — overbought`); }
     else if (rsi >= 60) { score -= 1; reasons.push(`RSI ${rsi.toFixed(0)} — above neutral`); }
@@ -754,7 +754,7 @@ function generateSignal(rsi, macd, bb, rsi4h = null, volRatio = null) {
 
   // ── 4H RSI confirmation (max ±1) ──
   if (rsi4h !== null) {
-    if (score > 0 && rsi4h <= 45) { score += 1; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — higher-TF uptrend confirmed`); }
+    if (score > 0 && rsi4h <= 40) { score += 1; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — higher-TF uptrend confirmed`); }
     else if (score < 0 && rsi4h >= 55) { score -= 1; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — higher-TF downtrend confirmed`); }
     else if (score > 0 && rsi4h >= 70) { score -= 0.5; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — caution: overbought on 4H`); }
     else if (score < 0 && rsi4h <= 30) { score += 0.5; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — caution: oversold on 4H`); }
@@ -768,10 +768,10 @@ function generateSignal(rsi, macd, bb, rsi4h = null, volRatio = null) {
   }
 
   let label, cls;
-  if (score >= 4) { label = 'STRONG BUY'; cls = 'sig-sbuy'; }
+  if (score >= 5) { label = 'STRONG BUY'; cls = 'sig-sbuy'; }
   else if (score >= 2) { label = 'BUY'; cls = 'sig-buy'; }
   else if (score > -2) { label = 'HOLD'; cls = 'sig-hold'; }
-  else if (score > -4) { label = 'SELL'; cls = 'sig-sell'; }
+  else if (score > -5) { label = 'SELL'; cls = 'sig-sell'; }
   else { label = 'STRONG SELL'; cls = 'sig-ssell'; }
 
   return { score, label, cls, reasons };
@@ -1196,7 +1196,7 @@ CONTEXT:
 
 ANALYSIS RULES — apply these strictly:
 1. Only recommend BUY when ALL of the following are true:
-   • Signal score ≥ 4.0 (STRONG BUY zone)
+   • Signal score ≥ 5.0 (STRONG BUY zone)
    • At least 2 of these confirm: RSI oversold, MACD bullish crossover, BB lower band touch, volume spike
    • 4H RSI < 55 (not overbought on the higher timeframe)
    • Funding rate is not extreme (avoid buying when funding > 0.05% — longs are overheated)

@@ -195,7 +195,7 @@ def generate_signal(rsi, macd, bb, vol_ratio=None, rsi_4h=None):
     if rsi is not None:
         if   rsi <= 20: score += 3; reasons.append(f'RSI {rsi:.0f} — extremely oversold')
         elif rsi <= 30: score += 2; reasons.append(f'RSI {rsi:.0f} — oversold')
-        elif rsi <= 40: score += 1; reasons.append(f'RSI {rsi:.0f} — below neutral')
+        elif rsi <= 40:             reasons.append(f'RSI {rsi:.0f} — below neutral')   # no score bonus
         elif rsi >= 80: score -= 3; reasons.append(f'RSI {rsi:.0f} — extremely overbought')
         elif rsi >= 70: score -= 2; reasons.append(f'RSI {rsi:.0f} — overbought')
         elif rsi >= 60: score -= 1; reasons.append(f'RSI {rsi:.0f} — above neutral')
@@ -218,7 +218,7 @@ def generate_signal(rsi, macd, bb, vol_ratio=None, rsi_4h=None):
 
     # 4H RSI confirmation — mirrors the browser dashboard logic (max ±1 point)
     if rsi_4h is not None:
-        if   score > 0 and rsi_4h <= 45:
+        if   score > 0 and rsi_4h <= 40:
             score += 1;   reasons.append(f'4H RSI {rsi_4h:.0f} — higher-TF uptrend confirmed')
         elif score < 0 and rsi_4h >= 55:
             score -= 1;   reasons.append(f'4H RSI {rsi_4h:.0f} — higher-TF downtrend confirmed')
@@ -227,9 +227,9 @@ def generate_signal(rsi, macd, bb, vol_ratio=None, rsi_4h=None):
         elif score < 0 and rsi_4h <= 30:
             score += 0.5; reasons.append(f'4H RSI {rsi_4h:.0f} — caution: oversold on 4H')
 
-    label = ('STRONG BUY'  if score >= 4  else
+    label = ('STRONG BUY'  if score >= 5  else
              'BUY'         if score >= 2  else
-             'STRONG SELL' if score <= -4 else
+             'STRONG SELL' if score <= -5 else
              'SELL'        if score <= -2 else 'HOLD')
     return {'label': label, 'score': score, 'reasons': reasons}
 
