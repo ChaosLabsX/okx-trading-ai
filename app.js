@@ -791,19 +791,23 @@ function startAgeTicker() {
       const sig = state.indicators[sym]?.signal;
       if (!st || !sig || st.label !== sig.label) return;
       cell.textContent = fmtAge(Date.now() - st.enteredAt);
-      cell.title = `${sig.label} since ${new Date(st.enteredAt).toLocaleTimeString()}`;
+      const _d = new Date(st.enteredAt);
+      cell.title = `${sig.label} since ${_d.getUTCHours().toString().padStart(2,'0')}:${_d.getUTCMinutes().toString().padStart(2,'0')} UTC`;
     });
   }, 1000);
 }
 
 function updateSignalTimes() {
   const now = Date.now();
+  // Floor to UTC hour boundary — Date.now() is always UTC ms, so this value is
+  // identical on every device regardless of local timezone.
+  const hourBoundary = Math.floor(now / 3600000) * 3600000;
   for (const sym of state.scannerSymbols) {
     const label = state.indicators[sym]?.signal?.label;
     if (!label) continue;
     const stored = state.signalTimes[sym];
     if (!stored || stored.label !== label) {
-      state.signalTimes[sym] = { label, enteredAt: now };
+      state.signalTimes[sym] = { label, enteredAt: hourBoundary };
     }
   }
   localStorage.setItem('signalTimes', JSON.stringify(state.signalTimes));
@@ -893,9 +897,12 @@ function renderScanner() {
     const sigAge = (st && st.label === sig?.label)
       ? fmtAge(Date.now() - st.enteredAt)
       : '—';
-    const sigAgeTitle = (st && st.label === sig?.label)
-      ? escHtml(`${sig.label} since ${new Date(st.enteredAt).toLocaleTimeString()}`)
-      : '';
+    const sigAgeTitle = (() => {
+      if (!st || st.label !== sig?.label) return '';
+      const _d = new Date(st.enteredAt);
+      const utc = `${_d.getUTCHours().toString().padStart(2,'0')}:${_d.getUTCMinutes().toString().padStart(2,'0')} UTC`;
+      return escHtml(`${sig?.label} since ${utc}`);
+    })();
 
     return `<tr class="scanner-row ${sig?.cls ?? ''}">
       <td>
