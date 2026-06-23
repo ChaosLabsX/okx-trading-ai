@@ -357,7 +357,15 @@ def _okx_get(path):
 
 
 def _okx_post(path, body):
-    r = requests.post(OKX_BASE + path, headers=_okx_sign('POST', path, body), json=body, timeout=15)
+    # Must send the exact same compact JSON that was used to compute the HMAC signature.
+    # requests' json= kwarg adds spaces which would produce a different byte sequence → 401.
+    body_str = json.dumps(body, separators=(',', ':'))
+    r = requests.post(
+        OKX_BASE + path,
+        headers=_okx_sign('POST', path, body),
+        data=body_str,
+        timeout=15,
+    )
     r.raise_for_status()
     d = r.json()
     if d.get('code') != '0':
