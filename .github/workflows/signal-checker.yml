@@ -53,6 +53,10 @@ jobs:
           # Add CLAUDE_API_KEY as a GitHub Secret (your Anthropic API key).
           # Auto-trade is silently skipped if this secret is not set.
           CLAUDE_API_KEY:     ${{ secrets.CLAUDE_API_KEY }}
+          # Supabase — trade persistence and monitoring.
+          # Get these from: Supabase dashboard → Settings → API
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY:       ${{ secrets.SUPABASE_KEY }}
         run: python signal_checker.py
 
       - name: Save signal state
