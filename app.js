@@ -451,13 +451,9 @@ async function checkSignalAlerts() {
         continue;
       }
 
-      const msg = `🟢 <b>STRONG BUY: ${coin}</b>\n`
-        + `💰 Price: ${fmtCrypto(price)}\n`
-        + `📊 ${sig.reasons.join('\n📊 ')}\n`
-        + `⏰ ${new Date().toLocaleTimeString()}`;
-
-      const sent = await sendTelegramAlert(msg);
-      if (sent) toast(`📲 Telegram sent — STRONG BUY ${coin}`, 'success', 5000);
+      // Telegram for STRONG BUY is handled entirely by the Python script (auto-trade).
+      // Browser only shows an on-screen toast so the user sees live signals when the app is open.
+      toast(`🟢 STRONG BUY: ${coin} — auto-trade system will handle this`, 'success', 7000);
 
       state.notifiedSignals[sym] = currentZone;
       LS.set('notifiedSignals', state.notifiedSignals);

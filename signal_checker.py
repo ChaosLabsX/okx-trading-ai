@@ -51,8 +51,8 @@ CLAUDE_API_KEY     = os.environ.get('CLAUDE_API_KEY', '')
 CLAUDE_MODEL       = 'claude-haiku-4-5-20251001'
 CACHE_FILE         = 'signal_cache.json'
 
-SUPABASE_URL = 'https://trbfhtopkcupzeqmrnom.supabase.co'
-SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRyYmZodG9wa2N1cHplcW1ybm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExNDI1NDYsImV4cCI6MjA5NjcxODU0Nn0.6XKKIJIotc4lRVL_akt7P63woJiB8NyOVaUotQmmpHQ'
+SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 
 LOOP_DURATION  = 4 * 60   # seconds per GitHub Actions run
 CHECK_INTERVAL = 60        # seconds between scans
@@ -628,6 +628,9 @@ def place_option3_trade(symbol, params, ticker):
 # ── Supabase Option 3 trade helpers ──────────────────────────────────────────
 def _fetch_option3_trades():
     """Fetch all active Option 3 trades (phase < 3) from Supabase."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print('  [Supabase] URL or key not set — skipping trade fetch')
+        return []
     try:
         r = requests.get(
             f'{SUPABASE_URL}/rest/v1/option3_trades?phase=lt.3&select=*',
@@ -636,9 +639,9 @@ def _fetch_option3_trades():
         )
         if r.status_code == 200:
             return r.json()
-        print(f'  [Option3] Supabase fetch error: {r.status_code}')
+        print(f'  [Supabase] Fetch error: HTTP {r.status_code} — {r.text[:300]}')
     except Exception as e:
-        print(f'  [Option3] Supabase fetch failed: {e}')
+        print(f'  [Supabase] Fetch failed: {e}')
     return []
 
 
@@ -1166,9 +1169,12 @@ def run_scan(cache, warm_up=False):
             print(f'  {cand["symbol"]}: STRONG BUY ranked #{rank_num} — skipped (cap={MAX_TRADES_PER_SCAN})')
             pending_alerts.append((cand['symbol'], cand['sig'], cand['ticker'], 'cap', cand['cache_update']))
 
-    # ── Pass 3: send all Telegram alerts ─────────────────────────────────────
+    # ── Pass 3: send Telegram only when a trade was actually placed ───────────
+    # skip, cap, error, and signal-only (None) get no notification —
+    # the user only wants to hear about confirmed new trades.
     for symbol, sig, ticker, trade_result, cache_update in pending_alerts:
-        send_telegram(format_alert(symbol, sig, ticker, trade_result))
+        if isinstance(trade_result, dict):
+            send_telegram(format_alert(symbol, sig, ticker, trade_result))
         cache[symbol] = cache_update
         time.sleep(0.3)
 
