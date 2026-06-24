@@ -293,6 +293,11 @@ def format_alert(symbol, sig, ticker, trade_result=None):
             f"🛡️ SL −{trade_result['sl_pct']}%  ·  "
             f"🔄 Trail {trade_result['trail_pct']}%"
         )
+        if not trade_result.get('saved', True):
+            msg += (
+                f"\n⚠️ <b>NOT saved to tracking DB</b> — break-even SL move & exit "
+                f"alerts are OFF for this trade. Fix Supabase secrets (see Actions log)."
+            )
     elif trade_result == 'skip':
         msg += '\n\n⏭️ <i>AI skipped — setup not optimal right now</i>'
     elif trade_result == 'error':
@@ -514,7 +519,11 @@ Place this trade?"""
 
 # ── Option 3 auto-trade placement ────────────────────────────────────────────
 def _save_option3_trade(trade_data):
-    """Persist Option 3 trade to Supabase so the monitor can track it."""
+    """Persist Option 3 trade to Supabase so the monitor can track it. Returns True on success."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print('  [Supabase] URL or key not set — trade NOT saved (monitor cannot track it). '
+              'Check SUPABASE_URL / SUPABASE_KEY GitHub Secrets.')
+        return False
     try:
         r = requests.post(
             f'{SUPABASE_URL}/rest/v1/option3_trades',
@@ -528,11 +537,15 @@ def _save_option3_trade(trade_data):
             timeout=10,
         )
         if r.status_code in (200, 201, 204):
-            print(f'  [Supabase] Trade saved ✓')
-        else:
-            print(f'  [Supabase] Save failed: {r.status_code} — {r.text[:200]}')
+            print(f'  [Supabase] Trade saved ✓ (id={trade_data.get("id")})')
+            return True
+        # Loud failure: exact status + body + which keys we sent, so the log pinpoints the cause
+        print(f'  [Supabase] Save FAILED: HTTP {r.status_code} — {r.text[:300]}')
+        print(f'  [Supabase] Payload keys sent: {list(trade_data.keys())}')
+        return False
     except Exception as e:
         print(f'  [Supabase] Save error: {e}')
+        return False
 
 
 def place_option3_trade(symbol, params, ticker):
@@ -601,7 +614,7 @@ def place_option3_trade(symbol, params, ticker):
     print(f'  [Trade] {symbol}: trailing stop {trail_pct}% callback (ID: {trail_id}) ✓')
 
     # 4. Save to Supabase for monitor_option3_trades() to track
-    _save_option3_trade({
+    saved = _save_option3_trade({
         'id':             oco_id,
         'symbol':         symbol,
         'entry_price':    price,
@@ -622,6 +635,7 @@ def place_option3_trade(symbol, params, ticker):
         'sl_pct':      sl_pct,
         'trail_pct':   trail_pct,
         'entry_price': price,
+        'saved':       saved,   # False → monitor can't track it (no break-even move / exit alerts)
     }
 
 
