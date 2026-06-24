@@ -8,7 +8,7 @@ const state = {
   scannerSymbols: [],   // ['BTC-USDT', ...]
   tickers: {},          // {symbol: {price, change, changePercent, high24h, low24h, vol24h, source}}
   indicators: {},       // {symbol: {rsi, macd, bb, signal}}
-  signalTimes: JSON.parse(localStorage.getItem('signalTimes') || '{}'), // {symbol: {label, enteredAt}}
+  signalTimes: {}, // {symbol: {label, enteredAt}} — in-memory only, derived from OKX candle data
   news: [],
   scannerFilter: 'all',
   scannerSort: 'signal',
@@ -124,11 +124,12 @@ async function fetchOKXCandles(instId, bar = CONFIG.CANDLE_BAR) {
   if (d.code !== '0' || !d.data?.length) throw new Error('No candles');
   // OKX returns newest-first — reverse to chronological order
   return d.data.reverse().map(c => ({
-    open: parseFloat(c[1]),
-    high: parseFloat(c[2]),
-    low: parseFloat(c[3]),
+    ts:    parseInt(c[0], 10),
+    open:  parseFloat(c[1]),
+    high:  parseFloat(c[2]),
+    low:   parseFloat(c[3]),
     close: parseFloat(c[4]),
-    vol: parseFloat(c[5]),
+    vol:   parseFloat(c[5]),
   }));
 }
 
@@ -708,9 +709,31 @@ function computeIndicators(candles1H, candles4H = [], candles30m = []) {
     if (avg > 0) volRatio30m = volumes30m[volumes30m.length - 1] / avg;
   }
 
+  const signal = generateSignal(rsi, macd, bb, rsi4h, volRatio);
+
+  // Walk back through 1H candle history to find when the current signal label started.
+  // Uses only 1H indicators for speed (4H/volume omitted in lookback — minor effect on label).
+  // signalStartTs is derived from OKX candle timestamps — identical on every device.
+  let signalStartTs = candles1H.at(-1)?.ts ?? Date.now();
+  if (signal.label !== 'HOLD') {
+    for (let i = 1; i <= 10 && candles1H.length - i >= 15; i++) {
+      const n = candles1H.length - i;
+      // Pass rsi4h (changes every 4H — same value works for recent 1H lookback).
+      // Omit volRatio — it is per-candle and varies too much to use historically.
+      const hist = generateSignal(
+        calcRSI(closes.slice(0, n)),
+        calcMACD(closes.slice(0, n)),
+        calcBB(closes.slice(0, n)),
+        rsi4h
+      );
+      if (hist.label !== signal.label) break;
+      signalStartTs = candles1H[n - 1].ts;
+    }
+  }
+
   return { rsi, rsiPrev, rsi4h, macd, bb, volRatio, lastOpen, lastClose,
            lastOpen30m, lastClose30m, rsi30m, rsiPrev30m, volRatio30m,
-           signal: generateSignal(rsi, macd, bb, rsi4h, volRatio) };
+           signal: { ...signal, startTs: signalStartTs } };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -798,19 +821,14 @@ function startAgeTicker() {
 }
 
 function updateSignalTimes() {
-  const now = Date.now();
-  // Floor to UTC hour boundary — Date.now() is always UTC ms, so this value is
-  // identical on every device regardless of local timezone.
-  const hourBoundary = Math.floor(now / 3600000) * 3600000;
   for (const sym of state.scannerSymbols) {
-    const label = state.indicators[sym]?.signal?.label;
+    const ind = state.indicators[sym];
+    const label = ind?.signal?.label;
     if (!label) continue;
-    const stored = state.signalTimes[sym];
-    if (!stored || stored.label !== label) {
-      state.signalTimes[sym] = { label, enteredAt: hourBoundary };
-    }
+    const enteredAt = ind.signal.startTs ?? Math.floor(Date.now() / 3600000) * 3600000;
+    state.signalTimes[sym] = { label, enteredAt };
   }
-  localStorage.setItem('signalTimes', JSON.stringify(state.signalTimes));
+  // Not persisted to localStorage — age is data-driven from OKX candle timestamps, same on all devices
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1899,6 +1917,7 @@ async function loadAppData() {
 
 async function init() {
   loadSettings();
+  localStorage.removeItem('signalTimes'); // stale per-device entries — age now comes from OKX candle timestamps
   state.notifiedSignals = LS.get('notifiedSignals', {});
   loadScannerSymbols();
   wireEvents();
