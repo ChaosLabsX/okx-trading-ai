@@ -72,6 +72,32 @@ REZONE_REMINDER = 4 * 60 * 60  # 4 hours
 # Delete the cache on GitHub (Actions → Caches) before running, then set back to False.
 TEST_FORCE_SIGNAL = False
 
+# ── TEST MODE ─────────────────────────────────────────────────────────────────
+# Makes Option 3 trades trigger EASILY with a tiny fixed size — purely to test the
+# trade → monitor → Telegram pipeline end to end. When True it:
+#   • lowers the STRONG BUY bar from score ≥ 5 to score ≥ 2
+#   • skips the 30-min reversal confirmation gate
+#   • skips the Claude AI advisor and uses a fixed size + fixed TP/SL/trail
+#   • only ever keeps ONE test trade alive at a time (waits for it to close)
+#
+# ►►►  TO RESTORE NORMAL (PRODUCTION) BEHAVIOUR: set TEST_MODE = False  ◄◄◄
+#      That one line reverts everything — all production values are preserved below.
+TEST_MODE = True
+
+STRONG_BUY_SCORE  =  2.0 if TEST_MODE else  5.0   # score needed to label STRONG BUY
+STRONG_SELL_SCORE = -2.0 if TEST_MODE else -5.0   # score needed to label STRONG SELL
+MIN_TRADE_USDT    = 10.0                           # smallest trade the bot will place (test & prod)
+TEST_TRADE_USDT   = 10.0                            # fixed trade size used in TEST_MODE
+TEST_TP_PCT       =  3.0                           # fixed take-profit % in TEST_MODE
+TEST_SL_PCT       =  5.0                           # fixed stop-loss %  in TEST_MODE
+TEST_TRAIL_PCT    =  2.0                           # fixed trailing %   in TEST_MODE
+
+if TEST_MODE:
+    # Shorten the anti-spam suppression so test trades re-trigger promptly
+    # (production keeps the 4h reminder / 2min flip cooldown defined above).
+    REZONE_REMINDER = 10 * 60   # 10 minutes instead of 4 hours
+    FLIP_COOLDOWN   = 30        # 30 seconds instead of 2 minutes
+
 
 # ── Zone helpers ──────────────────────────────────────────────────────────────
 def direction_zone(label):
@@ -227,9 +253,9 @@ def generate_signal(rsi, macd, bb, vol_ratio=None, rsi_4h=None):
         elif score < 0 and rsi_4h <= 30:
             score += 0.5; reasons.append(f'4H RSI {rsi_4h:.0f} — caution: oversold on 4H')
 
-    label = ('STRONG BUY'  if score >= 5  else
+    label = ('STRONG BUY'  if score >= STRONG_BUY_SCORE  else
              'BUY'         if score >= 2  else
-             'STRONG SELL' if score <= -5 else
+             'STRONG SELL' if score <= STRONG_SELL_SCORE else
              'SELL'        if score <= -2 else 'HOLD')
     return {'label': label, 'score': score, 'reasons': reasons}
 
@@ -1006,7 +1032,7 @@ def monitor_option3_trades():
 
 
 # ── Single scan ───────────────────────────────────────────────────────────────
-MAX_TRADES_PER_SCAN = 2  # hard cap: never place more than this many trades in one scan
+MAX_TRADES_PER_SCAN = 1 if TEST_MODE else 2  # hard cap: never place more than this many trades in one scan
 
 
 def run_scan(cache, warm_up=False):
@@ -1027,7 +1053,7 @@ def run_scan(cache, warm_up=False):
     active_symbols = {t['symbol'] for t in active_trades}
 
     usdt_balance = 0.0
-    if OKX_API_KEY and CLAUDE_API_KEY and not warm_up:
+    if OKX_API_KEY and (CLAUDE_API_KEY or TEST_MODE) and not warm_up:
         usdt_balance = _fetch_usdt_balance()
         if usdt_balance > 0:
             print(f'  [AutoTrade] Available USDT: ${usdt_balance:.2f}')
@@ -1093,7 +1119,7 @@ def run_scan(cache, warm_up=False):
                 time.sleep(0.3)
                 continue
 
-            if not reversal_confirmed(r_opens, r_closes, r_volumes, zone):
+            if not TEST_MODE and not reversal_confirmed(r_opens, r_closes, r_volumes, zone):
                 print(f'  {symbol}: STRONG BUY — no 30min reversal confirmation yet')
                 time.sleep(0.3)
                 continue
@@ -1138,6 +1164,15 @@ def run_scan(cache, warm_up=False):
             print(f'  {symbol}: ERROR — {e}')
 
     # ── Pass 2: rank candidates, place top MAX_TRADES_PER_SCAN auto-trades ───
+    # TEST_MODE safety: keep only ONE test trade alive at a time. If a trade is
+    # already running, don't open another — just refresh the cache (no Telegram).
+    if TEST_MODE and active_symbols and candidates:
+        print(f'  [TEST MODE] {len(active_symbols)} active trade(s) — '
+              f'holding off on new test trades until they close')
+        for cand in candidates:
+            pending_alerts.append((cand['symbol'], cand['sig'], cand['ticker'], None, cand['cache_update']))
+        candidates = []
+
     if candidates:
         candidates.sort(key=lambda x: x['rank_score'], reverse=True)
 
@@ -1159,7 +1194,23 @@ def run_scan(cache, warm_up=False):
                 print(f'  [AutoTrade] Balance refreshed after trade #{rank_i}: ${usdt_balance:.2f} USDT')
 
             trade_result = None
-            if OKX_API_KEY and CLAUDE_API_KEY and usdt_balance >= 10:
+            if TEST_MODE and OKX_API_KEY and usdt_balance >= MIN_TRADE_USDT:
+                # Test mode: bypass the AI advisor, place a fixed tiny trade so the
+                # full Option 3 pipeline (buy → OCO → trailing → monitor → Telegram) runs.
+                params = {
+                    'amount_usdt':    min(TEST_TRADE_USDT, usdt_balance),
+                    'partial_tp_pct': TEST_TP_PCT,
+                    'sl_pct':         TEST_SL_PCT,
+                    'trailing_pct':   TEST_TRAIL_PCT,
+                }
+                print(f'  {symbol}: [TEST MODE] placing fixed ${params["amount_usdt"]:.2f} trade (AI bypassed)...')
+                try:
+                    trade_result = place_option3_trade(symbol, params, cand['ticker'])
+                    print(f'  {symbol}: [TEST MODE] Option 3 trade placed ✓')
+                except Exception as e:
+                    print(f'  {symbol}: trade placement failed — {e}')
+                    trade_result = 'error'
+            elif not TEST_MODE and OKX_API_KEY and CLAUDE_API_KEY and usdt_balance >= MIN_TRADE_USDT:
                 print(f'  {symbol}: asking Claude for trade params '
                       f'(rank #{rank_i + 1}/{len(top_candidates)}, score={cand["rank_score"]:.2f})...')
                 params = ai_trade_params(
