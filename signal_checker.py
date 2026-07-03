@@ -12,7 +12,13 @@ Alert rules:
 Auto-trade (Claude Haiku):
 - When STRONG BUY + reversal confirmed, Claude Haiku decides whether to trade and sets
   parameters (USDT amount, TP%, SL%, trailing%) based on coin volatility + signal strength.
-- If approved: places market buy + OCO (TP/SL on 50%) + trailing stop (50%) on OKX.
+- Claude also sees recent live trade results (from Supabase) so it can skip/downsize
+  setups that have been losing.
+- If approved: places market buy + OCO (TP/SL on 50%) + conditional SL (other 50%) on
+  OKX, so the FULL position is stop-loss-protected server-side 24/7. When the TP fires,
+  the monitor swaps the 2nd-half SL for an immediately-active trailing stop.
+- Safety rails (production only): BTC regime filter (no dip-buying while BTC is in a
+  4H downtrend), max concurrent trades cap, and a daily stop-loss circuit breaker.
 - Telegram notification includes "Trade Already Placed on OKX ✅" with full parameters.
 - Requires CLAUDE_API_KEY GitHub secret. Auto-trade silently skips if key is missing.
 """
@@ -25,7 +31,7 @@ import math
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import requests
 
@@ -75,7 +81,7 @@ TEST_FORCE_SIGNAL = False
 # ── TEST MODE ─────────────────────────────────────────────────────────────────
 # Makes Option 3 trades trigger EASILY with a tiny fixed size — purely to test the
 # trade → monitor → Telegram pipeline end to end. When True it:
-#   • lowers the STRONG BUY bar from score ≥ 5 to score ≥ 2
+#   • lowers the STRONG BUY bar from score ≥ 5 to score ≥ 1
 #   • skips the 30-min reversal confirmation gate
 #   • skips the Claude AI advisor and uses a fixed size + fixed TP/SL/trail
 #   • only ever keeps ONE test trade alive at a time (waits for it to close)
@@ -84,13 +90,19 @@ TEST_FORCE_SIGNAL = False
 #      That one line reverts everything — all production values are preserved below.
 TEST_MODE = True
 
-STRONG_BUY_SCORE  =  2.0 if TEST_MODE else  5.0   # score needed to label STRONG BUY
-STRONG_SELL_SCORE = -2.0 if TEST_MODE else -5.0   # score needed to label STRONG SELL
-MIN_TRADE_USDT    = 10.0                           # smallest trade the bot will place (test & prod)
-TEST_TRADE_USDT   = 10.0                            # fixed trade size used in TEST_MODE
-TEST_TP_PCT       =  3.0                           # fixed take-profit % in TEST_MODE
-TEST_SL_PCT       =  5.0                           # fixed stop-loss %  in TEST_MODE
-TEST_TRAIL_PCT    =  2.0                           # fixed trailing %   in TEST_MODE
+# Test bar of 1.0 fires on very common conditions (e.g. bullish MACD trend +0.5
+# plus price near the lower Bollinger Band +1) so test trades start quickly.
+STRONG_BUY_SCORE  =  1.0 if TEST_MODE else  5.0   # score needed to label STRONG BUY
+STRONG_SELL_SCORE = -1.0 if TEST_MODE else -5.0   # score needed to label STRONG SELL
+MIN_TRADE_USDT    = 10.0                           # balance gate: no trading below this USDT balance (test & prod)
+# Tight, cheap test parameters: trades resolve within minutes-to-hours instead of
+# hours-to-days, and a worst-case (SL) test costs ≈ $0.10 + ~$0.01 fees.
+# Each half-position sell is ≈ $2.50 — still above OKX minimum order sizes for
+# every coin in SYMBOLS (largest minimum is BTC: 0.00001 BTC per order).
+TEST_TRADE_USDT   =  5.0                           # fixed trade size used in TEST_MODE
+TEST_TP_PCT       =  1.5                           # fixed take-profit % in TEST_MODE
+TEST_SL_PCT       =  2.0                           # fixed stop-loss %  in TEST_MODE
+TEST_TRAIL_PCT    =  1.0                           # fixed trailing %   in TEST_MODE
 
 if TEST_MODE:
     # Shorten the anti-spam suppression so test trades re-trigger promptly
@@ -260,9 +272,42 @@ def generate_signal(rsi, macd, bb, vol_ratio=None, rsi_4h=None):
     return {'label': label, 'score': score, 'reasons': reasons}
 
 
+def btc_regime_ok():
+    """
+    BTC regime filter: the signal engine buys oversold dips, which bleeds money when
+    the whole market is trending down (alts are ~80% correlated with BTC). Block new
+    buys only when BTC's higher timeframe is clearly bearish:
+        price below the 4H EMA-50  AND  4H RSI < 45.
+    Fails OPEN (allows trading) if BTC data can't be fetched — logged loudly.
+    Returns (ok, reason_string).
+    """
+    try:
+        c = fetch_candles('BTC-USDT', bar='4H', limit=100)
+        if not c or len(c['closes']) < 60:
+            return True, 'BTC 4H data unavailable — regime check skipped'
+        closes = c['closes']
+        price  = closes[-1]
+        ema50  = ema_array(closes, 50)[-1]
+        rsi4h  = calc_rsi(closes)
+        if price < ema50 and rsi4h is not None and rsi4h < 45:
+            return False, (f'BTC ${price:,.0f} < 4H EMA50 ${ema50:,.0f} and '
+                           f'4H RSI {rsi4h:.0f} — bearish regime, dip-buys blocked')
+        rsi_s = f'{rsi4h:.0f}' if rsi4h is not None else 'N/A'
+        return True, f'BTC ${price:,.0f} vs 4H EMA50 ${ema50:,.0f}, RSI {rsi_s} — OK to trade'
+    except Exception as e:
+        return True, f'regime check error ({e}) — allowing trades'
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def fmt_price(p):
     return f'${p:,.2f}' if p >= 10000 else f'${p:.4f}' if p >= 1 else f'${p:.6f}'
+
+
+def fmt_usdt(v):
+    """Signed USDT amount, e.g. +$1.23 / −$0.0450 (4 decimals for tiny values)."""
+    sign = '+' if v >= 0 else '−'
+    a = abs(v)
+    return f'{sign}${a:.2f}' if a >= 0.10 else f'{sign}${a:.4f}'
 
 
 def _exit_pnl(entry_px, fill_px, sz):
@@ -308,8 +353,7 @@ def format_alert(symbol, sig, ticker, trade_result=None):
     msg = (
         f"{emoji} <b>{sig['label']}: {coin}</b>  [{score:+.1f}]\n"
         f"💰 {fmt_price(ticker['price'])} ({ticker['change_pct']:+.2f}% 24h)\n"
-        f"📊 {reasons}\n"
-        f"⏰ {time.strftime('%H:%M UTC')}"
+        f"📊 {reasons}"
     )
     if isinstance(trade_result, dict):
         msg += (
@@ -442,6 +486,9 @@ def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data
 
     vol_s = f'{vol_ratio:.1f}× average' if vol_ratio is not None else 'N/A'
 
+    history   = _trade_history_context(symbol)
+    history_s = f'\n\nRECENT LIVE RESULTS (this bot\'s actual closed trades):\n{history}' if history else ''
+
     system = f"""You are an expert crypto trading advisor for OKX spot markets (no leverage, no futures).
 A STRONG BUY signal has been confirmed with reversal on 30-minute candle. Decide if this trade is worth placing and output the optimal Option 3 parameters.
 
@@ -469,6 +516,11 @@ DO NOT TRADE ([SKIP]) if:
 - Fewer than 2 indicator confirmations in the reasons list
 - Available USDT < $10
 
+RECENT LIVE RESULTS (when provided) are this bot's actual trade outcomes — weigh them:
+- This coin's last trades repeatedly hit stop-loss → require a stronger setup or SKIP
+- Overall results negative → size toward the LOWER end of the capital range
+- Overall results positive and this coin has been winning → normal sizing rules apply
+
 Respond with EXACTLY ONE line — nothing else:
 Trade:  [TRADE:{{"side":"buy","symbol":"{symbol}","amountUsdt":0,"partialTpPct":0,"trailingCallbackPct":0,"slPct":0}}]
 Skip:   [SKIP: one-line reason]"""
@@ -484,7 +536,7 @@ RSI 4H:  {rsi_4h_s}
 MACD:    {macd_s}
 BB:      {bb_s}
 Volume:  {vol_s}
-USDT available: ${usdt_balance:.2f}
+USDT available: ${usdt_balance:.2f}{history_s}
 
 Place this trade?"""
 
@@ -565,6 +617,25 @@ def _save_option3_trade(trade_data):
         if r.status_code in (200, 201, 204):
             print(f'  [Supabase] Trade saved ✓ (id={trade_data.get("id")})')
             return True
+        # If the sl2_id column doesn't exist yet (migration not run), retry without it
+        # so the trade is at least tracked in legacy mode.
+        if 'sl2_id' in trade_data:
+            slim = {k: v for k, v in trade_data.items() if k != 'sl2_id'}
+            r2 = requests.post(
+                f'{SUPABASE_URL}/rest/v1/option3_trades',
+                headers={
+                    'apikey':        SUPABASE_KEY,
+                    'Authorization': f'Bearer {SUPABASE_KEY}',
+                    'Content-Type':  'application/json',
+                    'Prefer':        'resolution=merge-duplicates,return=minimal',
+                },
+                json=slim,
+                timeout=10,
+            )
+            if r2.status_code in (200, 201, 204):
+                print(f'  [Supabase] Trade saved WITHOUT sl2_id — run the SQL migration '
+                      f'in docs/ARCHITECTURE.md to enable full 2nd-half tracking!')
+                return True
         # Loud failure: exact status + body + which keys we sent, so the log pinpoints the cause
         print(f'  [Supabase] Save FAILED: HTTP {r.status_code} — {r.text[:300]}')
         print(f'  [Supabase] Payload keys sent: {list(trade_data.keys())}')
@@ -579,7 +650,9 @@ def place_option3_trade(symbol, params, ticker):
     Execute a full Option 3 trade on OKX:
       1. Market buy (full amount)
       2. OCO conditional — TP + SL on first 50% (single order avoids balance reservation issue)
-      3. Trailing stop — on remaining 50%, activates when TP price is reached
+      3. Conditional SL on remaining 50% at the same trigger price — the FULL position
+         is stop-loss-protected server-side 24/7. The monitor swaps this for an
+         immediately-active trailing stop once the partial TP fills.
       4. Save to Supabase for monitoring
 
     Raises on failure so the caller can send the appropriate Telegram message.
@@ -628,16 +701,19 @@ def place_option3_trade(symbol, params, ticker):
     oco_id = oco_resp.get('data', [{}])[0].get('algoId', '')
     print(f'  [Trade] {symbol}: OCO TP +{tp_pct}% / SL −{sl_pct}% (ID: {oco_id}) ✓')
 
-    # 3. Trailing stop on remaining 50%, activates when TP price is reached
-    trail_resp = _okx_post('/api/v5/trade/order-algo', {
+    # 3. Conditional SL on remaining 50% at the same trigger price — full position
+    #    protected on OKX even if the monitor is down. Swapped for a trailing stop
+    #    by the monitor when the TP fires.
+    sl2_resp = _okx_post('/api/v5/trade/order-algo', {
         **base_algo,
-        'ordType':       'move_order_stop',
-        'sz':            f'{half_sz:.8f}',
-        'activePx':      f'{tp_price:.8f}',
-        'callbackRatio': f'{trail_pct / 100:.4f}',
+        'ordType':         'conditional',
+        'sz':              f'{half_sz:.8f}',
+        'slTriggerPx':     f'{sl_price:.8f}',
+        'slOrdPx':         '-1',
+        'slTriggerPxType': 'last',
     })
-    trail_id = trail_resp.get('data', [{}])[0].get('algoId', '')
-    print(f'  [Trade] {symbol}: trailing stop {trail_pct}% callback (ID: {trail_id}) ✓')
+    sl2_id = sl2_resp.get('data', [{}])[0].get('algoId', '')
+    print(f'  [Trade] {symbol}: 2nd-half SL −{sl_pct}% (ID: {sl2_id}) ✓')
 
     # 4. Save to Supabase for monitor_option3_trades() to track
     saved = _save_option3_trade({
@@ -646,7 +722,8 @@ def place_option3_trade(symbol, params, ticker):
         'entry_price':    price,
         'partial_tp_id':  oco_id,
         'sl_id':          oco_id,   # same ID — monitor uses fill px vs entry to tell TP vs SL
-        'trailing_id':    trail_id,
+        'sl2_id':         sl2_id,   # 2nd-half SL — swapped for a trailing stop after TP
+        'trailing_id':    '',       # set by the monitor when the TP fires
         'amount_usdt':    amt_usdt,
         'sz_half':        half_sz,
         'partial_tp_pct': tp_pct,
@@ -697,14 +774,37 @@ def _is_algo_triggered(algo_id, ord_type='conditional'):
     return False
 
 
-def _get_fill_price(algo_id, ord_type='conditional'):
-    """Return the actual fill price of a triggered OKX algo order."""
+def _get_order_fill_price(symbol, ord_id):
+    """Return the average fill price of a regular OKX order, or None."""
+    try:
+        d = _okx_get(f'/api/v5/trade/order?instId={symbol}&ordId={ord_id}')
+        for order in d.get('data', []):
+            px = float(order.get('avgPx', '0') or '0')
+            if px > 0:
+                return px
+    except Exception as e:
+        print(f'  [Option3] Order fill lookup error ({ord_id}): {e}')
+    return None
+
+
+def _get_fill_price(algo_id, ord_type='conditional', symbol=None):
+    """
+    Return the actual fill price of a triggered OKX algo order.
+    OKX often leaves avgPx empty on algo-history rows, so fall back to actualPx,
+    then to the avgPx of the child market order the algo triggered (ordId).
+    """
     try:
         d = _okx_get(f'/api/v5/trade/orders-algo-history?ordType={ord_type}&algoId={algo_id}')
         for order in d.get('data', []):
             if order.get('algoId') == algo_id and order.get('state') == 'effective':
-                px = float(order.get('avgPx', '0') or '0')
-                return px if px > 0 else None
+                for key in ('avgPx', 'actualPx'):
+                    px = float(order.get(key, '0') or '0')
+                    if px > 0:
+                        return px
+                ord_id = order.get('ordId', '')
+                inst   = symbol or order.get('instId', '')
+                if ord_id and inst:
+                    return _get_order_fill_price(inst, ord_id)
     except Exception:
         return None
     return None
@@ -762,8 +862,8 @@ def _update_sl_to_breakeven(trade):
             'tdMode':          'cash',
             'side':            'sell',
             'ordType':         'conditional',
-            'sz':              sz_half,
-            'slTriggerPx':     str(entry_px),
+            'sz':              f'{float(sz_half):.8f}',
+            'slTriggerPx':     f'{float(entry_px):.8f}',
             'slOrdPx':         '-1',
             'slTriggerPxType': 'last',
         })
@@ -775,8 +875,9 @@ def _update_sl_to_breakeven(trade):
         return None
 
 
-def _mark_phase2(trade_id, new_sl_id):
-    """Update Supabase: set phase=2 and store the new break-even SL order ID."""
+def _mark_phase2(trade_id, updates):
+    """Update Supabase: set phase=2 plus the phase-2 protection order IDs
+    (e.g. {'trailing_id': ..., 'sl_id': ...})."""
     try:
         r = requests.patch(
             f'{SUPABASE_URL}/rest/v1/option3_trades?id=eq.{trade_id}',
@@ -785,7 +886,7 @@ def _mark_phase2(trade_id, new_sl_id):
                 'Authorization': f'Bearer {SUPABASE_KEY}',
                 'Content-Type':  'application/json',
             },
-            json={'phase': 2, 'sl_id': new_sl_id or ''},
+            json={'phase': 2, **updates},
             timeout=10,
         )
         if r.status_code in (200, 204):
@@ -805,25 +906,263 @@ def _cancel_algo(symbol, algo_id):
         print(f'  [Option3] {symbol}: cancel algo {algo_id} warning: {e}')
 
 
-def _mark_trade_closed(trade_id):
-    """Mark a trade as phase=3 (fully closed) in Supabase."""
-    try:
-        r = requests.patch(
+def _mark_trade_closed(trade_id, exit_reason=None, exit_price=None, net_pnl=None):
+    """
+    Mark a trade as phase=3 (fully closed) in Supabase, recording the outcome
+    (exit_reason / exit_price / net_pnl_usdt / closed_at) when known. The outcome
+    columns feed the daily circuit breaker and the AI's trade-history context.
+    Falls back to a plain phase=3 update if the columns don't exist yet.
+    """
+    def _patch(payload):
+        return requests.patch(
             f'{SUPABASE_URL}/rest/v1/option3_trades?id=eq.{trade_id}',
             headers={
                 'apikey':        SUPABASE_KEY,
                 'Authorization': f'Bearer {SUPABASE_KEY}',
                 'Content-Type':  'application/json',
             },
-            json={'phase': 3},
+            json=payload,
             timeout=10,
         )
+
+    payload = {'phase': 3}
+    if exit_reason:
+        payload['exit_reason'] = exit_reason
+        payload['closed_at']   = datetime.now(timezone.utc).isoformat()
+        if exit_price is not None:
+            payload['exit_price'] = exit_price
+        if net_pnl is not None:
+            payload['net_pnl_usdt'] = round(net_pnl, 4)
+    try:
+        r = _patch(payload)
         if r.status_code in (200, 204):
-            print(f'  [Option3] Trade {trade_id}: marked closed ✓')
-        else:
-            print(f'  [Option3] Close update failed: {r.status_code}')
+            print(f'  [Option3] Trade {trade_id}: marked closed ✓ ({exit_reason or "no outcome data"})')
+            return
+        if exit_reason:
+            print(f'  [Option3] Close-with-outcome failed ({r.status_code}) — outcome columns '
+                  f'missing? Run the SQL migration in docs/ARCHITECTURE.md. Retrying plain close...')
+            r2 = _patch({'phase': 3})
+            if r2.status_code in (200, 204):
+                print(f'  [Option3] Trade {trade_id}: marked closed ✓ (outcome NOT recorded)')
+                return
+        print(f'  [Option3] Close update failed: {r.status_code}')
     except Exception as e:
         print(f'  [Option3] Close update error: {e}')
+
+
+def _swap_sl2_to_trailing(trade):
+    """
+    After the partial TP fills (new-format trades): cancel the 2nd-half stop-loss and
+    replace it with an immediately-active trailing stop. As long as trail% < TP%, the
+    trailing floor sits above entry, so the 2nd half stays break-even-or-better.
+    Returns ('trailing', algo_id) on success,
+            ('be_sl',    algo_id) if the trailing failed but a break-even SL was placed,
+            (None, '')            if the 2nd half could not be protected at all.
+    """
+    symbol    = trade['symbol']
+    sz_half   = f"{float(trade['sz_half']):.8f}"   # never scientific notation — OKX rejects it
+    trail_pct = float(trade.get('trailing_pct', 0) or 0)
+    entry_px  = float(trade.get('entry_price', 0) or 0)
+
+    _cancel_algo(symbol, trade['sl2_id'])
+
+    try:
+        resp = _okx_post('/api/v5/trade/order-algo', {
+            'instId': symbol, 'tdMode': 'cash', 'side': 'sell',
+            'ordType':       'move_order_stop',
+            'sz':            sz_half,
+            'callbackRatio': f'{trail_pct / 100:.4f}',
+        })
+        tid = resp.get('data', [{}])[0].get('algoId', '')
+        if tid:
+            print(f'  [Option3] {symbol}: trailing stop {trail_pct}% now active (ID: {tid}) ✓')
+            return 'trailing', tid
+    except Exception as e:
+        print(f'  [Option3] {symbol}: trailing stop placement failed: {e}')
+
+    # Fallback: at least pin the 2nd half to break-even
+    try:
+        resp = _okx_post('/api/v5/trade/order-algo', {
+            'instId': symbol, 'tdMode': 'cash', 'side': 'sell',
+            'ordType':         'conditional',
+            'sz':              sz_half,
+            'slTriggerPx':     f'{entry_px:.8f}',
+            'slOrdPx':         '-1',
+            'slTriggerPxType': 'last',
+        })
+        sid = resp.get('data', [{}])[0].get('algoId', '')
+        if sid:
+            print(f'  [Option3] {symbol}: fallback break-even SL placed (ID: {sid}) ✓')
+            return 'be_sl', sid
+    except Exception as e:
+        print(f'  [Option3] {symbol}: fallback break-even SL failed: {e}')
+    return None, ''
+
+
+def _count_recent_sl(hours=24):
+    """
+    Circuit-breaker input: number of stop-loss exits in the last N hours.
+    Returns 0 (fail-open, logged) if the outcome columns don't exist yet or
+    Supabase is unreachable.
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return 0
+    # 'Z' suffix instead of '+00:00' — a literal '+' in a URL query decodes as a space
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    try:
+        r = requests.get(
+            f'{SUPABASE_URL}/rest/v1/option3_trades'
+            f'?select=id&exit_reason=eq.sl&closed_at=gte.{since}',
+            headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            return len(r.json())
+        print(f'  [Safety] SL-count query failed (HTTP {r.status_code}) — outcome columns '
+              f'missing? Run the SQL migration in docs/ARCHITECTURE.md. Circuit breaker inactive.')
+    except Exception as e:
+        print(f'  [Safety] SL-count query error: {e} — circuit breaker inactive')
+    return 0
+
+
+def _trade_history_context(symbol):
+    """
+    Recent live trade outcomes formatted for the Claude Haiku prompt, so the AI can
+    skip or downsize setups that have been losing. Returns '' when no data exists
+    yet (or the outcome columns are missing) — the prompt simply omits the section.
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return ''
+    try:
+        r = requests.get(
+            f'{SUPABASE_URL}/rest/v1/option3_trades'
+            f'?phase=eq.3&exit_reason=not.is.null&order=closed_at.desc&limit=20'
+            f'&select=symbol,exit_reason,net_pnl_usdt,closed_at',
+            headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return ''
+        rows = r.json()
+        if not rows:
+            return ''
+        wins  = sum(1 for t in rows if float(t.get('net_pnl_usdt') or 0) > 0)
+        total = sum(float(t.get('net_pnl_usdt') or 0) for t in rows)
+        lines = [f'Last {len(rows)} closed trades overall: {wins} wins / '
+                 f'{len(rows) - wins} losses, net {total:+.2f} USDT']
+        coin_rows = [t for t in rows if t.get('symbol') == symbol][:5]
+        if coin_rows:
+            parts = [f"{t.get('exit_reason')} {float(t.get('net_pnl_usdt') or 0):+.2f}"
+                     for t in coin_rows]
+            lines.append(f'{symbol} most recent: ' + ' · '.join(parts))
+        else:
+            lines.append(f'{symbol}: no closed trades yet')
+        return '\n'.join(lines)
+    except Exception:
+        return ''
+
+
+def _phase1_pnl(trade):
+    """
+    Net USDT profit of the phase-1 partial TP exit, recovered from the OKX fill
+    history (nothing is stored in Supabase). None if the fill can't be found.
+    """
+    entry_px = float(trade.get('entry_price', 0) or 0)
+    sz_half  = float(trade.get('sz_half', '0') or 0)
+    tp_id    = trade.get('partial_tp_id')
+    if not tp_id or entry_px <= 0 or sz_half <= 0:
+        return None
+    tp_fill = _get_fill_price(tp_id, 'conditional', trade.get('symbol'))
+    if tp_fill and tp_fill > entry_px:
+        net, _, _, _ = _exit_pnl(entry_px, tp_fill, sz_half)
+        return net
+    return None
+
+
+def _close_full_position_at_sl(trade, sl_fill_px):
+    """
+    After an SL trigger, close out the whole trade and report the exact USDT loss
+    (both halves, incl. fees).
+      New-format trades: the 2nd half has its own SL at the same trigger price, so
+      OKX normally sells BOTH halves server-side — we just collect the fills.
+      Legacy trades: cancel the dormant trailing stop and market-sell the 2nd half.
+    sl_fill_px may be None — falls back to the SL trigger price as an estimate.
+    """
+    symbol   = trade['symbol']
+    coin     = symbol.replace('-USDT', '')
+    entry_px = float(trade.get('entry_price', 0) or 0)
+    sz_half  = float(trade.get('sz_half', '0') or 0)
+    sl_pct   = float(trade.get('sl_pct', 0) or 0)
+    sl2_id   = trade.get('sl2_id') or ''
+
+    trailing_id = trade.get('trailing_id')
+    if trailing_id:
+        _cancel_algo(symbol, trailing_id)   # legacy dormant trailing stop
+
+    second_half_sold = False
+    half2_px         = None
+
+    if sl2_id:
+        # New format: the 2nd-half SL shares the trigger price and should have fired
+        # on OKX at (almost) the same moment. Give it a short grace period.
+        if not _is_algo_triggered(sl2_id, 'conditional'):
+            time.sleep(2)
+        if _is_algo_triggered(sl2_id, 'conditional'):
+            second_half_sold = True
+            half2_px = _get_fill_price(sl2_id, 'conditional', symbol)
+            print(f'  [Option3] {symbol}: 2nd-half SL fired server-side ✓')
+        else:
+            _cancel_algo(symbol, sl2_id)   # cancel first so the market sell can't double-sell
+
+    if not second_half_sold:
+        half2_ord_id = ''
+        try:
+            resp = _okx_post('/api/v5/trade/order', {
+                'instId': symbol, 'tdMode': 'cash',
+                'side': 'sell', 'ordType': 'market', 'sz': f'{sz_half:.8f}',
+            })
+            half2_ord_id     = resp.get('data', [{}])[0].get('ordId', '')
+            second_half_sold = True
+            print(f'  [Option3] {symbol}: remaining 50% market-sold ✓')
+        except Exception as e:
+            print(f'  [Option3] {symbol}: could not sell remaining 50%: {e}')
+        if second_half_sold and half2_ord_id:
+            time.sleep(1.0)   # let OKX register the market-sell fill
+            half2_px = _get_order_fill_price(symbol, half2_ord_id)
+
+    estimated = False
+    if not sl_fill_px and entry_px > 0 and sl_pct > 0:
+        sl_fill_px = entry_px * (1 - sl_pct / 100)   # SL trigger price
+        estimated  = True
+    if half2_px is None:
+        half2_px = sl_fill_px
+
+    net_total = avg_exit = None
+    if sl_fill_px and entry_px > 0:
+        exit_prices = [sl_fill_px] + ([half2_px] if second_half_sold else [])
+        net_total = fee_total = 0.0
+        for px in exit_prices:
+            net, fees, _, _ = _exit_pnl(entry_px, px, sz_half)
+            net_total += net
+            fee_total += fees
+        avg_exit = sum(exit_prices) / len(exit_prices)
+        pct      = (avg_exit / entry_px - 1) * 100
+        approx   = '~' if estimated else ''
+        loss_str = f'{approx}{fmt_usdt(net_total)} USDT ({pct:+.1f}% incl. fees)'
+        detail   = (f"📉 OKX fees paid: ${fee_total:.4f} USDT\n"
+                    f"📍 Entry: {fmt_price(entry_px)} → Exit: {approx}{fmt_price(avg_exit)}")
+    else:
+        loss_str = f'−{sl_pct}% on full position'
+        detail   = f"📍 Entry: {fmt_price(entry_px)}"
+
+    _mark_trade_closed(trade['id'], 'sl', avg_exit, net_total)
+    extra = '' if second_half_sold else '\n⚠️ Could not auto-sell remaining 50% — check OKX'
+    send_telegram(
+        f"🔴 <b>Stop Loss Hit — {coin}</b>\n"
+        f"💸 Total loss: {loss_str}\n"
+        f"{detail}\n"
+        f"✅ Full position closed (both halves){extra}"
+    )
 
 
 # ── Option 3 exit monitor ─────────────────────────────────────────────────────
@@ -849,10 +1188,8 @@ def monitor_option3_trades():
         symbol   = trade['symbol']
         phase    = trade.get('phase', 1)
         entry_px = float(trade.get('entry_price', 0) or 0)
-        amt_usdt = float(trade.get('amount_usdt', 0) or 0)
         sz_half  = float(trade.get('sz_half', '0') or 0)
         ptp_pct  = float(trade.get('partial_tp_pct', 0) or 0)
-        sl_pct   = float(trade.get('sl_pct', 0) or 0)
         coin     = symbol.replace('-USDT', '')
 
         try:
@@ -862,100 +1199,100 @@ def monitor_option3_trades():
                 is_oco = (tp_id and sl_id and tp_id == sl_id)
 
                 if _is_algo_triggered(tp_id, 'conditional'):
-                    fill_px  = _get_fill_price(tp_id, 'conditional')
+                    fill_px  = _get_fill_price(tp_id, 'conditional', symbol)
                     tp_fired = (not is_oco) or (fill_px is not None and fill_px > entry_px)
 
                     if tp_fired:
                         # ── Partial TP filled ──────────────────────────────────
-                        print(f'  [Option3] {symbol}: partial TP triggered — moving SL to break-even...')
+                        print(f'  [Option3] {symbol}: partial TP triggered ✓')
+                        estimated = False
+                        if not fill_px and entry_px > 0 and ptp_pct > 0:
+                            fill_px   = entry_px * (1 + ptp_pct / 100)   # TP trigger price
+                            estimated = True
+                        tp_pnl = None
+                        approx = ''
                         if fill_px and entry_px > 0:
-                            net_pnl, total_fees, buy_fee, sell_fee = _exit_pnl(entry_px, fill_px, sz_half)
-                            profit_line = f'+${net_pnl:.4f} USDT (after fees)'
+                            tp_pnl, total_fees, buy_fee, sell_fee = _exit_pnl(entry_px, fill_px, sz_half)
+                            approx      = '~' if estimated else ''
+                            profit_line = f'{approx}{fmt_usdt(tp_pnl)} USDT (after fees)'
                             fee_line    = f'📉 OKX fees: ${total_fees:.4f} USDT (entry ${buy_fee:.4f} + exit ${sell_fee:.4f})'
                         else:
                             profit_line = f'+{ptp_pct}% on 50% of position'
                             fee_line    = None
-                        new_sl_id = _update_sl_to_breakeven(trade)
-                        _mark_phase2(trade['id'], new_sl_id)
-                        msg_parts = [
-                            f"✅ <b>Partial TP Hit — {coin}</b>",
-                            f"💰 Profit locked: {profit_line}",
-                        ]
-                        if fee_line:
-                            msg_parts.append(fee_line)
-                        msg_parts += [
-                            f"🛡️ SL moved to entry (break-even) — 2nd half is now risk-free",
-                            f"🔄 Trailing stop protecting remaining 50%",
-                            f"⏰ {time.strftime('%H:%M UTC')}",
-                        ]
-                        send_telegram('\n'.join(msg_parts))
+
+                        sl2_id = trade.get('sl2_id') or ''
+                        if sl2_id and _is_algo_triggered(sl2_id, 'conditional'):
+                            # ── Whipsaw: TP filled, then price reversed and the 2nd-half
+                            #    SL also fired before this monitor run — trade fully closed.
+                            print(f'  [Option3] {symbol}: 2nd-half SL also fired (whipsaw) — closing...')
+                            half2_px = _get_fill_price(sl2_id, 'conditional', symbol)
+                            sl_pct_v = float(trade.get('sl_pct', 0) or 0)
+                            est2 = estimated
+                            if not half2_px and entry_px > 0 and sl_pct_v > 0:
+                                half2_px, est2 = entry_px * (1 - sl_pct_v / 100), True
+                            msg = [f"🔄 <b>Fast Reversal — {coin}</b>",
+                                   f"✅ TP hit on first 50%: {profit_line}"]
+                            whole = None
+                            if half2_px and entry_px > 0 and tp_pnl is not None:
+                                pnl2, _, _, _ = _exit_pnl(entry_px, half2_px, sz_half)
+                                a2 = '~' if est2 else ''
+                                whole = tp_pnl + pnl2
+                                msg.append(f"🔴 Price reversed — 2nd half stopped out: {a2}{fmt_usdt(pnl2)} USDT")
+                                msg.append(f"📊 Whole trade net result: {a2}{fmt_usdt(whole)} USDT")
+                            else:
+                                msg.append(f"🔴 Price reversed — 2nd half stopped out")
+                            _mark_trade_closed(trade['id'], 'tp_then_sl', half2_px, whole)
+                            send_telegram('\n'.join(msg))
+                        else:
+                            # ── Normal TP: protect the 2nd half for phase 2 ────────
+                            if sl2_id:
+                                kind, oid = _swap_sl2_to_trailing(trade)
+                            else:
+                                # Legacy trade (pre-sl2 format): dormant trailing already
+                                # armed at the TP price — add a break-even SL beside it.
+                                oid  = _update_sl_to_breakeven(trade)
+                                kind = 'legacy_be' if oid else 'legacy_none'
+                            trail_v = float(trade.get('trailing_pct', 0) or 0)
+                            if kind == 'trailing':
+                                _mark_phase2(trade['id'], {'trailing_id': oid, 'sl_id': ''})
+                                guard_lines = [f"🔄 Trailing stop now active on remaining 50% — "
+                                               f"exits on first {trail_v}% pullback from the peak"]
+                            elif kind == 'be_sl':
+                                _mark_phase2(trade['id'], {'trailing_id': '', 'sl_id': oid})
+                                guard_lines = [f"⚠️ Trailing stop failed — 2nd half protected by a "
+                                               f"break-even SL instead (check OKX)"]
+                            elif kind == 'legacy_be':
+                                _mark_phase2(trade['id'], {'sl_id': oid})
+                                guard_lines = [f"🛡️ SL moved to entry (break-even) — 2nd half is now risk-free",
+                                               f"🔄 Trailing stop protecting remaining 50%"]
+                            elif kind == 'legacy_none':
+                                _mark_phase2(trade['id'], {'sl_id': ''})
+                                guard_lines = [f"⚠️ Break-even SL could not be placed — check OKX",
+                                               f"🔄 Trailing stop protecting remaining 50%"]
+                            else:
+                                # New-format trade with BOTH protections failed — don't
+                                # leave a stuck row; tell the user to manage it manually.
+                                _mark_trade_closed(trade['id'], 'error')
+                                guard_lines = [f"🚨 Could not place trailing stop OR break-even SL — "
+                                               f"2nd half is UNPROTECTED. Manage it manually on OKX!"]
+                            msg_parts = [
+                                f"✅ <b>Partial TP Hit — {coin}</b>",
+                                f"💰 Profit locked: {profit_line}",
+                            ]
+                            if fee_line:
+                                msg_parts.append(fee_line)
+                            msg_parts += guard_lines
+                            send_telegram('\n'.join(msg_parts))
                     else:
                         # ── SL side of OCO fired ───────────────────────────────
                         print(f'  [Option3] {symbol}: SL triggered (OCO) — closing full position...')
-                        trailing_id = trade.get('trailing_id')
-                        if trailing_id:
-                            _cancel_algo(symbol, trailing_id)
-                        second_half_sold = False
-                        try:
-                            _okx_post('/api/v5/trade/order', {
-                                'instId': symbol, 'tdMode': 'cash',
-                                'side': 'sell', 'ordType': 'market', 'sz': str(sz_half),
-                            })
-                            second_half_sold = True
-                            print(f'  [Option3] {symbol}: remaining 50% market-sold ✓')
-                        except Exception as e:
-                            print(f'  [Option3] {symbol}: could not sell remaining 50%: {e}')
-                        if fill_px and entry_px > 0:
-                            total_sz   = sz_half * 2  # both halves sold at approx same price
-                            _, total_fees, _, _ = _exit_pnl(entry_px, fill_px, total_sz)
-                            gross_loss = (entry_px - fill_px) * total_sz
-                            net_loss   = gross_loss + total_fees  # fees increase the loss
-                            loss_str   = f'−${net_loss:.4f} USDT (incl. ${total_fees:.4f} OKX fees)'
-                        else:
-                            loss_str   = f'−{sl_pct}% on full position'
-                        _mark_trade_closed(trade['id'])
-                        extra = '' if second_half_sold else '\n⚠️ Could not auto-sell remaining 50% — check OKX'
-                        send_telegram(
-                            f"🔴 <b>Stop Loss Hit — {coin}</b>\n"
-                            f"💸 Total loss: {loss_str}\n"
-                            f"📍 Entry: {fmt_price(entry_px)}\n"
-                            f"✅ Full position closed (both halves){extra}\n"
-                            f"⏰ {time.strftime('%H:%M UTC')}"
-                        )
+                        _close_full_position_at_sl(trade, fill_px)
 
                 # Old format: separate SL order (backwards compat)
                 elif not is_oco and sl_id and _is_algo_triggered(sl_id, 'conditional'):
-                    fill_px = _get_fill_price(sl_id, 'conditional')
+                    fill_px = _get_fill_price(sl_id, 'conditional', symbol)
                     _cancel_algo(symbol, tp_id)
-                    trailing_id = trade.get('trailing_id')
-                    if trailing_id:
-                        _cancel_algo(symbol, trailing_id)
-                    second_half_sold = False
-                    try:
-                        _okx_post('/api/v5/trade/order', {
-                            'instId': symbol, 'tdMode': 'cash',
-                            'side': 'sell', 'ordType': 'market', 'sz': str(sz_half),
-                        })
-                        second_half_sold = True
-                    except Exception as e:
-                        print(f'  [Option3] {symbol}: could not sell remaining 50%: {e}')
-                    if fill_px and entry_px > 0:
-                        total_sz   = sz_half * 2
-                        _, total_fees, _, _ = _exit_pnl(entry_px, fill_px, total_sz)
-                        gross_loss = (entry_px - fill_px) * total_sz
-                        net_loss   = gross_loss + total_fees
-                        loss_str   = f'−${net_loss:.4f} USDT (incl. ${total_fees:.4f} OKX fees)'
-                    else:
-                        loss_str   = f'−{sl_pct}% on full position'
-                    _mark_trade_closed(trade['id'])
-                    extra = '' if second_half_sold else '\n⚠️ Could not auto-sell remaining 50% — check OKX'
-                    send_telegram(
-                        f"🔴 <b>Stop Loss Hit — {coin}</b>\n"
-                        f"💸 Total loss: {loss_str}\n"
-                        f"📍 Entry: {fmt_price(entry_px)}\n"
-                        f"✅ Full position closed (both halves){extra}\n"
-                        f"⏰ {time.strftime('%H:%M UTC')}"
-                    )
+                    _close_full_position_at_sl(trade, fill_px)
 
                 elif _is_algo_cancelled(tp_id, 'conditional'):
                     # ── OCO order manually cancelled on OKX ───────────────────────
@@ -963,13 +1300,15 @@ def monitor_option3_trades():
                     trailing_id = trade.get('trailing_id')
                     if trailing_id:
                         _cancel_algo(symbol, trailing_id)
-                    _mark_trade_closed(trade['id'])
+                    sl2_id = trade.get('sl2_id') or ''
+                    if sl2_id:
+                        _cancel_algo(symbol, sl2_id)
+                    _mark_trade_closed(trade['id'], 'cancelled')
                     send_telegram(
                         f"⚠️ <b>Orders Cancelled — {coin}</b>\n"
                         f"📋 OCO order was manually cancelled on OKX\n"
-                        f"🔄 Trailing stop also cancelled\n"
-                        f"📌 Trade marked closed — new {coin} signals will trigger fresh trades\n"
-                        f"⏰ {time.strftime('%H:%M UTC')}"
+                        f"🔄 Remaining protective orders also cancelled\n"
+                        f"📌 Trade marked closed — new {coin} signals will trigger fresh trades"
                     )
                 else:
                     print(f'  [Option3] {symbol}: phase 1 — waiting for TP or SL')
@@ -979,50 +1318,81 @@ def monitor_option3_trades():
                 be_sl_id    = trade.get('sl_id')  # updated to break-even SL in _mark_phase2
 
                 if trailing_id and _is_algo_triggered(trailing_id, 'move_order_stop'):
-                    fill_px = _get_fill_price(trailing_id, 'move_order_stop')
-                    fee_line = None
+                    fill_px   = _get_fill_price(trailing_id, 'move_order_stop', symbol)
+                    estimated = False
+                    if not fill_px:
+                        t = fetch_ticker(symbol)   # last resort: current market price
+                        if t:
+                            fill_px, estimated = t['price'], True
+                    fee_line    = total_line = None
+                    phase1_line = "✅ Phase 1 profit already secured"
+                    whole       = None
                     if fill_px and entry_px > 0:
                         net_pnl, total_fees, buy_fee, sell_fee = _exit_pnl(entry_px, fill_px, sz_half)
-                        gain_pct = (fill_px / entry_px - 1) * 100
-                        if net_pnl > 0:
-                            profit_str = f'+${net_pnl:.4f} USDT (+{gain_pct:.1f}%) after fees'
-                            fee_line   = f'📉 OKX fees: ${total_fees:.4f} USDT (entry ${buy_fee:.4f} + exit ${sell_fee:.4f})'
-                        else:
-                            profit_str = f'near break-even (fees offset the gain)'
+                        gain_pct   = (fill_px / entry_px - 1) * 100
+                        approx     = '~' if estimated else ''
+                        profit_str = f'{approx}{fmt_usdt(net_pnl)} USDT ({gain_pct:+.1f}%) after fees'
+                        fee_line   = f'📉 OKX fees: ${total_fees:.4f} USDT (entry ${buy_fee:.4f} + exit ${sell_fee:.4f})'
+                        p1_pnl     = _phase1_pnl(trade)
+                        whole      = net_pnl + p1_pnl if p1_pnl is not None else net_pnl
+                        if p1_pnl is not None:
+                            phase1_line = f"✅ Phase 1 profit already secured: {fmt_usdt(p1_pnl)} USDT"
+                            total_line  = f"📊 Whole trade net result: {approx}{fmt_usdt(whole)} USDT"
                     else:
                         profit_str = 'exited via trailing stop'
-                    _mark_trade_closed(trade['id'])
+                    if be_sl_id:
+                        _cancel_algo(symbol, be_sl_id)   # remove the now-orphaned break-even SL
+                    _mark_trade_closed(trade['id'], 'tp_trail', fill_px, whole)
                     msg_parts = [
                         f"🏁 <b>Trade Closed — {coin}</b>",
                         f"🔄 Trailing stop exit: {profit_str}",
                     ]
                     if fee_line:
                         msg_parts.append(fee_line)
-                    msg_parts += [
-                        f"✅ Phase 1 profit already secured",
-                        f"⏰ {time.strftime('%H:%M UTC')}",
-                    ]
+                    msg_parts.append(phase1_line)
+                    if total_line:
+                        msg_parts.append(total_line)
                     send_telegram('\n'.join(msg_parts))
 
                 elif be_sl_id and _is_algo_triggered(be_sl_id, 'conditional'):
-                    _mark_trade_closed(trade['id'])
-                    send_telegram(
-                        f"⚪ <b>Break-Even Exit — {coin}</b>\n"
-                        f"🛡️ Break-even SL hit — 2nd half exited at entry price\n"
-                        f"✅ Phase 1 profit is secured — net result is positive\n"
-                        f"⏰ {time.strftime('%H:%M UTC')}"
-                    )
+                    fill_px   = _get_fill_price(be_sl_id, 'conditional', symbol)
+                    estimated = False
+                    if not fill_px and entry_px > 0:
+                        fill_px, estimated = entry_px, True   # BE SL triggers at entry price
+                    half_line   = "🛡️ Break-even SL hit — 2nd half exited at entry price"
+                    phase1_line = "✅ Phase 1 profit is secured — net result is positive"
+                    total_line  = None
+                    whole       = None
+                    if fill_px and entry_px > 0:
+                        net_pnl, _, _, _ = _exit_pnl(entry_px, fill_px, sz_half)
+                        approx    = '~' if estimated else ''
+                        half_line = f"🛡️ Break-even SL hit — 2nd half exited at entry: {approx}{fmt_usdt(net_pnl)} USDT (after fees)"
+                        p1_pnl    = _phase1_pnl(trade)
+                        whole     = net_pnl + p1_pnl if p1_pnl is not None else net_pnl
+                        if p1_pnl is not None:
+                            phase1_line = f"✅ Phase 1 profit secured: {fmt_usdt(p1_pnl)} USDT"
+                            total_line  = f"📊 Whole trade net result: {approx}{fmt_usdt(whole)} USDT"
+                    if trailing_id:
+                        _cancel_algo(symbol, trailing_id)   # trailing never activated — remove it
+                    _mark_trade_closed(trade['id'], 'break_even', fill_px, whole)
+                    msg_parts = [
+                        f"⚪ <b>Break-Even Exit — {coin}</b>",
+                        half_line,
+                        phase1_line,
+                    ]
+                    if total_line:
+                        msg_parts.append(total_line)
+                    send_telegram('\n'.join(msg_parts))
 
                 elif (trailing_id and _is_algo_cancelled(trailing_id, 'move_order_stop')) or \
                      (be_sl_id and _is_algo_cancelled(be_sl_id, 'conditional')):
                     # ── Phase 2 orders manually cancelled on OKX ──────────────────
                     print(f'  [Option3] {symbol}: phase 2 orders cancelled — marking trade closed...')
-                    _mark_trade_closed(trade['id'])
+                    _mark_trade_closed(trade['id'], 'cancelled')
                     send_telegram(
                         f"⚠️ <b>Orders Cancelled — {coin}</b>\n"
                         f"📋 Trailing stop / break-even SL was manually cancelled on OKX\n"
-                        f"📌 Trade marked closed — new {coin} signals will trigger fresh trades\n"
-                        f"⏰ {time.strftime('%H:%M UTC')}"
+                        f"📌 Trade marked closed — new {coin} signals will trigger fresh trades"
                     )
                 else:
                     print(f'  [Option3] {symbol}: phase 2 — waiting for trailing stop or break-even SL')
@@ -1033,6 +1403,10 @@ def monitor_option3_trades():
 
 # ── Single scan ───────────────────────────────────────────────────────────────
 MAX_TRADES_PER_SCAN = 1 if TEST_MODE else 2  # hard cap: never place more than this many trades in one scan
+
+# Safety rails — enforced in production, logged-only in TEST_MODE so tests keep flowing.
+MAX_OPEN_TRADES = 3   # never hold more than this many Option 3 trades at once
+MAX_SL_PER_DAY  = 3   # circuit breaker: pause new trades after this many stop-losses in 24h
 
 
 def run_scan(cache, warm_up=False):
@@ -1172,6 +1546,40 @@ def run_scan(cache, warm_up=False):
         for cand in candidates:
             pending_alerts.append((cand['symbol'], cand['sig'], cand['ticker'], None, cand['cache_update']))
         candidates = []
+
+    # ── Safety rails: BTC regime, open-trade cap, daily SL circuit breaker ────
+    # Enforced in production; in TEST_MODE they are evaluated and logged only,
+    # so the test pipeline keeps producing trades regardless of market regime.
+    if candidates:
+        regime_ok, regime_msg = btc_regime_ok()
+        print(f'  [Regime] {regime_msg}')
+
+        block_reason = None
+        if not regime_ok:
+            block_reason = 'bearish BTC regime'
+        elif len(active_trades) >= MAX_OPEN_TRADES:
+            block_reason = f'{len(active_trades)} trades already open (cap: {MAX_OPEN_TRADES})'
+        else:
+            recent_sl = _count_recent_sl(24)
+            if recent_sl >= MAX_SL_PER_DAY:
+                block_reason = f'{recent_sl} stop-losses in the last 24h (circuit breaker)'
+                cb = cache.get('_circuit_breaker', {})
+                if not TEST_MODE and now - cb.get('alerted_at', 0) > 24 * 3600:
+                    send_telegram(
+                        f"⏸️ <b>Auto-Trading Paused</b>\n"
+                        f"🔴 {recent_sl} stop-losses hit in the last 24h — circuit breaker active\n"
+                        f"▶️ New trades resume automatically once the 24h window clears"
+                    )
+                    cache['_circuit_breaker'] = {'alerted_at': now}
+
+        if block_reason:
+            if TEST_MODE:
+                print(f'  [Safety] {block_reason} — TEST MODE: logged only, trading anyway')
+            else:
+                print(f'  [Safety] No new trades this scan: {block_reason}')
+                for cand in candidates:
+                    pending_alerts.append((cand['symbol'], cand['sig'], cand['ticker'], None, cand['cache_update']))
+                candidates = []
 
     if candidates:
         candidates.sort(key=lambda x: x['rank_score'], reverse=True)

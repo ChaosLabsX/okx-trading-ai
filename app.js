@@ -1467,11 +1467,11 @@ function showTradeConfirmation(action) {
         <div class="o3-phase-label">Phase 1 — takes effect immediately on OKX (24/7 active)</div>
         <table class="trade-detail-table">
           <tr><td>Sell 50% when price hits</td><td><b id="o3_ptPrice">${fmtCrypto(ptPrice)}</b> <span class="pos">+${pTpPct}%</span></td></tr>
-          <tr><td>Stop Loss (50%)</td><td><b id="o3_slPrice">${fmtCrypto(slPrice)}</b> <span class="neg">−${slPct}%</span></td></tr>
+          <tr><td>Stop Loss (full position)</td><td><b id="o3_slPrice">${fmtCrypto(slPrice)}</b> <span class="neg">−${slPct}%</span></td></tr>
         </table>
-        <div class="o3-phase-label">Phase 2 — trailing stop on remaining 50% (activates after Phase 1)</div>
+        <div class="o3-phase-label">Phase 2 — trailing stop on remaining 50% (placed automatically when Phase 1 completes)</div>
         <table class="trade-detail-table">
-          <tr><td>Trailing activates at</td><td><span id="o3_trailAct">${fmtCrypto(ptPrice)}</span></td></tr>
+          <tr><td>Trailing starts near</td><td><span id="o3_trailAct">${fmtCrypto(ptPrice)}</span></td></tr>
           <tr><td>Callback %</td><td>${trailPct}% — follows price up, exits on first reversal</td></tr>
         </table>
         <div class="o3-inputs">
@@ -1517,32 +1517,43 @@ function showTradeConfirmation(action) {
   openModal('tradeConfirmModal');
 }
 
-async function saveOption3Trade({ id, symbol, entryPrice, partialTpId, slId, trailingId, amountUsdt, szHalf, partialTpPct, slPct, trailingPct }) {
+async function saveOption3Trade({ id, symbol, entryPrice, partialTpId, slId, sl2Id, trailingId, amountUsdt, szHalf, partialTpPct, slPct, trailingPct }) {
   if (!isSupabaseConfigured()) return;
+  const row = {
+    id, symbol,
+    entry_price: entryPrice,
+    partial_tp_id: partialTpId,
+    sl_id: slId,
+    sl2_id: sl2Id || '',
+    trailing_id: trailingId || '',
+    amount_usdt: amountUsdt,
+    sz_half: szHalf,
+    partial_tp_pct: partialTpPct,
+    sl_pct: slPct,
+    trailing_pct: trailingPct,
+    phase: 1,
+  };
+  const post = body => fetch(`${getSupabaseCfg().url}/rest/v1/option3_trades`, {
+    method: 'POST',
+    headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
+    body: JSON.stringify(body),
+  });
   try {
-    const res = await fetch(`${getSupabaseCfg().url}/rest/v1/option3_trades`, {
-      method: 'POST',
-      headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
-      body: JSON.stringify({
-        id, symbol,
-        entry_price: entryPrice,
-        partial_tp_id: partialTpId,
-        sl_id: slId,
-        trailing_id: trailingId,
-        amount_usdt: amountUsdt,
-        sz_half: szHalf,
-        partial_tp_pct: partialTpPct,
-        sl_pct: slPct,
-        trailing_pct: trailingPct,
-        phase: 1,
-      }),
-    });
-    if (res.ok) {
-      console.log(`[Option3] Trade saved to Supabase — break-even SL monitor active`);
-    } else {
+    let res = await post(row);
+    if (!res.ok) {
+      // sl2_id column missing (migration not run yet)? Retry without it so the
+      // trade is at least tracked in legacy mode.
+      const { sl2_id, ...legacyRow } = row;
+      res = await post(legacyRow);
+      if (res.ok) {
+        console.warn('[Option3] Trade saved WITHOUT sl2_id — run the SQL migration in docs/ARCHITECTURE.md');
+        return;
+      }
       const e = await res.json().catch(() => ({}));
       console.warn('[Option3] Supabase save failed:', e.message || res.status);
+      return;
     }
+    console.log(`[Option3] Trade saved to Supabase — exit monitor active`);
   } catch (e) {
     console.warn('[Option3] Supabase save error:', e.message);
   }
@@ -1579,37 +1590,39 @@ async function executeTrade(action, coinAmt) {
       // Order 2: OCO conditional — TP and SL in ONE order so OKX only reserves
       // halfSz balance once (they're mutually exclusive). Separate orders would
       // reserve halfSz each → 3 orders × 50% = 150% of owned coins → rejected.
-      // Order 3: Trailing stop on the remaining 50%, activates when TP price is reached.
-      const [ocoResult, trailResult] = await Promise.allSettled([
+      // Order 3: Conditional SL on the remaining 50% at the same trigger price —
+      // the FULL position is stop-loss-protected on OKX 24/7. The background
+      // monitor swaps this for a trailing stop once the partial TP fills.
+      const [ocoResult, sl2Result] = await Promise.allSettled([
         okxSignedPost('/api/v5/trade/order-algo', {
           ...baseAlgo, ordType: 'conditional', sz: halfSz,
           tpTriggerPx: ptPrice.toFixed(8), tpOrdPx: '-1', tpTriggerPxType: 'last',
           slTriggerPx: slPrice.toFixed(8), slOrdPx: '-1', slTriggerPxType: 'last',
         }),
         okxSignedPost('/api/v5/trade/order-algo', {
-          ...baseAlgo, ordType: 'move_order_stop', sz: halfSz,
-          activePx: ptPrice.toFixed(8),
-          callbackRatio: (action._trailPct / 100).toFixed(4),
+          ...baseAlgo, ordType: 'conditional', sz: halfSz,
+          slTriggerPx: slPrice.toFixed(8), slOrdPx: '-1', slTriggerPxType: 'last',
         }),
       ]);
 
-      const labels = ['TP/SL (OCO 50%)', 'Trailing Stop (50%)'];
-      const passed = [ocoResult, trailResult].filter(r => r.status === 'fulfilled').length;
+      const labels = ['TP/SL (OCO 50%)', 'Stop Loss (2nd 50%)'];
+      const passed = [ocoResult, sl2Result].filter(r => r.status === 'fulfilled').length;
 
       if (passed === 2) {
-        toast('Option 3 active: TP/SL (OCO) + Trailing Stop set on OKX', 'success', 6000);
+        toast('Option 3 active: TP/SL (OCO) + full-position SL set on OKX', 'success', 6000);
 
-        // Both orders share the OCO algoId — monitor uses fill price to tell TP vs SL
-        const ocoId   = ocoResult.value?.data?.[0]?.algoId;
-        const trailId = trailResult.value?.data?.[0]?.algoId;
-        if (ocoId && trailId) {
+        // Both OCO legs share the OCO algoId — monitor uses fill price to tell TP vs SL
+        const ocoId = ocoResult.value?.data?.[0]?.algoId;
+        const sl2Id = sl2Result.value?.data?.[0]?.algoId;
+        if (ocoId && sl2Id) {
           await saveOption3Trade({
             id: ocoId,
             symbol: action.symbol,
             entryPrice: price,
             partialTpId: ocoId,
             slId: ocoId,       // same ID — monitor compares fill px to entry to detect which side
-            trailingId: trailId,
+            sl2Id,             // 2nd-half SL — the monitor swaps it for a trailing stop after TP
+            trailingId: '',    // set by the monitor when the TP fires
             amountUsdt: action.amountUsdt,
             szHalf: halfSz,
             partialTpPct: action._pTpPct,
@@ -1618,7 +1631,7 @@ async function executeTrade(action, coinAmt) {
           });
         }
       } else {
-        [ocoResult, trailResult].forEach((r, i) => {
+        [ocoResult, sl2Result].forEach((r, i) => {
           if (r.status === 'rejected') {
             console.error(`[Option3] ${labels[i]} failed:`, r.reason?.message);
             toast(`${labels[i]} could not be set — set manually on OKX. ${r.reason?.message ?? ''}`, 'error', 10000);
