@@ -41,16 +41,23 @@ const CONFIG = {
   // Your holdings — leave empty, add via the + Add button
   DEFAULT_PORTFOLIO: [],
 
-  // Default coins to watch on OKX — focused on high-volatility fast movers
+  // Default coins to watch on OKX — audited 2026-07-07 against live OKX data.
+  // Keep in sync with SYMBOLS in signal_checker.py (the worker's trade universe).
   DEFAULT_SCANNER: [
-    'BTC-USDT',  'ETH-USDT',  'XRP-USDT',  'ADA-USDT',
-    'AVAX-USDT', 'SOL-USDT',  'DOGE-USDT', 'PEPE-USDT', 'WIF-USDT',
-    'SUI-USDT',  'NEAR-USDT', 'INJ-USDT',  'APT-USDT',  'FET-USDT',
-    'TIA-USDT',  'LINK-USDT', 'SEI-USDT',  'OP-USDT',   'ARB-USDT',
-    'DOT-USDT',  'ATOM-USDT', 'RUNE-USDT', 'JUP-USDT',  'BONK-USDT',
-    'FLOKI-USDT',
-    'TON-USDT',  'TRX-USDT',  'HBAR-USDT', 'ENA-USDT',
-    'STRK-USDT', 'ONDO-USDT', 'POL-USDT',  'LDO-USDT',
+    // Majors
+    'BTC-USDT',  'ETH-USDT',  'BNB-USDT',  'SOL-USDT',  'XRP-USDT',
+    'ADA-USDT',  'DOGE-USDT', 'TRX-USDT',  'LTC-USDT',  'BCH-USDT',
+    'XLM-USDT',
+    // L1 / L2 / infrastructure
+    'AVAX-USDT', 'SUI-USDT',  'NEAR-USDT', 'APT-USDT',  'TIA-USDT',
+    'SEI-USDT',  'OP-USDT',   'ARB-USDT',  'DOT-USDT',  'HBAR-USDT',
+    'POL-USDT',  'MON-USDT',  'HYPE-USDT', 'ZEC-USDT',
+    // DeFi / AI
+    'LINK-USDT', 'UNI-USDT',  'AAVE-USDT', 'LDO-USDT',  'ENA-USDT',
+    'ONDO-USDT', 'JUP-USDT',  'INJ-USDT',  'FET-USDT',  'TAO-USDT',
+    'WLD-USDT',
+    // Memes (high volume + volatility)
+    'PEPE-USDT', 'BONK-USDT',
   ],
 
   // Fixed values — intentionally removed from the Settings UI (single-user app):

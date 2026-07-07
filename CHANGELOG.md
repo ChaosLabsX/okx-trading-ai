@@ -3,6 +3,33 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-07-07 — Coin universe audit (33 → 38 coins)
+
+Full audit against **live OKX spot data** (volume ranks, listing status, perp availability).
+`SYMBOLS` (worker) and `DEFAULT_SCANNER` (browser) updated in sync; the browser now also
+**drops removed coins** from saved localStorage lists (previously removals never synced).
+
+- **Removed (6):**
+  - RUNE, TON — **delisted from OKX spot** (confirmed via instruments API; the scanner had
+    been burning 4 requests/scan each on dead pairs)
+  - FLOKI — OKX volume collapsed to ~$0.1M/24h (rank #178): manipulation-prone candles
+  - WIF — meme peak long past, OKX liquidity migrated away (~$0.4M, rank #111)
+  - STRK — persistent unlock dilution, fading traction (~$0.8M)
+  - ATOM — multi-year structural decline; the classic dip-buyer trap (~$0.4M, rank #124)
+- **Added (11), all verified live on OKX with full candle history + perps:**
+  - Majors: BNB, LTC, BCH, XLM (deep global liquidity, clean TA)
+  - Blue-chip DeFi: UNI, AAVE
+  - AI: TAO (Bittensor), WLD (Worldcoin)
+  - High-momentum 2025-26 leaders: HYPE (Hyperliquid), MON (Monad), ZEC (Zcash revival)
+- **Watch list (kept but monitor via profit-factor data):** TIA, INJ, POL, JUP, FET —
+  legitimate projects with weak current OKX volume; prune if the digest shows chronic losses.
+- **Considered and rejected:** TRUMP/PUMP/WLFI/PI (event-driven/manipulation-prone),
+  OKB (exchange-token idiosyncrasy), XAUT/PAXG (gold, wrong asset class), SHIB (meme cohort
+  already covered), ORDI/BLUR/ETC/ICP/PYTH (fading sectors), TRB (notorious manipulation),
+  plus the new-listing churn at the top of the volume table (NES/RE/DATA/LIT/…).
+- Docs updated (counts 33→38); manual AI advisor volatility-tier examples refreshed.
+- Scan cost: ~152 OKX requests/scan (from ~132) — still comfortably inside the 60s cycle.
+
 ## 2026-07-07 — Bot Performance panel + portrait lock (dashboard)
 
 - **Bot Performance panel**: new bar-chart button in the header slides in a P&L dashboard

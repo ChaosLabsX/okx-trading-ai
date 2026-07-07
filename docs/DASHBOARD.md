@@ -14,7 +14,7 @@ A single-page vanilla-JS app, installable as a PWA. No build step — `index.htm
 
 ### 1. Signal Scanner (primary panel)
 
-- Watches the 33 symbols in `CONFIG.DEFAULT_SCANNER` (user-editable, persisted as `scanner` in localStorage).
+- Watches the 38 symbols in `CONFIG.DEFAULT_SCANNER` (user-editable, persisted as `scanner` in localStorage).
 - `fetchAllData()` pulls, per symbol: ticker + 1H + 4H + 30m candles — batched 2 symbols at a time with 250 ms gaps to avoid OKX 429s. Funding rate + open interest fetched separately in a non-blocking loop.
 - `computeIndicators()` produces: RSI(14) 1H + previous, RSI 4H, MACD (12/26/9), Bollinger %B (20, 2σ), volume ratio (last candle vs 20-bar avg), 30m reversal inputs, and the **signal**.
 - **Signal age**: `computeIndicators` walks back up to 10 1H candles re-running the signal to find when the current label began (`signalStartTs`) — so "In Signal" ages are derived from OKX candle timestamps and identical on every device. A 1 s ticker (`startAgeTicker`) keeps the age cells live.

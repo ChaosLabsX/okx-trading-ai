@@ -12,7 +12,7 @@ touches no keys.
 ## Usage
 
 ```bash
-python backtest.py                                   # 90 days, all 33 coins, production settings
+python backtest.py                                   # 90 days, all 38 coins, production settings
 python backtest.py --days 60 --score 4.5             # test a looser STRONG BUY bar
 python backtest.py --no-regime                       # measure the BTC filter's effect
 python backtest.py --no-reversal                     # measure the reversal gate's effect
@@ -21,7 +21,7 @@ python backtest.py --coins BTC-USDT,SOL-USDT --days 30
 python backtest.py --refresh                         # re-download candles (else disk-cached)
 ```
 
-First run downloads candles (~3–5 min for all 33 coins) into `backtest_cache/`
+First run downloads candles (~3–5 min for all 38 coins) into `backtest_cache/`
 (git-ignored); subsequent runs are instant, so A/B comparisons are cheap.
 
 | Flag | Default | Meaning |

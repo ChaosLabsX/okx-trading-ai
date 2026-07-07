@@ -1308,9 +1308,9 @@ TRADE TAGS — for every actionable BUY, append this tag on its own line (valid 
 
 OPTION 3 PARAMETERS — base on coin volatility AND signal strength:
 
-Extreme volatility (PEPE, WIF, DOGE): partialTpPct 6-8, trailingCallbackPct 3-4, slPct 8-10
-High volatility (AVAX, SOL, SUI, INJ, TIA): partialTpPct 4-6, trailingCallbackPct 2.5-3, slPct 7-8
-Medium-high (NEAR, APT, FET, LINK, SEI): partialTpPct 3-5, trailingCallbackPct 2-2.5, slPct 6-7
+Extreme volatility (PEPE, BONK, DOGE, MON, HYPE): partialTpPct 6-8, trailingCallbackPct 3-4, slPct 8-10
+High volatility (AVAX, SOL, SUI, INJ, TIA, ZEC, TAO, WLD): partialTpPct 4-6, trailingCallbackPct 2.5-3, slPct 7-8
+Medium-high (NEAR, APT, FET, LINK, SEI, UNI, AAVE, LTC): partialTpPct 3-5, trailingCallbackPct 2-2.5, slPct 6-7
 
 Adjust partialTpPct upward for stronger signals:
   • Score ≥ 4.5: +1–2% (strong conviction — let winners run)
@@ -1934,17 +1934,15 @@ function restartAutoRefresh() {
 //  PERSISTENCE
 // ═══════════════════════════════════════════════════════════
 function loadScannerSymbols() {
-  const saved = LS.get('scanner', null);
-  if (!saved) {
-    state.scannerSymbols = [...CONFIG.DEFAULT_SCANNER];
-  } else {
-    // Merge any new coins from DEFAULT_SCANNER that aren't already saved
-    const merged = [...saved];
-    for (const sym of CONFIG.DEFAULT_SCANNER) {
-      if (!merged.includes(sym)) merged.push(sym);
-    }
-    state.scannerSymbols = merged;
+  // DEFAULT_SCANNER (kept in sync with the worker's SYMBOLS) is the source of
+  // truth: saved order is preserved, coins removed from the audited universe
+  // are dropped, and newly added defaults are appended.
+  const saved = LS.get('scanner', null) || [];
+  const merged = saved.filter(sym => CONFIG.DEFAULT_SCANNER.includes(sym));
+  for (const sym of CONFIG.DEFAULT_SCANNER) {
+    if (!merged.includes(sym)) merged.push(sym);
   }
+  state.scannerSymbols = merged;
   saveScannerSymbols();
 }
 function saveScannerSymbols() { LS.set('scanner', state.scannerSymbols); }

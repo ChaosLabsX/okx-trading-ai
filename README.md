@@ -4,7 +4,7 @@
 
 TradingAI is a two-part system:
 
-1. **A browser dashboard** (static PWA — no build step, no framework, no backend server) that scans 33 crypto coins on OKX in real time, computes technical signals, shows news, and lets the user ask Claude AI for trade recommendations that can be executed on OKX with one click.
+1. **A browser dashboard** (static PWA — no build step, no framework, no backend server) that scans 38 crypto coins on OKX in real time, computes technical signals, shows news, and lets the user ask Claude AI for trade recommendations that can be executed on OKX with one click.
 2. **A Python background worker** (`signal_checker.py`) that runs 24/7 on GitHub Actions (triggered every ~5 minutes), detects STRONG BUY signals, **automatically places "Option 3" trades on OKX**, monitors those trades through their whole lifecycle, and reports every event to the user via Telegram.
 
 The two halves share the same signal engine (identical scoring logic implemented twice — JS and Python), the same Supabase project (settings storage + trade tracking), the same OKX account, and the same Telegram bot.

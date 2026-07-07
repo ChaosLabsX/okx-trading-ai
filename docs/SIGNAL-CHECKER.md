@@ -12,7 +12,7 @@ main()
 
 ## Scan pipeline (`run_scan()`)
 
-**Pass 1 — collect.** For each of the 33 `SYMBOLS`: fetch 1H candles (100), ticker, 30m candles (50, reversal check), 4H candles (50, RSI confirmation); compute RSI/MACD/BB/volume ratio; run `generate_signal()` (same scoring table as the browser — see [DASHBOARD.md](DASHBOARD.md#2-signal-engine-generatesignal)). A coin survives to trade-candidacy only if **all** of these pass:
+**Pass 1 — collect.** For each of the 38 `SYMBOLS`: fetch 1H candles (100), ticker, 30m candles (50, reversal check), 4H candles (50, RSI confirmation); compute RSI/MACD/BB/volume ratio; run `generate_signal()` (same scoring table as the browser — see [DASHBOARD.md](DASHBOARD.md#2-signal-engine-generatesignal)). A coin survives to trade-candidacy only if **all** of these pass:
 
 1. Label is **STRONG BUY** (`score ≥ STRONG_BUY_SCORE` — 5.0 production, 1.0 test mode).
 2. **Reversal confirmed** on 30m candles (skipped in test mode): latest candle green **and** RSI rising **and** volume ≥ 1× the 20-bar average (`reversal_confirmed()`). Guards against buying a falling knife.
