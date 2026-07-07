@@ -9,8 +9,8 @@ Alert rules:
 - A new alert fires only when the zone CHANGES (entering BUY zone, flipping to SELL, etc.).
 - 2-minute safety cooldown prevents false alerts from rapid back-and-forth oscillation.
 
-Auto-trade (Claude Haiku):
-- When STRONG BUY + reversal confirmed, Claude Haiku decides whether to trade and sets
+Auto-trade (Claude Opus 4.8):
+- When STRONG BUY + reversal confirmed, Claude Opus 4.8 decides whether to trade and sets
   parameters (USDT amount, TP%, SL%, trailing%) based on coin volatility + signal strength.
 - Claude also sees recent live trade results (from Supabase) so it can skip/downsize
   setups that have been losing.
@@ -54,7 +54,15 @@ OKX_API_KEY        = os.environ.get('OKX_API_KEY', '')
 OKX_SECRET_KEY     = os.environ.get('OKX_SECRET_KEY', '')
 OKX_PASSPHRASE     = os.environ.get('OKX_PASSPHRASE', '')
 CLAUDE_API_KEY     = os.environ.get('CLAUDE_API_KEY', '')
-CLAUDE_MODEL       = 'claude-haiku-4-5-20251001'
+# Opus 4.8 with adaptive thinking — top-tier decision quality for trade sizing and
+# TP/SL/trail selection. Costs ~$0.01–0.02 per trade decision (only runs in
+# production, only for qualified STRONG BUY candidates, max 2 per scan).
+CLAUDE_MODEL       = 'claude-opus-4-8'
+
+# CryptoCompare News — free read-only key (news/polling scope only; same key ships
+# publicly in config.js). Gives the AI each candidate coin's latest headlines so it
+# can veto trades on hacks/lawsuits/delistings that indicators can't see.
+CRYPTOCOMPARE_API_KEY = '9b260f1d70267786f07b9fc29fc785dae1f187863c7ae5466ede5e8a6f36b4a9'
 CACHE_FILE         = 'signal_cache.json'
 
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
@@ -111,6 +119,31 @@ if TEST_MODE:
     FLIP_COOLDOWN   = 30        # 30 seconds instead of 2 minutes
 
 
+# ── ATR + market-structure exits (production AI baseline) ─────────────────────
+# Exits are sized in units of the coin's live volatility (ATR = average candle
+# range) and anchored to nearby support/resistance, instead of fixed guesses.
+ATR_TP_MULT    = 2.0            # partial TP = 2.0 × ATR above entry
+ATR_SL_MULT    = 2.5            # stop loss  = 2.5 × ATR below entry (outside noise)
+ATR_TRAIL_MULT = 1.0            # trailing   = 1.0 × ATR callback
+TP_BOUNDS      = (1.5, 10.0)    # absolute % clamps whatever ATR/AI says
+SL_BOUNDS      = (2.0, 12.0)
+TRAIL_BOUNDS   = (1.0, 5.0)
+SR_TP_GAP_PCT  = 0.5            # sell this far below the nearest resistance
+SR_SL_GAP_PCT  = 0.75           # stop this far below the nearest support
+
+# ── Derivatives context ───────────────────────────────────────────────────────
+FUNDING_HARD_SKIP_PCT = 0.10    # 8h funding above this → longs dangerously crowded, auto-skip
+
+# ── Limit-order entries (maker-first, market fallback) ───────────────────────
+LIMIT_ENTRY_OFFSET_PCT = 0.05   # place the buy 0.05% below market
+LIMIT_ENTRY_WAIT_SEC   = 45     # cancel + market-buy fallback after this wait
+
+# ── Daily Telegram digest (heartbeat + performance report) ───────────────────
+# Fires on the first run after this UTC hour, once per day. The message doubles
+# as a dead-man switch: if it stops arriving, the pipeline is down.
+DIGEST_UTC_HOUR = 8
+
+
 # ── Zone helpers ──────────────────────────────────────────────────────────────
 def direction_zone(label):
     if label in ('STRONG BUY', 'BUY'):   return 'up'
@@ -129,6 +162,8 @@ def fetch_candles(symbol, bar='1H', limit=100):
     rows = list(reversed(d['data']))
     return {
         'opens':   [float(c[1]) for c in rows],
+        'highs':   [float(c[2]) for c in rows],
+        'lows':    [float(c[3]) for c in rows],
         'closes':  [float(c[4]) for c in rows],
         'volumes': [float(c[5]) for c in rows],
     }
@@ -200,6 +235,157 @@ def calc_vol_ratio(volumes):
         return None
     avg = sum(volumes[-21:-1]) / 20
     return volumes[-1] / avg if avg > 0 else None
+
+
+def calc_atr_pct(highs, lows, closes, period=14):
+    """
+    ATR(14) as a percentage of the last price — the coin's average candle range,
+    i.e. how much it 'breathes' per candle. Wilder smoothing.
+    """
+    n = len(closes)
+    if n < period + 1 or len(highs) != n or len(lows) != n:
+        return None
+    trs = []
+    for i in range(1, n):
+        tr = max(highs[i] - lows[i],
+                 abs(highs[i] - closes[i - 1]),
+                 abs(lows[i]  - closes[i - 1]))
+        trs.append(tr)
+    atr = sum(trs[:period]) / period
+    for tr in trs[period:]:
+        atr = (atr * (period - 1) + tr) / period
+    return (atr / closes[-1]) * 100 if closes[-1] > 0 else None
+
+
+def find_support_resistance(highs, lows, closes, wing=3):
+    """
+    Nearest swing-low support below the current price and swing-high resistance
+    above it. A swing point is a candle that is the extreme of its ±`wing`
+    neighbours. Returns (support, resistance) — either may be None.
+    """
+    n = len(closes)
+    if n < wing * 2 + 5:
+        return None, None
+    price = closes[-1]
+    supports, resistances = [], []
+    for i in range(wing, n - wing):
+        if highs[i] >= max(highs[i - wing:i + wing + 1]) and highs[i] > price:
+            resistances.append(highs[i])
+        if lows[i] <= min(lows[i - wing:i + wing + 1]) and lows[i] < price:
+            supports.append(lows[i])
+    return (max(supports) if supports else None,
+            min(resistances) if resistances else None)
+
+
+def suggest_exit_params(atr_pct, support, resistance, price):
+    """
+    Volatility-adaptive exits anchored to market structure:
+      baseline = ATR multiples (SL outside noise, TP within realistic reach),
+      then TP is pulled just below the nearest resistance and SL pushed just
+      below the nearest support when those levels are meaningfully placed.
+    Returns {'tp','sl','trail'} in %, or None when there's no ATR data.
+    """
+    if not atr_pct or atr_pct <= 0 or not price or price <= 0:
+        return None
+    tp    = ATR_TP_MULT    * atr_pct
+    sl    = ATR_SL_MULT    * atr_pct
+    trail = ATR_TRAIL_MULT * atr_pct
+    if resistance:
+        res_dist = (resistance / price - 1) * 100        # % above entry
+        if 1.5 <= res_dist <= 12.0:
+            tp = min(tp, res_dist - SR_TP_GAP_PCT)       # sell just before the ceiling
+    if support:
+        sup_dist = (1 - support / price) * 100           # % below entry
+        if 2.0 <= sup_dist <= 12.0:
+            sl = max(sl, sup_dist + SR_SL_GAP_PCT)       # exit only if the floor breaks
+    tp    = min(max(tp, TP_BOUNDS[0]), TP_BOUNDS[1])
+    sl    = min(max(sl, SL_BOUNDS[0]), SL_BOUNDS[1])
+    # trail must stay below TP — preserves the phase-2 break-even guarantee
+    trail = max(TRAIL_BOUNDS[0], min(trail, TRAIL_BOUNDS[1], tp - 0.5))
+    return {'tp': round(tp, 2), 'sl': round(sl, 2), 'trail': round(trail, 2)}
+
+
+def fetch_funding_oi(symbol):
+    """Funding rate (as %) and open interest from the coin's perpetual swap market."""
+    swap = symbol.replace('-USDT', '-USDT-SWAP')
+    funding = oi = None
+    try:
+        d = requests.get(f'{OKX_BASE}/api/v5/public/funding-rate?instId={swap}', timeout=10).json()
+        if d.get('code') == '0' and d.get('data'):
+            funding = float(d['data'][0]['fundingRate']) * 100
+    except Exception:
+        pass
+    try:
+        d = requests.get(f'{OKX_BASE}/api/v5/public/open-interest?instId={swap}', timeout=10).json()
+        if d.get('code') == '0' and d.get('data'):
+            oi = float(d['data'][0]['oiCcy'])
+    except Exception:
+        pass
+    return funding, oi
+
+
+def fetch_orderbook_imbalance(symbol, depth=20):
+    """Bid/ask volume ratio over the top N order-book levels. >1 = buy-side depth."""
+    try:
+        d = requests.get(f'{OKX_BASE}/api/v5/market/books?instId={symbol}&sz={depth}', timeout=10).json()
+        if d.get('code') == '0' and d.get('data'):
+            book    = d['data'][0]
+            bid_vol = sum(float(b[1]) for b in book.get('bids', []))
+            ask_vol = sum(float(a[1]) for a in book.get('asks', []))
+            if ask_vol > 0:
+                return bid_vol / ask_vol
+    except Exception:
+        pass
+    return None
+
+
+def fetch_fear_greed():
+    """
+    Crypto Fear & Greed Index (alternative.me — free, no key). Market-wide mood
+    0–100: low = panic (contrarian dip-buy conditions), high = euphoria (late-
+    cycle risk). Returns (value, label) or (None, '').
+    """
+    try:
+        d   = requests.get('https://api.alternative.me/fng/?limit=1', timeout=10).json()
+        row = (d.get('data') or [{}])[0]
+        return int(row.get('value')), row.get('value_classification', '')
+    except Exception:
+        return None, ''
+
+
+def fetch_coin_news(symbol, limit=5):
+    """
+    Latest headlines tagged with this coin (CryptoCompare News API — every article
+    carries coin tags, so the filter is server-side). Formatted for the AI prompt;
+    returns '' when no news or the API is unavailable — never blocks a trade.
+    """
+    coin = symbol.replace('-USDT', '')
+    try:
+        r = requests.get(
+            'https://min-api.cryptocompare.com/data/v2/news/',
+            params={'lang': 'EN', 'categories': coin, 'api_key': CRYPTOCOMPARE_API_KEY},
+            timeout=10,
+        )
+        arts = r.json().get('Data') or []
+        now  = time.time()
+        lines = []
+        for a in arts:
+            # The API pads thin categories with general news — keep only articles
+            # whose own tags (or title) genuinely mention this coin.
+            tags  = (a.get('categories') or '').upper().split('|')
+            title = (a.get('title') or '').strip()
+            if not title:
+                continue
+            if coin.upper() not in tags and coin.upper() not in title.upper():
+                continue
+            age_h = max(0.0, (now - float(a.get('published_on') or now)) / 3600)
+            lines.append(f'- [{age_h:.0f}h ago] {title}')
+            if len(lines) >= limit:
+                break
+        return '\n'.join(lines)
+    except Exception as e:
+        print(f'  [News] {symbol}: fetch failed: {e}')
+        return ''
 
 
 def reversal_confirmed(opens, closes, volumes, zone):
@@ -460,10 +646,13 @@ def _fetch_usdt_balance():
     return 0.0
 
 
-# ── Claude Haiku — AI trade advisor ──────────────────────────────────────────
-def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data, bb_data, vol_ratio):
+# ── Claude Opus 4.8 — AI trade advisor ───────────────────────────────────────
+def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data, bb_data, vol_ratio, extra=None):
     """
-    Ask Claude Haiku whether this STRONG BUY is worth trading and what parameters to use.
+    Ask Claude (Opus 4.8, adaptive thinking) whether this STRONG BUY is worth trading
+    and what parameters to use. `extra` carries the rich decision context built by
+    _build_trade_context(): ATR, support/resistance, suggested exits, funding rate,
+    open interest, order-book imbalance, BTC regime, and the coin's latest headlines.
     Returns a dict with trade params, or None if Claude says SKIP.
     """
     coin     = symbol.replace('-USDT', '')
@@ -486,8 +675,47 @@ def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data
 
     vol_s = f'{vol_ratio:.1f}× average' if vol_ratio is not None else 'N/A'
 
-    history   = _trade_history_context(symbol)
-    history_s = f'\n\nRECENT LIVE RESULTS (this bot\'s actual closed trades):\n{history}' if history else ''
+    history, pf = _trade_history_context(symbol)
+    history_s   = f'\n\nRECENT LIVE RESULTS (this bot\'s actual closed trades):\n{history}' if history else ''
+
+    # Performance-weighted sizing: shrink the hard cap when the system is cold.
+    cap_pct = 0.30
+    if pf is not None:
+        if pf < 1.0:
+            cap_pct = 0.15
+        elif pf < 1.5:
+            cap_pct = 0.22
+
+    # Market structure & derivatives context (ATR, S/R, funding, OI, order book, BTC regime)
+    extra = extra or {}
+    price = ticker['price']
+    struct_lines = []
+    if extra.get('atr_pct') is not None:
+        struct_lines.append(f"ATR(14) 1H: {extra['atr_pct']:.2f}% of price (avg candle range)")
+    if extra.get('support'):
+        struct_lines.append(f"Nearest support: {fmt_price(extra['support'])} "
+                            f"({(1 - extra['support'] / price) * 100:.1f}% below)")
+    if extra.get('resistance'):
+        struct_lines.append(f"Nearest resistance: {fmt_price(extra['resistance'])} "
+                            f"({(extra['resistance'] / price - 1) * 100:.1f}% above)")
+    if extra.get('exits'):
+        e = extra['exits']
+        struct_lines.append(f"SUGGESTED EXITS (ATR + structure): TP +{e['tp']}%  ·  "
+                            f"SL −{e['sl']}%  ·  trail {e['trail']}%")
+    if extra.get('funding_pct') is not None:
+        struct_lines.append(f"Funding rate (8h): {extra['funding_pct']:+.4f}%")
+    if extra.get('oi') is not None:
+        struct_lines.append(f"Open interest: {extra['oi']:,.0f} coins")
+    if extra.get('book_ratio') is not None:
+        struct_lines.append(f"Order book bid/ask ratio (top 20 levels): {extra['book_ratio']:.2f}")
+    if extra.get('regime'):
+        struct_lines.append(f"BTC regime: {extra['regime']}")
+    fg_val, fg_label = extra.get('fear_greed') or (None, '')
+    if fg_val is not None:
+        struct_lines.append(f"Fear & Greed Index: {fg_val}/100 — {fg_label}")
+    struct_s = ('\n\nMARKET STRUCTURE & DERIVATIVES:\n' + '\n'.join(struct_lines)) if struct_lines else ''
+
+    news_s = f"\n\nRECENT NEWS for {coin} (newest first):\n{extra['news']}" if extra.get('news') else ''
 
     system = f"""You are an expert crypto trading advisor for OKX spot markets (no leverage, no futures).
 A STRONG BUY signal has been confirmed with reversal on 30-minute candle. Decide if this trade is worth placing and output the optimal Option 3 parameters.
@@ -497,19 +725,36 @@ Available USDT: ${usdt_balance:.2f}
 - Score 4.0–4.4, 2 confirmations → 10–15% of capital
 - Score 4.5–4.9, 2–3 confirmations → 15–20% of capital
 - Score 5.0+, 3+ confirmations → 20–30% of capital
-Hard cap: never exceed 30% per trade. Minimum $10 USDT.
+PERFORMANCE-WEIGHTED CAP: the hard cap for THIS trade is {cap_pct * 100:.0f}% of capital
+(30% when the bot's recent profit factor is ≥ 1.5 or unknown, 22% when 1.0–1.5,
+15% when < 1.0 — losing streaks get smaller bets). Never exceed it. Minimum $10 USDT.
 
-OPTION 3 PARAMETERS by volatility tier:
-Extreme (PEPE, WIF, DOGE, BONK, FLOKI): partialTpPct 7–10, trailingCallbackPct 4–5, slPct 9–12
-High (AVAX, SOL, SUI, INJ, TIA, APT, ENA, RUNE, JUP, SEI, OP, ARB, NEAR, FET, STRK): partialTpPct 5–8, trailingCallbackPct 3–4, slPct 7–10
-Medium (BTC, ETH, XRP, ADA, LINK, DOT, ATOM, HBAR, TRX, TON, ONDO, LDO, POL): partialTpPct 3–5, trailingCallbackPct 2–3, slPct 5–7
+EXIT PARAMETERS — volatility-adaptive (ATR) + market structure:
+The market data includes SUGGESTED EXITS computed from the coin's live ATR(14) and
+nearby support/resistance (TP just below the ceiling, SL just below the floor and
+outside normal noise). Rules:
+- Start from the suggested TP/SL/trail; adjust within ±30% only when the data justifies it
+- Stronger setups (score ≥ 5, deep 1H+4H oversold, MACD cross) → push TP toward the upper end
+- Absolute bounds: partialTpPct 1.5–10, slPct 2–12, trailingCallbackPct 1–5
+- trailingCallbackPct must stay BELOW partialTpPct (protects the break-even guarantee)
 
-INCREASE partialTpPct for stronger signals (let winners run):
-- Score ≥ 5.0: +2%
-- Score 4.5–4.9: +1%
-- RSI 1H ≤ 25 (deeply oversold): +1%
-- RSI 4H ≤ 35 (both timeframes oversold): +1%
-- MACD bullish crossover confirmed: +0.5%
+DERIVATIVES & ORDER BOOK RULES:
+- Funding +0.05% to +0.10%: longs crowded — cut position size by 50%
+- Funding negative: short-squeeze fuel — TP may go up to 1% higher
+- Order-book bid/ask ratio > 1.3: buy-side support; < 0.7: weak book — halve size or SKIP
+(Funding above +{FUNDING_HARD_SKIP_PCT}% is auto-skipped before you are consulted.)
+
+NEWS RULES (RECENT NEWS section, when provided):
+- Hack, exploit, lawsuit, SEC enforcement, delisting, or insolvency headlines → SKIP
+  regardless of how good the indicators look (the "dip" has a reason)
+- Clearly negative news-flow → halve size or SKIP; a strong positive catalyst supports
+  normal-to-upper sizing
+- No headlines for the coin is NEUTRAL — never penalize missing news
+
+MARKET SENTIMENT (Fear & Greed Index, when provided):
+- ≤ 25 (Extreme Fear): panic pricing — favorable contrarian dip-buy conditions; upper-end
+  sizing is allowed when the other signals agree
+- ≥ 75 (Extreme Greed): euphoric late-cycle market — cut size by 25–50% and favor a tighter TP
 
 DO NOT TRADE ([SKIP]) if:
 - RSI 4H > 65 (higher timeframe overbought — bad risk/reward entry)
@@ -536,7 +781,7 @@ RSI 4H:  {rsi_4h_s}
 MACD:    {macd_s}
 BB:      {bb_s}
 Volume:  {vol_s}
-USDT available: ${usdt_balance:.2f}{history_s}
+USDT available: ${usdt_balance:.2f}{struct_s}{news_s}{history_s}
 
 Place this trade?"""
 
@@ -550,14 +795,23 @@ Place this trade?"""
             },
             json={
                 'model':      CLAUDE_MODEL,
-                'max_tokens': 200,
+                # Adaptive thinking: Opus reasons internally before answering.
+                # Thinking tokens count against max_tokens, so leave headroom.
+                'max_tokens': 2000,
+                'thinking':   {'type': 'adaptive'},
                 'system':     system,
                 'messages':   [{'role': 'user', 'content': user_msg}],
             },
-            timeout=30,
+            timeout=60,
         )
         r.raise_for_status()
-        text = r.json()['content'][0]['text'].strip()
+        # With thinking enabled the first content block can be a thinking block —
+        # pick the text block explicitly instead of assuming content[0].
+        blocks = r.json().get('content', [])
+        text   = next((b.get('text', '') for b in blocks if b.get('type') == 'text'), '').strip()
+        if not text:
+            print(f'  [Claude] {coin}: no text block in response — skipping')
+            return None
         print(f'  [Claude] {coin}: {text[:150]}')
 
         # Parse TRADE tag
@@ -568,16 +822,21 @@ Place this trade?"""
             if amount < 10:
                 print(f'  [Claude] Amount too small (${amount:.2f}) — skipping')
                 return None
-            # Safety cap: never let Claude exceed 30% of balance
-            cap = usdt_balance * 0.30
+            # Safety cap: performance-weighted (30% / 22% / 15% by profit factor)
+            cap = usdt_balance * cap_pct
             if amount > cap:
-                print(f'  [Claude] Amount ${amount:.2f} exceeds 30% cap — capped at ${cap:.2f}')
+                print(f'  [Claude] Amount ${amount:.2f} exceeds {cap_pct * 100:.0f}% cap — capped at ${cap:.2f}')
                 amount = cap
+            # Hard bounds + break-even invariant (trail < TP), whatever the AI said
+            tp    = min(max(float(p.get('partialTpPct', 5)),        TP_BOUNDS[0]),    TP_BOUNDS[1])
+            sl    = min(max(float(p.get('slPct', 7)),               SL_BOUNDS[0]),    SL_BOUNDS[1])
+            trail = max(TRAIL_BOUNDS[0],
+                        min(float(p.get('trailingCallbackPct', 3)), TRAIL_BOUNDS[1], round(tp - 0.5, 2)))
             return {
                 'amount_usdt':    round(amount, 2),
-                'partial_tp_pct': float(p.get('partialTpPct', 5)),
-                'trailing_pct':   float(p.get('trailingCallbackPct', 3)),
-                'sl_pct':         float(p.get('slPct', 7)),
+                'partial_tp_pct': round(tp, 2),
+                'trailing_pct':   round(trail, 2),
+                'sl_pct':         round(sl, 2),
             }
 
         # Parse SKIP tag
@@ -593,6 +852,34 @@ Place this trade?"""
     except Exception as e:
         print(f'  [Claude] API error: {e}')
         return None
+
+
+def _build_trade_context(cand, regime_msg):
+    """
+    Rich decision context for one trade candidate (called only for the top
+    candidates, so the extra API calls stay tiny): ATR, support/resistance,
+    suggested exits, funding rate, open interest, order-book imbalance,
+    BTC regime, and the coin's latest headlines.
+    """
+    symbol = cand['symbol']
+    price  = cand['ticker']['price']
+    highs, lows, closes = cand.get('highs', []), cand.get('lows', []), cand.get('closes', [])
+    atr_pct             = calc_atr_pct(highs, lows, closes)
+    support, resistance = find_support_resistance(highs, lows, closes)
+    funding, oi         = fetch_funding_oi(symbol)
+    book                = fetch_orderbook_imbalance(symbol)
+    return {
+        'atr_pct':     atr_pct,
+        'support':     support,
+        'resistance':  resistance,
+        'exits':       suggest_exit_params(atr_pct, support, resistance, price),
+        'funding_pct': funding,
+        'oi':          oi,
+        'book_ratio':  book,
+        'regime':      regime_msg,
+        'news':        fetch_coin_news(symbol),
+        'fear_greed':  fetch_fear_greed(),
+    }
 
 
 # ── Option 3 auto-trade placement ────────────────────────────────────────────
@@ -645,10 +932,90 @@ def _save_option3_trade(trade_data):
         return False
 
 
+def _fetch_instrument_spec(symbol):
+    """Return (tickSz, lotSz) as strings for a spot instrument, or (None, None)."""
+    try:
+        d = requests.get(
+            f'{OKX_BASE}/api/v5/public/instruments?instType=SPOT&instId={symbol}',
+            timeout=10,
+        ).json()
+        if d.get('code') == '0' and d.get('data'):
+            it = d['data'][0]
+            return it.get('tickSz'), it.get('lotSz')
+    except Exception as e:
+        print(f'  [Trade] {symbol}: instrument spec fetch failed: {e}')
+    return None, None
+
+
+def _fmt_step(value, step_str):
+    """Round value DOWN to the instrument's step size and format to match it."""
+    step     = float(step_str)
+    decimals = len(step_str.split('.')[1]) if '.' in step_str else 0
+    return f'{math.floor(value / step) * step:.{decimals}f}'
+
+
+def _limit_entry_buy(symbol, amt_usdt, price):
+    """
+    Maker-first entry: limit buy LIMIT_ENTRY_OFFSET_PCT below market — cheaper
+    maker fee and no spread cost. Cancels and reports back for the market-order
+    fallback after LIMIT_ENTRY_WAIT_SEC (accounting for partial fills, including
+    the race where the order fills during cancellation).
+    Returns (filled_coins, avg_px) — (0.0, None) when nothing filled.
+    """
+    tick, lot = _fetch_instrument_spec(symbol)
+    if not tick or not lot:
+        return 0.0, None
+    limit_px_s = _fmt_step(price * (1 - LIMIT_ENTRY_OFFSET_PCT / 100), tick)
+    sz_s       = _fmt_step(amt_usdt / float(limit_px_s), lot)
+    if float(sz_s) <= 0 or float(limit_px_s) <= 0:
+        return 0.0, None
+    try:
+        resp   = _okx_post('/api/v5/trade/order', {
+            'instId': symbol, 'tdMode': 'cash', 'side': 'buy',
+            'ordType': 'limit', 'px': limit_px_s, 'sz': sz_s,
+        })
+        ord_id = resp.get('data', [{}])[0].get('ordId', '')
+    except Exception as e:
+        print(f'  [Trade] {symbol}: limit entry rejected ({e}) — using market buy')
+        return 0.0, None
+    print(f'  [Trade] {symbol}: limit buy {sz_s} @ {limit_px_s} — waiting up to {LIMIT_ENTRY_WAIT_SEC}s for a maker fill...')
+
+    deadline = time.time() + LIMIT_ENTRY_WAIT_SEC
+    while time.time() < deadline:
+        time.sleep(5)
+        try:
+            order = _okx_get(f'/api/v5/trade/order?instId={symbol}&ordId={ord_id}').get('data', [{}])[0]
+            if order.get('state') == 'filled':
+                px = float(order.get('avgPx') or limit_px_s)
+                print(f'  [Trade] {symbol}: limit entry filled @ {px} ✓ (maker fee + spread saved)')
+                return float(order.get('accFillSz') or sz_s), px
+        except Exception:
+            pass
+
+    # Timeout — cancel, then re-check (the cancel can race a fill / partial fill)
+    try:
+        _okx_post('/api/v5/trade/cancel-order', {'instId': symbol, 'ordId': ord_id})
+    except Exception:
+        pass
+    try:
+        order   = _okx_get(f'/api/v5/trade/order?instId={symbol}&ordId={ord_id}').get('data', [{}])[0]
+        fill_sz = float(order.get('accFillSz', '0') or 0)
+        avg_px  = float(order.get('avgPx', '0') or 0)
+        if fill_sz > 0 and avg_px > 0:
+            state = 'filled during cancel' if order.get('state') == 'filled' else 'partially filled'
+            print(f'  [Trade] {symbol}: limit entry {state} — {fill_sz} @ {avg_px}')
+            return fill_sz, avg_px
+    except Exception:
+        pass
+    print(f'  [Trade] {symbol}: limit entry not filled in {LIMIT_ENTRY_WAIT_SEC}s — falling back to market buy')
+    return 0.0, None
+
+
 def place_option3_trade(symbol, params, ticker):
     """
     Execute a full Option 3 trade on OKX:
-      1. Market buy (full amount)
+      1. Entry: maker-first limit buy slightly below market (cheaper fee, no
+         spread), with a market-buy fallback so the signal is never missed
       2. OCO conditional — TP + SL on first 50% (single order avoids balance reservation issue)
       3. Conditional SL on remaining 50% at the same trigger price — the FULL position
          is stop-loss-protected server-side 24/7. The monitor swaps this for an
@@ -664,26 +1031,38 @@ def place_option3_trade(symbol, params, ticker):
     sl_pct    = params['sl_pct']
     trail_pct = params['trailing_pct']
 
-    # 1. Market buy
-    _okx_post('/api/v5/trade/order', {
-        'instId':  symbol,
-        'tdMode':  'cash',
-        'side':    'buy',
-        'ordType': 'market',
-        'sz':      f'{amt_usdt:.4f}',
-        'tgtCcy':  'quote_ccy',
-    })
-    print(f'  [Trade] {symbol}: market buy ${amt_usdt:.2f} USDT ✓')
+    # 1. Entry — maker-first limit buy, market fallback (cuts fees + slippage ~half)
+    filled_coins, limit_avg = _limit_entry_buy(symbol, amt_usdt, price)
+    filled_usdt  = filled_coins * limit_avg if (filled_coins and limit_avg) else 0.0
+    remaining    = amt_usdt - filled_usdt
+    market_coins = 0.0
+    if remaining >= 1.0:
+        _okx_post('/api/v5/trade/order', {
+            'instId':  symbol,
+            'tdMode':  'cash',
+            'side':    'buy',
+            'ordType': 'market',
+            'sz':      f'{remaining:.4f}',
+            'tgtCcy':  'quote_ccy',
+        })
+        print(f'  [Trade] {symbol}: market buy ${remaining:.2f} USDT ✓')
+        market_coins = remaining / price
+    else:
+        remaining = 0.0
 
     # Give OKX 1.5 s to register the fill before placing algo orders
     time.sleep(1.5)
 
-    # Estimated coin quantity — approximation used for algo order sizing
-    sz_coin  = amt_usdt / price
+    # Coin quantity from actual fills (exact for limit, estimated for market)
+    sz_coin = filled_coins + market_coins
+    spent   = filled_usdt + remaining
+    if sz_coin <= 0 or spent <= 0:
+        sz_coin, spent = amt_usdt / price, amt_usdt   # safety fallback
+    entry_px = spent / sz_coin
     half_sz  = sz_coin * 0.5 * 0.9985  # 50% with OKX fee haircut
 
-    tp_price  = price * (1 + tp_pct  / 100)
-    sl_price  = price * (1 - sl_pct  / 100)
+    tp_price  = entry_px * (1 + tp_pct  / 100)
+    sl_price  = entry_px * (1 - sl_pct  / 100)
     base_algo = {'instId': symbol, 'tdMode': 'cash', 'side': 'sell'}
 
     # 2. OCO: TP and SL on first 50% (one order — OKX only reserves balance once)
@@ -719,7 +1098,7 @@ def place_option3_trade(symbol, params, ticker):
     saved = _save_option3_trade({
         'id':             oco_id,
         'symbol':         symbol,
-        'entry_price':    price,
+        'entry_price':    entry_px,
         'partial_tp_id':  oco_id,
         'sl_id':          oco_id,   # same ID — monitor uses fill px vs entry to tell TP vs SL
         'sl2_id':         sl2_id,   # 2nd-half SL — swapped for a trailing stop after TP
@@ -737,7 +1116,7 @@ def place_option3_trade(symbol, params, ticker):
         'tp_pct':      tp_pct,
         'sl_pct':      sl_pct,
         'trail_pct':   trail_pct,
-        'entry_price': price,
+        'entry_price': entry_px,
         'saved':       saved,   # False → monitor can't track it (no break-even move / exit alerts)
     }
 
@@ -1027,29 +1406,42 @@ def _count_recent_sl(hours=24):
 
 def _trade_history_context(symbol):
     """
-    Recent live trade outcomes formatted for the Claude Haiku prompt, so the AI can
-    skip or downsize setups that have been losing. Returns '' when no data exists
-    yet (or the outcome columns are missing) — the prompt simply omits the section.
+    Recent live trade outcomes formatted for the Claude prompt, plus the recent
+    PROFIT FACTOR (money won ÷ money lost, last 30 closed trades) that drives
+    performance-weighted position sizing.
+    Returns (text, profit_factor) — ('', None) when no data exists yet;
+    profit_factor stays None until 30 closed trades have accumulated.
     """
     if not SUPABASE_URL or not SUPABASE_KEY:
-        return ''
+        return '', None
     try:
         r = requests.get(
             f'{SUPABASE_URL}/rest/v1/option3_trades'
-            f'?phase=eq.3&exit_reason=not.is.null&order=closed_at.desc&limit=20'
+            f'?phase=eq.3&exit_reason=not.is.null&order=closed_at.desc&limit=30'
             f'&select=symbol,exit_reason,net_pnl_usdt,closed_at',
             headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
             timeout=10,
         )
         if r.status_code != 200:
-            return ''
+            return '', None
         rows = r.json()
         if not rows:
-            return ''
-        wins  = sum(1 for t in rows if float(t.get('net_pnl_usdt') or 0) > 0)
-        total = sum(float(t.get('net_pnl_usdt') or 0) for t in rows)
+            return '', None
+        pnls  = [float(t.get('net_pnl_usdt') or 0) for t in rows]
+        wins  = sum(1 for p in pnls if p > 0)
+        total = sum(pnls)
         lines = [f'Last {len(rows)} closed trades overall: {wins} wins / '
                  f'{len(rows) - wins} losses, net {total:+.2f} USDT']
+        pf = None
+        if len(rows) >= 30:
+            gross_win  = sum(p for p in pnls if p > 0)
+            gross_loss = -sum(p for p in pnls if p < 0)
+            if gross_loss > 0:
+                pf = gross_win / gross_loss
+                lines.append(f'Profit factor (last 30 trades): {pf:.2f}')
+            elif gross_win > 0:
+                pf = 99.0
+                lines.append('Profit factor (last 30 trades): no losses')
         coin_rows = [t for t in rows if t.get('symbol') == symbol][:5]
         if coin_rows:
             parts = [f"{t.get('exit_reason')} {float(t.get('net_pnl_usdt') or 0):+.2f}"
@@ -1057,9 +1449,9 @@ def _trade_history_context(symbol):
             lines.append(f'{symbol} most recent: ' + ' · '.join(parts))
         else:
             lines.append(f'{symbol}: no closed trades yet')
-        return '\n'.join(lines)
+        return '\n'.join(lines), pf
     except Exception:
-        return ''
+        return '', None
 
 
 def _phase1_pnl(trade):
@@ -1163,6 +1555,94 @@ def _close_full_position_at_sl(trade, sl_fill_px):
         f"{detail}\n"
         f"✅ Full position closed (both halves){extra}"
     )
+
+
+def _fetch_closed_trades(limit=100):
+    """Recent closed trades WITH recorded outcomes, newest first. [] on any problem."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    try:
+        r = requests.get(
+            f'{SUPABASE_URL}/rest/v1/option3_trades'
+            f'?phase=eq.3&exit_reason=not.is.null&net_pnl_usdt=not.is.null'
+            f'&order=closed_at.desc&limit={limit}'
+            f'&select=symbol,exit_reason,net_pnl_usdt,closed_at',
+            headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return []
+
+
+def maybe_send_daily_digest(cache):
+    """
+    Once per UTC day (first run after DIGEST_UTC_HOUR): Telegram heartbeat +
+    performance report — win rate, net P&L, profit factor & sizing tier, 7-day
+    slice, best/worst coins, open trades, Fear & Greed. Doubles as a dead-man
+    switch: if this message stops arriving, the pipeline is down.
+    """
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    now_utc = datetime.now(timezone.utc)
+    if now_utc.hour < DIGEST_UTC_HOUR:
+        return
+    today = now_utc.strftime('%Y-%m-%d')
+    if cache.get('_daily_digest', {}).get('date') == today:
+        return
+
+    lines = [
+        '💓 <b>Daily Report — TradingAI</b>',
+        f'🤖 Bot alive — scanning {len(SYMBOLS)} coins · mode: {"TEST" if TEST_MODE else "LIVE"}',
+    ]
+
+    fg_val, fg_label = fetch_fear_greed()
+    if fg_val is not None:
+        lines.append(f'🌡️ Fear & Greed: {fg_val}/100 — {fg_label}')
+
+    open_trades = _fetch_option3_trades()
+    if open_trades:
+        syms = ', '.join(t['symbol'].replace('-USDT', '') for t in open_trades)
+        lines.append(f'📈 Open trades: {len(open_trades)} ({syms})')
+    else:
+        lines.append('📈 Open trades: none')
+
+    rows = _fetch_closed_trades()
+    if rows:
+        pnls   = [float(t.get('net_pnl_usdt') or 0) for t in rows]
+        wins   = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p < 0]
+        lines.append(f'📊 Last {len(rows)} closed: {len(wins)}W / {len(losses)}L '
+                     f'({len(wins) / len(pnls) * 100:.0f}% win rate) · net {fmt_usdt(sum(pnls))} USDT')
+        gross_l = -sum(losses)
+        if gross_l > 0:
+            pf   = sum(wins) / gross_l
+            tier = ('30% (full)' if pf >= 1.5 else
+                    '22% (reduced)' if pf >= 1.0 else '15% (defensive)')
+            lines.append(f'⚖️ Profit factor: {pf:.2f} → position cap {tier}')
+        week_cut = (now_utc - timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%S')
+        wk = [float(t.get('net_pnl_usdt') or 0) for t in rows if (t.get('closed_at') or '') >= week_cut]
+        if wk:
+            lines.append(f'🗓️ Last 7 days: {len(wk)} trade(s) · net {fmt_usdt(sum(wk))} USDT')
+        by_coin = {}
+        for t in rows:
+            coin = t['symbol'].replace('-USDT', '')
+            by_coin[coin] = by_coin.get(coin, 0.0) + float(t.get('net_pnl_usdt') or 0)
+        if len(by_coin) >= 2:
+            best  = max(by_coin.items(), key=lambda kv: kv[1])
+            worst = min(by_coin.items(), key=lambda kv: kv[1])
+            if best[0] != worst[0]:
+                lines.append(f'🥇 Best: {best[0]} {fmt_usdt(best[1])} · 🚨 Worst: {worst[0]} {fmt_usdt(worst[1])}')
+    else:
+        lines.append('📊 No closed trades with recorded outcomes yet')
+
+    lines.append('ℹ️ If this daily report stops arriving, the pipeline is down — '
+                 'check GitHub Actions and cron-job.org')
+    send_telegram('\n'.join(lines))
+    cache['_daily_digest'] = {'date': today}
+    print('  [Digest] Daily report sent ✓')
 
 
 # ── Option 3 exit monitor ─────────────────────────────────────────────────────
@@ -1530,6 +2010,9 @@ def run_scan(cache, warm_up=False):
                     'macd_data':    macd_data,
                     'bb_data':      bb_data,
                     'vol_ratio':    vol_ratio,
+                    'highs':        candle_data['highs'],   # for ATR + support/resistance
+                    'lows':         candle_data['lows'],
+                    'closes':       closes,
                     'rank_score':   _rank_candidate(sig, rsi_1h, rsi_4h, vol_ratio),
                     'cache_update': cache_update,
                 })
@@ -1550,6 +2033,7 @@ def run_scan(cache, warm_up=False):
     # ── Safety rails: BTC regime, open-trade cap, daily SL circuit breaker ────
     # Enforced in production; in TEST_MODE they are evaluated and logged only,
     # so the test pipeline keeps producing trades regardless of market regime.
+    regime_msg = ''
     if candidates:
         regime_ok, regime_msg = btc_regime_ok()
         print(f'  [Regime] {regime_msg}')
@@ -1619,21 +2103,29 @@ def run_scan(cache, warm_up=False):
                     print(f'  {symbol}: trade placement failed — {e}')
                     trade_result = 'error'
             elif not TEST_MODE and OKX_API_KEY and CLAUDE_API_KEY and usdt_balance >= MIN_TRADE_USDT:
-                print(f'  {symbol}: asking Claude for trade params '
-                      f'(rank #{rank_i + 1}/{len(top_candidates)}, score={cand["rank_score"]:.2f})...')
-                params = ai_trade_params(
-                    symbol, cand['sig'], cand['ticker'], usdt_balance,
-                    cand['rsi_1h'], cand['rsi_4h'], cand['macd_data'], cand['bb_data'], cand['vol_ratio'],
-                )
-                if params:
-                    try:
-                        trade_result = place_option3_trade(symbol, params, cand['ticker'])
-                        print(f'  {symbol}: Option 3 trade placed ✓  (rank #{rank_i + 1})')
-                    except Exception as e:
-                        print(f'  {symbol}: trade placement failed — {e}')
-                        trade_result = 'error'
-                else:
+                # Rich decision context: ATR, S/R, suggested exits, funding, OI, order book
+                extra = _build_trade_context(cand, regime_msg)
+                if extra.get('funding_pct') is not None and extra['funding_pct'] > FUNDING_HARD_SKIP_PCT:
+                    print(f'  {symbol}: funding {extra["funding_pct"]:+.3f}% > '
+                          f'+{FUNDING_HARD_SKIP_PCT}% — longs dangerously crowded, auto-skip')
                     trade_result = 'skip'
+                else:
+                    print(f'  {symbol}: asking Claude for trade params '
+                          f'(rank #{rank_i + 1}/{len(top_candidates)}, score={cand["rank_score"]:.2f})...')
+                    params = ai_trade_params(
+                        symbol, cand['sig'], cand['ticker'], usdt_balance,
+                        cand['rsi_1h'], cand['rsi_4h'], cand['macd_data'], cand['bb_data'], cand['vol_ratio'],
+                        extra=extra,
+                    )
+                    if params:
+                        try:
+                            trade_result = place_option3_trade(symbol, params, cand['ticker'])
+                            print(f'  {symbol}: Option 3 trade placed ✓  (rank #{rank_i + 1})')
+                        except Exception as e:
+                            print(f'  {symbol}: trade placement failed — {e}')
+                            trade_result = 'error'
+                    else:
+                        trade_result = 'skip'
 
             pending_alerts.append((symbol, cand['sig'], cand['ticker'], trade_result, cand['cache_update']))
 
@@ -1669,6 +2161,7 @@ def main():
 
         run_scan(cache, warm_up=(fresh and scan_num == 1))
         monitor_option3_trades()
+        maybe_send_daily_digest(cache)
         save_cache(cache)
 
         elapsed   = time.time() - start

@@ -41,6 +41,13 @@
       <span class="logo">▲ TradingAI</span>
     </div>
     <div class="header-right">
+      <button class="btn-icon" id="perfBtn" title="Bot performance — profit / loss by period">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="6" y1="20" x2="6" y2="14" />
+          <line x1="12" y1="20" x2="12" y2="8" />
+          <line x1="18" y1="20" x2="18" y2="4" />
+        </svg>
+      </button>
       <button class="btn-icon" id="refreshBtn" title="Refresh all data">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="23 4 23 10 17 10" />
@@ -69,9 +76,49 @@
       <span class="summary-value" id="topSignal">—</span>
     </div>
     <div class="summary-item">
+      <span class="summary-label" title="Market-wide mood (alternative.me). Low = panic (contrarian buy zone), high = euphoria (late-cycle risk).">Fear &amp; Greed ⓘ</span>
+      <span class="summary-value" id="fearGreed">—</span>
+    </div>
+    <div class="summary-item">
       <span class="summary-label">Last Updated</span>
       <span class="summary-value" id="lastUpdated">—</span>
     </div>
+  </div>
+
+  <!-- ─────────── BOT PERFORMANCE (hidden until the header 📊 button; lazy-loaded) ─────────── -->
+  <div class="perf-wrap">
+    <section class="card perf-card" id="perfSection" style="display:none;">
+      <div class="card-header">
+        <h2 class="card-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="6" y1="20" x2="6" y2="14" />
+            <line x1="12" y1="20" x2="12" y2="8" />
+            <line x1="18" y1="20" x2="18" y2="4" />
+          </svg>
+          Bot Performance
+        </h2>
+        <div class="card-actions">
+          <button class="btn-small" id="perfRefreshBtn">↻ Refresh data</button>
+        </div>
+      </div>
+
+      <div class="perf-ranges">
+        <button class="perf-range active" data-days="7">7D</button>
+        <button class="perf-range" data-days="30">30D</button>
+        <button class="perf-range" data-days="90">90D</button>
+        <button class="perf-range" data-days="0">All</button>
+        <span class="perf-custom">
+          <input type="date" id="perfFrom" class="perf-date" />
+          <span class="perf-arrow">→</span>
+          <input type="date" id="perfTo" class="perf-date" />
+          <button class="btn-small" id="perfApplyBtn">Apply</button>
+        </span>
+      </div>
+
+      <div id="perfBody">
+        <div class="loading-row"><span class="spinner"></span> Loading trade history…</div>
+      </div>
+    </section>
   </div>
 
   <!-- ═══════════════════════════════════════ MAIN GRID ═══════════════════════════════════════ -->
@@ -301,29 +348,6 @@
         </div>
 
         <div class="settings-section">
-          <h4 class="settings-heading">Trading Preferences</h4>
-          <div class="form-row">
-            <div class="form-group">
-              <label>Risk Profile</label>
-              <select class="form-input" id="settingsRiskProfile">
-                <option value="conservative">Conservative — small, safe positions</option>
-                <option value="moderate">Moderate — balanced risk/reward</option>
-                <option value="aggressive" selected>Aggressive — high risk, high reward</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>Auto-Refresh Interval</label>
-              <select class="form-input" id="settingsRefreshInterval">
-                <option value="30000">30 seconds</option>
-                <option value="60000" selected>1 minute</option>
-                <option value="300000">5 minutes</option>
-                <option value="0">Manual only</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <div class="settings-section">
           <h4 class="settings-heading">Data</h4>
           <div class="settings-actions">
             <button class="btn-secondary" id="exportDataBtn">Export Scanner JSON</button>
@@ -361,6 +385,15 @@
 
   <!-- ═══════════════════════════════════════ TOAST ═══════════════════════════════════════ -->
   <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Portrait-only guard: covers the app when a phone rotates to landscape -->
+  <div class="rotate-overlay" id="rotateOverlay">
+    <div class="rotate-inner">
+      <div class="rotate-icon">📱</div>
+      <div>Please rotate your device back to portrait</div>
+      <span>TradingAI is portrait-only</span>
+    </div>
+  </div>
 
   <script src="config.js"></script>
   <script src="app.js"></script>

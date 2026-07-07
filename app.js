@@ -20,6 +20,8 @@ const state = {
   usdtBalance: 0,        // free USDT from OKX sync
   sessionPassword: null, // set after successful cloud unlock
   derivData: {},         // {symbol: {fundingRate, nextFundingRate, openInterest}}
+  perfRows: null,        // closed-trade history — lazy-loaded on first panel open, then cached
+  perfRange: { days: 7 },
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -36,6 +38,8 @@ const LS = {
 // ═══════════════════════════════════════════════════════════
 //  SETTINGS
 // ═══════════════════════════════════════════════════════════
+// Risk profile is fixed to 'aggressive' and auto-refresh to 1 minute (config.js) —
+// both were removed from the Settings UI on purpose (single-user app, fixed strategy).
 function loadSettings() {
   const keys = LS.get('apiKeys', {});
   if (keys.claude) CONFIG.CLAUDE_API_KEY = keys.claude;
@@ -44,10 +48,6 @@ function loadSettings() {
   if (keys.okxPassphrase) CONFIG.OKX_PASSPHRASE = keys.okxPassphrase;
   if (keys.tgToken) CONFIG.TELEGRAM_BOT_TOKEN = keys.tgToken;
   if (keys.tgChatId) CONFIG.TELEGRAM_CHAT_ID = keys.tgChatId;
-  const prefs = LS.get('prefs', {});
-  if (prefs.riskProfile) CONFIG.RISK_PROFILE = prefs.riskProfile;
-  if (prefs.refreshInterval) CONFIG.AUTO_REFRESH_INTERVAL = parseInt(prefs.refreshInterval);
-  if (prefs.tradingCapital) CONFIG.TRADING_CAPITAL = parseFloat(prefs.tradingCapital);
 }
 
 function saveSettings() {
@@ -63,11 +63,6 @@ function saveSettings() {
     tgToken: el('settingsTgToken').value.trim(),
     tgChatId: el('settingsTgChatId').value.trim(),
   });
-  LS.set('prefs', {
-    riskProfile: el('settingsRiskProfile').value,
-    refreshInterval: el('settingsRefreshInterval').value,
-    tradingCapital: el('settingsTradingCapital').value,
-  });
   loadSettings();
   toast('Settings saved', 'success');
   closeModal('settingsModal');
@@ -77,7 +72,6 @@ function saveSettings() {
 function populateSettingsForm() {
   const sbCfg = getSupabaseCfg();
   const keys = LS.get('apiKeys', {});
-  const prefs = LS.get('prefs', {});
   el('settingsSbUrl').value = sbCfg.url;
   el('settingsSbKey').value = sbCfg.key;
   if (keys.claude) el('settingsClaudeKey').value = keys.claude;
@@ -86,9 +80,6 @@ function populateSettingsForm() {
   if (keys.okxPassphrase) el('settingsOkxPassphrase').value = keys.okxPassphrase;
   if (keys.tgToken) el('settingsTgToken').value = keys.tgToken;
   if (keys.tgChatId) el('settingsTgChatId').value = keys.tgChatId;
-  if (prefs.riskProfile) el('settingsRiskProfile').value = prefs.riskProfile;
-  if (prefs.refreshInterval) el('settingsRefreshInterval').value = prefs.refreshInterval;
-  if (prefs.tradingCapital) el('settingsTradingCapital').value = prefs.tradingCapital;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -273,7 +264,6 @@ async function saveToCloud(password) {
     claude: CONFIG.CLAUDE_API_KEY, okxKey: CONFIG.OKX_API_KEY,
     okxSecret: CONFIG.OKX_SECRET_KEY, okxPassphrase: CONFIG.OKX_PASSPHRASE,
     tgToken: CONFIG.TELEGRAM_BOT_TOKEN, tgChatId: CONFIG.TELEGRAM_CHAT_ID,
-    riskProfile: CONFIG.RISK_PROFILE, refreshInterval: String(CONFIG.AUTO_REFRESH_INTERVAL),
   };
   const salt = randomHex(16);
   const password_hash = await hashPassword(password, salt);
@@ -330,17 +320,11 @@ async function handleUnlock() {
     if (data.okxPassphrase) CONFIG.OKX_PASSPHRASE = data.okxPassphrase;
     if (data.tgToken) CONFIG.TELEGRAM_BOT_TOKEN = data.tgToken;
     if (data.tgChatId) CONFIG.TELEGRAM_CHAT_ID = data.tgChatId;
-    if (data.riskProfile) CONFIG.RISK_PROFILE = data.riskProfile;
-    if (data.refreshInterval) CONFIG.AUTO_REFRESH_INTERVAL = parseInt(data.refreshInterval);
 
     LS.set('apiKeys', {
       claude: data.claude || '', okxKey: data.okxKey || '',
       okxSecret: data.okxSecret || '', okxPassphrase: data.okxPassphrase || '',
       tgToken: data.tgToken || '', tgChatId: data.tgChatId || '',
-    });
-    LS.set('prefs', {
-      riskProfile: data.riskProfile || 'moderate',
-      refreshInterval: data.refreshInterval || '60000',
     });
 
     state.sessionPassword = password;
@@ -999,69 +983,150 @@ async function fetchWithTimeout(url, ms = 7000) {
   finally { clearTimeout(id); }
 }
 
-async function fetchNews(topic = '') {
-  // RSS via corsproxy.io — free, no API key, CORS-safe.
-  // CryptoPanic aggregates Twitter/X, Reddit, and all major outlets in one feed —
-  // it's the closest free substitute for X since Twitter killed its free API in 2023.
-  // proxies: per-feed override — use when a site blocks corsproxy.io specifically.
+// News comes from three sources fetched in PARALLEL and merged (no more
+// single-source first-wins): CryptoCompare News API (primary — direct JSON,
+// CORS-friendly, coin-tagged, no proxy), CryptoPanic (community-voted
+// bullish/bearish sentiment, only when an API key is configured), and two
+// RSS feeds via CORS proxies for breadth. Deduped by title, newest first.
+async function fetchCryptoCompareNews() {
+  try {
+    const key = CONFIG.CRYPTOCOMPARE_API_KEY ? `&api_key=${CONFIG.CRYPTOCOMPARE_API_KEY}` : '';
+    const res = await fetchWithTimeout(`https://min-api.cryptocompare.com/data/v2/news/?lang=EN${key}`);
+    if (!res.ok) return [];
+    const d = await res.json();
+    return (d.Data ?? []).map(n => {
+      const body = (n.body ?? '').replace(/<[^>]*>/g, '');
+      return {
+        title: n.title ?? '',
+        summary: body.substring(0, 160) + (body.length > 160 ? '…' : ''),
+        source: n.source_info?.name ?? 'CryptoCompare',
+        url: n.url,
+        ts: (n.published_on ?? 0) * 1000,
+        sentiment: guessSentiment(`${n.title} ${body}`),
+      };
+    }).filter(a => a.title);
+  } catch { return []; }
+}
+
+async function fetchCryptoPanicNews() {
+  if (!CONFIG.CRYPTOPANIC_API_KEY) return [];
+  const url = `https://cryptopanic.com/api/v1/posts/?auth_token=${CONFIG.CRYPTOPANIC_API_KEY}&public=true`;
+  try {
+    let res;
+    try { res = await fetchWithTimeout(url); } catch { res = null; }
+    if (!res || !res.ok) {
+      res = await fetchWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
+    }
+    if (!res.ok) return [];
+    const d = await res.json();
+    return (d.results ?? []).map(p => {
+      // Community votes beat keyword guessing for sentiment
+      const v = p.votes ?? {};
+      const pos = (v.positive ?? 0) + (v.liked ?? 0);
+      const neg = (v.negative ?? 0) + (v.disliked ?? 0) + (v.toxic ?? 0);
+      return {
+        title: p.title ?? '',
+        summary: '',
+        source: p.source?.title ?? 'CryptoPanic',
+        url: p.url,
+        ts: p.published_at ? new Date(p.published_at).getTime() : 0,
+        sentiment: pos > neg ? 'pos' : neg > pos ? 'neg' : guessSentiment(p.title ?? ''),
+      };
+    }).filter(a => a.title);
+  } catch { return []; }
+}
+
+async function fetchRssNews() {
   const PROXY_CORSPROXY = u => `https://corsproxy.io/?${encodeURIComponent(u)}`;
   const PROXY_ALLORIGINS = u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`;
-
   const feeds = [
-    // CryptoPanic blocks corsproxy.io → use allorigins only (avoids the 403 console error)
-    { rss: 'https://cryptopanic.com/news/rss/', source: 'CryptoPanic', proxies: [PROXY_ALLORIGINS] },
     { rss: 'https://cointelegraph.com/rss', source: 'CoinTelegraph', proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
-    { rss: 'https://decrypt.co/feed', source: 'Decrypt', proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
     { rss: 'https://www.coindesk.com/arc/outboundfeeds/rss/', source: 'CoinDesk', proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
-    { rss: 'https://bitcoinmagazine.com/.rss/full/', source: 'Bitcoin Magazine', proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
-    { rss: 'https://www.theblock.co/rss.xml', source: 'The Block', proxies: [PROXY_CORSPROXY, PROXY_ALLORIGINS] },
   ];
 
-  for (const feed of feeds) {
-    try {
-      let text = null;
-      for (const proxy of feed.proxies) {
-        try {
-          const res = await fetchWithTimeout(proxy(feed.rss));
-          if (!res.ok) continue;
-          text = await res.text();
-          if (text) break;
-        } catch { }
-      }
-      if (!text) continue;
+  const parseFeed = async feed => {
+    for (const proxy of feed.proxies) {
+      try {
+        const res = await fetchWithTimeout(proxy(feed.rss));
+        if (!res.ok) continue;
+        const text = await res.text();
+        if (!text) continue;
+        const xml = new DOMParser().parseFromString(text, 'text/xml');
+        const items = Array.from(xml.querySelectorAll('item'));
+        if (!items.length) continue;
+        const getText = (node, tag) => node.querySelector(tag)?.textContent?.trim() || '';
+        return items.map(item => {
+          const desc = getText(item, 'description').replace(/<[^>]*>/g, '');
+          const pub = getText(item, 'pubDate');
+          return {
+            title: getText(item, 'title'),
+            summary: desc.substring(0, 160) + (desc.length > 160 ? '…' : ''),
+            source: feed.source,
+            url: getText(item, 'link'),
+            ts: pub ? new Date(pub).getTime() : 0,
+            sentiment: guessSentiment(`${getText(item, 'title')} ${desc}`),
+          };
+        }).filter(a => a.title);
+      } catch { }
+    }
+    return [];
+  };
 
-      const xml = new DOMParser().parseFromString(text, 'text/xml');
-      const items = Array.from(xml.querySelectorAll('item'));
-      if (!items.length) continue;
+  const results = await Promise.allSettled(feeds.map(parseFeed));
+  return results.flatMap(r => (r.status === 'fulfilled' ? r.value : []));
+}
 
-      const getText = (node, tag) => node.querySelector(tag)?.textContent?.trim() || '';
+async function fetchFearGreed() {
+  // Crypto Fear & Greed Index (alternative.me — free, keyless, CORS-friendly).
+  try {
+    const res = await fetchWithTimeout('https://api.alternative.me/fng/?limit=1');
+    if (!res.ok) return;
+    const row = (await res.json())?.data?.[0];
+    if (!row) return;
+    const v = parseInt(row.value, 10);
+    const box = el('fearGreed');
+    box.textContent = `${v} — ${row.value_classification}`;
+    box.style.color = v <= 40 ? 'var(--red)' : v >= 60 ? 'var(--green)' : 'var(--amber)';
+  } catch { }
+}
 
-      let articles = items.map(item => ({
-        title: getText(item, 'title'),
-        link: getText(item, 'link'),
-        description: getText(item, 'description').replace(/<[^>]*>/g, ''),
-        pubDate: getText(item, 'pubDate'),
-      })).filter(a => a.title);
+function dedupeByTitle(articles) {
+  const seen = new Set();
+  const out = [];
+  for (const a of articles) {
+    const key = (a.title || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 60);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(a);
+  }
+  return out;
+}
 
-      if (topic) {
-        const t = topic.toLowerCase();
-        articles = articles.filter(a => (a.title + ' ' + a.description).toLowerCase().includes(t));
-      }
-      if (!articles.length) continue;
+async function fetchNews(topic = '') {
+  const results = await Promise.allSettled([
+    fetchCryptoCompareNews(),
+    fetchCryptoPanicNews(),
+    fetchRssNews(),
+  ]);
+  let articles = results.flatMap(r => (r.status === 'fulfilled' && Array.isArray(r.value) ? r.value : []));
 
-      state.news = articles.slice(0, CONFIG.MAX_NEWS_ARTICLES).map(a => ({
-        title: a.title,
-        summary: a.description.substring(0, 160) + (a.description.length > 160 ? '…' : ''),
-        source: feed.source,
-        url: a.link,
-        age: a.pubDate ? timeAgo(new Date(a.pubDate)) : 'recently',
-        sentiment: guessSentiment(a.title + ' ' + a.description),
-      }));
-      return;
-    } catch { }
+  if (topic) {
+    const t = topic.toLowerCase();
+    articles = articles.filter(a => `${a.title} ${a.summary}`.toLowerCase().includes(t));
   }
 
-  state.news = getDemoNews();
+  articles = dedupeByTitle(articles).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+
+  state.news = articles.slice(0, CONFIG.MAX_NEWS_ARTICLES).map(a => ({
+    title: a.title,
+    summary: a.summary,
+    source: a.source,
+    url: a.url,
+    age: a.ts ? timeAgo(new Date(a.ts)) : 'recently',
+    sentiment: a.sentiment,
+  }));
+
+  if (!state.news.length) state.news = getDemoNews();
 }
 
 function guessSentiment(text) {
@@ -1685,6 +1750,153 @@ function markdownToHtml(text) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  BOT PERFORMANCE PANEL
+//  Lazy-loaded: NOTHING is fetched at page load (coin data stays fast).
+//  First click on the header 📊 button fetches the closed-trade history
+//  from Supabase once and caches it; range switching is then instant.
+// ═══════════════════════════════════════════════════════════
+const ROUND_TRIP_FEE = 0.002; // 0.1% OKX taker fee on entry + exit (estimate)
+
+function fmtSigned(v) {
+  return `${v >= 0 ? '+' : '−'}$${Math.abs(v).toFixed(2)}`;
+}
+
+async function loadPerfData(force = false) {
+  if (state.perfRows && !force) return true;
+  try {
+    const url = `${getSupabaseCfg().url}/rest/v1/option3_trades` +
+      `?phase=eq.3&exit_reason=not.is.null&net_pnl_usdt=not.is.null` +
+      `&order=closed_at.asc&limit=1000` +
+      `&select=symbol,exit_reason,net_pnl_usdt,amount_usdt,closed_at`;
+    const res = await fetch(url, { headers: sbHeaders() });
+    if (!res.ok) throw new Error(`Supabase ${res.status}`);
+    state.perfRows = await res.json();
+    return true;
+  } catch (e) {
+    el('perfBody').innerHTML =
+      `<div class="perf-empty">⚠ Could not load trade history: ${escHtml(e.message)}</div>`;
+    return false;
+  }
+}
+
+function perfFilteredRows() {
+  const r = state.perfRange;
+  let from = 0, to = Infinity;
+  if (r.custom) { from = r.from; to = r.to; }
+  else if (r.days > 0) from = Date.now() - r.days * 86400000;
+  return (state.perfRows ?? []).filter(t => {
+    const ts = new Date(t.closed_at).getTime();
+    return ts >= from && ts <= to;
+  });
+}
+
+function equityCurveSvg(pnls) {
+  if (pnls.length < 2) return '';
+  const pts = [0];
+  for (const p of pnls) pts.push(pts[pts.length - 1] + p);
+  const min = Math.min(...pts), max = Math.max(...pts);
+  const span = (max - min) || 1;
+  const W = 600, H = 110, PAD = 6;
+  const x = i => PAD + i * (W - 2 * PAD) / (pts.length - 1);
+  const y = v => PAD + (max - v) * (H - 2 * PAD) / span;
+  const line = pts.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const zero = (min < 0 && max > 0)
+    ? `<line x1="${PAD}" y1="${y(0).toFixed(1)}" x2="${W - PAD}" y2="${y(0).toFixed(1)}" stroke="var(--border)" stroke-dasharray="4 4"/>`
+    : '';
+  const color = pts[pts.length - 1] >= 0 ? 'var(--green)' : 'var(--red)';
+  return `<svg class="perf-curve" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${zero}<polyline points="${line}" fill="none" stroke="${color}" stroke-width="2"/></svg>`;
+}
+
+function renderPerf() {
+  if (!state.perfRows) return;
+  const rows = perfFilteredRows();
+  const body = el('perfBody');
+  if (!rows.length) {
+    body.innerHTML = `<div class="perf-empty">No closed trades in this period.<br>
+      <span>History starts with trades closed after the P&amp;L tracking update — new trades appear here automatically.</span></div>`;
+    return;
+  }
+  const pnls      = rows.map(t => +t.net_pnl_usdt || 0);
+  const net       = pnls.reduce((a, b) => a + b, 0);
+  const wins      = pnls.filter(p => p > 0);
+  const losses    = pnls.filter(p => p <= 0);
+  const fees      = rows.reduce((s, t) => s + (+t.amount_usdt || 0) * ROUND_TRIP_FEE, 0);
+  const gross     = net + fees;
+  const grossLoss = -losses.reduce((a, b) => a + b, 0);
+  const grossWin  = wins.reduce((a, b) => a + b, 0);
+  const pf        = grossLoss > 0 ? grossWin / grossLoss : Infinity;
+  const avgW      = wins.length ? grossWin / wins.length : 0;
+  const avgL      = losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : 0;
+
+  const byCoin = {}, byExit = {};
+  for (const t of rows) {
+    const c = t.symbol.replace('-USDT', '');
+    if (!byCoin[c]) byCoin[c] = { pnl: 0, n: 0 };
+    byCoin[c].pnl += +t.net_pnl_usdt || 0;
+    byCoin[c].n += 1;
+    byExit[t.exit_reason] = (byExit[t.exit_reason] || 0) + 1;
+  }
+  const exitLabels = {
+    tp_trail: '🏁 TP + trailing', sl: '🔴 Stop loss', break_even: '⚪ Break-even',
+    tp_then_sl: '🔄 Fast reversal', cancelled: '✖ Cancelled', error: '⚠ Error',
+  };
+
+  body.innerHTML = `
+    <div class="perf-stats">
+      <div class="perf-stat main">
+        <span class="ps-label">Net P&amp;L — after OKX fees (your real result)</span>
+        <span class="ps-value ${net >= 0 ? 'pos' : 'neg'}">${fmtSigned(net)}</span>
+      </div>
+      <div class="perf-stat"><span class="ps-label">Before fees</span>
+        <span class="ps-value ${gross >= 0 ? 'pos' : 'neg'}">${fmtSigned(gross)}</span></div>
+      <div class="perf-stat"><span class="ps-label">OKX fees (est.)</span>
+        <span class="ps-value">$${fees.toFixed(2)}</span></div>
+      <div class="perf-stat"><span class="ps-label">Trades</span>
+        <span class="ps-value">${rows.length} <small>(${wins.length}W / ${losses.length}L)</small></span></div>
+      <div class="perf-stat"><span class="ps-label">Win rate</span>
+        <span class="ps-value">${(wins.length / rows.length * 100).toFixed(0)}%</span></div>
+      <div class="perf-stat"><span class="ps-label">Profit factor</span>
+        <span class="ps-value">${pf === Infinity ? '∞' : pf.toFixed(2)}</span></div>
+      <div class="perf-stat"><span class="ps-label">Avg win / avg loss</span>
+        <span class="ps-value"><span class="pos">${fmtSigned(avgW)}</span> / <span class="neg">${fmtSigned(avgL)}</span></span></div>
+    </div>
+    ${equityCurveSvg(pnls)}
+    <div class="perf-tables">
+      <table class="data-table perf-table">
+        <thead><tr><th>Coin</th><th class="num">Trades</th><th class="num">Net P&amp;L</th></tr></thead>
+        <tbody>${Object.entries(byCoin).sort((a, b) => b[1].pnl - a[1].pnl).map(([c, v]) =>
+          `<tr><td>${escHtml(c)}</td><td class="num">${v.n}</td>
+           <td class="num ${v.pnl >= 0 ? 'pos' : 'neg'}">${fmtSigned(v.pnl)}</td></tr>`).join('')}
+        </tbody>
+      </table>
+      <table class="data-table perf-table">
+        <thead><tr><th>Exit type</th><th class="num">Count</th></tr></thead>
+        <tbody>${Object.entries(byExit).sort((a, b) => b[1] - a[1]).map(([k, n]) =>
+          `<tr><td>${exitLabels[k] || escHtml(k)}</td><td class="num">${n}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function togglePerfPanel() {
+  const sec = el('perfSection');
+  const opening = sec.style.display === 'none';
+  if (opening) {
+    sec.style.display = '';
+    requestAnimationFrame(() => sec.classList.add('open'));
+    el('perfBtn').classList.add('active');
+    if (!state.perfRows) {
+      loadPerfData().then(ok => { if (ok) renderPerf(); });
+    }
+    setTimeout(() => sec.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  } else {
+    sec.classList.remove('open');
+    el('perfBtn').classList.remove('active');
+    setTimeout(() => { sec.style.display = 'none'; }, 250);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
 //  REFRESH
 // ═══════════════════════════════════════════════════════════
 async function refreshAll() {
@@ -1704,6 +1916,7 @@ async function refreshAll() {
 
 async function refreshNews(topic = '') {
   el('newsList').innerHTML = '<div class="loading-row"><span class="spinner"></span> Loading news...</div>';
+  fetchFearGreed();   // piggyback on the news cadence (index updates daily)
   await fetchNews(topic);
   renderNews();
 }
@@ -1822,6 +2035,31 @@ function wireEvents() {
   el('refreshBtn').addEventListener('click', refreshAll);
   el('settingsBtn').addEventListener('click', () => { populateSettingsForm(); openModal('settingsModal'); });
 
+  // Bot performance panel (lazy-loaded on first open)
+  el('perfBtn').addEventListener('click', togglePerfPanel);
+  el('perfRefreshBtn').addEventListener('click', () => {
+    el('perfBody').innerHTML = '<div class="loading-row"><span class="spinner"></span> Reloading trade history…</div>';
+    loadPerfData(true).then(ok => { if (ok) renderPerf(); });
+  });
+  document.querySelectorAll('.perf-range').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.perf-range').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.perfRange = { days: +btn.dataset.days };
+      renderPerf();
+    });
+  });
+  el('perfApplyBtn').addEventListener('click', () => {
+    const f = el('perfFrom').value, t = el('perfTo').value;
+    if (!f || !t) { toast('Pick both dates first', 'error'); return; }
+    const from = new Date(`${f}T00:00:00`).getTime();
+    const to   = new Date(`${t}T23:59:59`).getTime();
+    if (from > to) { toast('"From" must be before "To"', 'error'); return; }
+    document.querySelectorAll('.perf-range').forEach(b => b.classList.remove('active'));
+    state.perfRange = { custom: true, from, to };
+    renderPerf();
+  });
+
   // Scanner
   el('scannerSortSelect').addEventListener('change', () => { state.scannerSort = el('scannerSortSelect').value; renderScanner(); });
 
@@ -1864,8 +2102,6 @@ function wireEvents() {
       CONFIG.OKX_PASSPHRASE = el('settingsOkxPassphrase').value.trim();
       CONFIG.TELEGRAM_BOT_TOKEN = el('settingsTgToken').value.trim();
       CONFIG.TELEGRAM_CHAT_ID = el('settingsTgChatId').value.trim();
-      CONFIG.RISK_PROFILE = el('settingsRiskProfile').value;
-      CONFIG.AUTO_REFRESH_INTERVAL = parseInt(el('settingsRefreshInterval').value);
       await saveToCloud(password);
       state.sessionPassword = password;
       el('settingsCloudPassword').value = '';
@@ -1937,6 +2173,10 @@ async function init() {
   startAgeTicker();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => { });
 
+  // Portrait-only: manifests lock installed PWAs; this best-effort API call covers
+  // browsers that allow it, and the CSS rotate-overlay guards everything else.
+  try { screen.orientation?.lock?.('portrait')?.catch(() => { }); } catch { }
+
   // If Supabase is configured, try auto-unlock from session first
   if (isSupabaseConfigured()) {
     const saved = sessionStorage.getItem('sp');
@@ -1949,8 +2189,6 @@ async function init() {
         if (data.okxPassphrase) CONFIG.OKX_PASSPHRASE = data.okxPassphrase;
         if (data.tgToken) CONFIG.TELEGRAM_BOT_TOKEN = data.tgToken;
         if (data.tgChatId) CONFIG.TELEGRAM_CHAT_ID = data.tgChatId;
-        if (data.riskProfile) CONFIG.RISK_PROFILE = data.riskProfile;
-        if (data.refreshInterval) CONFIG.AUTO_REFRESH_INTERVAL = parseInt(data.refreshInterval);
         state.sessionPassword = saved;
         await loadAppData();
         return;

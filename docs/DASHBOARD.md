@@ -62,15 +62,27 @@ A non-Option-3 `[TRADE]` sell tag falls back to a simple market sell. See [OPTIO
 
 ### 6. News panel
 
-RSS feeds (CryptoPanic → CoinTelegraph → Decrypt → CoinDesk → Bitcoin Magazine → The Block) fetched through CORS proxies (`corsproxy.io`, fallback `api.allorigins.win`) — first feed that yields articles wins. Keyword search filters by topic. `guessSentiment()` regex-classifies each headline (pos/neg/neu) and an aggregate "% bullish" sentiment bar renders on top. Demo articles if all feeds fail.
+Three sources fetched **in parallel and merged** (deduped by normalized title, sorted newest-first): the **CryptoCompare News API** (primary — direct JSON, CORS-friendly, no proxy, keyed via `CONFIG.CRYPTOCOMPARE_API_KEY`), **CryptoPanic** (only when `CONFIG.CRYPTOPANIC_API_KEY` is set — its community votes replace regex sentiment for its articles), and two RSS feeds (CoinTelegraph, CoinDesk) via CORS proxies for breadth. Keyword search filters the merged list by topic. `guessSentiment()` regex-classifies non-voted headlines and an aggregate "% bullish" sentiment bar renders on top. Demo articles if every source fails. (The worker separately fetches coin-tagged CryptoCompare headlines for AI trade decisions — see [SIGNAL-CHECKER.md](SIGNAL-CHECKER.md).)
 
-### 7. Balance sync
+### 7. Fear & Greed (summary bar)
+
+`fetchFearGreed()` shows the market-wide Fear & Greed Index (alternative.me, free/keyless) in the summary bar, color-coded (≤ 40 red, 41–59 amber, ≥ 60 green), refreshed on the news cadence (page load + every 10 min). The worker independently feeds the same index to AI trade decisions and the daily Telegram report.
+
+### 8. Balance sync
 
 `fetchOKXBalance()` merges the **unified trading account** and the **funding account** (on Classic accounts spot coins often sit in Funding), dedupes per coin, and keeps the higher USDT figure. Shown in the summary bar; cached in `localStorage` for instant display on next load.
 
-### 8. Settings modal
+### 9. Bot Performance panel (header 📊 button — lazy-loaded)
 
-Sections: Supabase config, Claude API key, Telegram (token/chat ID), OKX keys (Read + Trade, no Withdraw), **Cloud Security** (password + "Save All to Cloud" → encrypt to Supabase `app_settings`), risk profile, auto-refresh interval, scanner export/import JSON, full reset.
+Hidden by default; the bar-chart button in the header slides it in above the scanner. **Nothing is fetched at page load** (coin data stays fast): the first open runs one Supabase query for all closed trades with recorded outcomes (`loadPerfData()`, cached — range switching is instant afterwards; "↻ Refresh data" re-fetches). Ranges: 7D / 30D / 90D / All plus custom from→to date pickers. Shows: **Net P&L after OKX fees** (headline — the real result), before-fees P&L and estimated fees (0.2% round trip on `amount_usdt`), trades W/L, win rate, profit factor, avg win/loss, a cumulative equity-curve SVG, per-coin net table, and exit-type counts. Only trades closed after the P&L-tracking migration appear (older rows have no recorded outcome).
+
+### 10. Portrait-only lock
+
+Three layers: `"orientation": "portrait"` in both manifests (locks installed PWAs on Android), a best-effort `screen.orientation.lock('portrait')` at init, and a CSS overlay (`#rotateOverlay`) that covers the app with a "rotate back" prompt whenever a phone-sized screen goes landscape (`orientation: landscape` + `max-height: 500px` — desktops are unaffected).
+
+### 11. Settings modal
+
+Sections: Supabase config, Claude API key, Telegram (token/chat ID), OKX keys (Read + Trade, no Withdraw), **Cloud Security** (password + "Save All to Cloud" → encrypt to Supabase `app_settings`), scanner export/import JSON, full reset. Risk profile (`aggressive`) and auto-refresh interval (1 minute) are fixed in `config.js` and intentionally absent from the UI.
 
 ## Refresh behavior
 

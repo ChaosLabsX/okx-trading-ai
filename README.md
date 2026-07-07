@@ -21,6 +21,8 @@ The two halves share the same signal engine (identical scoring logic implemented
 | [docs/SIGNAL-CHECKER.md](docs/SIGNAL-CHECKER.md) | The Python worker: scan loop, alert rules, auto-trade decision flow, test mode, Telegram messages |
 | [docs/OPTION3-TRADE-SYSTEM.md](docs/OPTION3-TRADE-SYSTEM.md) | The Option 3 trade strategy in full detail: order placement, phases, exit monitoring, P&L math |
 | [docs/CRON-JOB-ORG.md](docs/CRON-JOB-ORG.md) | How the worker is scheduled: GitHub Actions cron + cron-job.org external trigger |
+| [docs/BACKTESTING.md](docs/BACKTESTING.md) | The backtesting harness: replay production rules over OKX history to tune parameters with evidence |
+| [CHANGELOG.md](CHANGELOG.md) | Every meaningful change with dates and reasons — read this to catch up on recent work |
 
 ## Repository layout
 
@@ -34,21 +36,25 @@ trading-ai/  (repo root)
 ├── manifest.json           # PWA manifest
 ├── site.webmanifest        # PWA manifest (linked from index.html)
 ├── signal_checker.py       # 24/7 background worker (signals + auto-trade + monitor + Telegram)
+├── backtest.py             # local backtesting harness — replays the worker's rules over history
 ├── .github/workflows/
 │   └── signal-checker.yml  # GitHub Actions workflow (cron + repository_dispatch triggers)
 ├── docs/                   # ← this documentation
 └── Illustrator/            # Logo source assets (not code)
 ```
 
-## The five external services
+## External services
 
 | Service | Used for | Credentials live in |
 |---|---|---|
 | **OKX** | Market data (public API, no key) + account balance, spot orders, algo orders (private API, HMAC-signed) | Browser: encrypted Supabase settings · Worker: GitHub Secrets |
 | **Supabase** | 1) Encrypted API-key storage for the dashboard, 2) `option3_trades` table that both halves write/read | URL + anon key are public in `config.js`; worker uses `SUPABASE_URL`/`SUPABASE_KEY` secrets |
 | **Telegram** | All trade/exit notifications (sent **only** by the Python worker — the browser never sends Telegram messages) | Bot token + chat ID |
-| **Anthropic (Claude)** | Browser AI Advisor (`claude-sonnet-4-6`, called directly from the browser) and worker trade advisor (`claude-haiku-4-5-20251001`) | Browser: user's key in settings · Worker: `CLAUDE_API_KEY` secret |
+| **Anthropic (Claude)** | Worker trade advisor (`claude-opus-4-8` with adaptive thinking — the autonomous decision-maker) and the browser's manual AI Advisor (`claude-sonnet-4-6`, rarely used since the app is fully automated) | Browser: user's key in settings · Worker: `CLAUDE_API_KEY` secret |
 | **cron-job.org** | External scheduler that triggers the GitHub Actions workflow every 5 minutes (GitHub's own cron is unreliable) | GitHub PAT stored in the cron-job.org job config |
+| **CryptoCompare** | News: coin-tagged headlines for the dashboard AND for the worker's AI trade decisions (hack/lawsuit/delisting headlines veto trades) | Free read-only key, news scope only — ships publicly in `config.js` and `signal_checker.py` |
+| **alternative.me** | Crypto Fear & Greed Index (market-wide mood 0–100) — shown in the dashboard summary bar and fed to the worker's AI decisions and daily report | Free, no key needed |
+| **CryptoPanic** *(dormant)* | Community-voted news sentiment for the dashboard — code is in place but unused: their API went paid (~$50/week, not worth it). Keyword sentiment is used instead; trading is unaffected (the AI reads raw headlines itself) | `CRYPTOPANIC_API_KEY` in `config.js` left empty on purpose |
 
 ## Quick "how it trades" summary
 
@@ -56,8 +62,8 @@ trading-ai/  (repo root)
 2. Each coin gets a score from RSI(1H), MACD, Bollinger %B, volume ratio, and RSI(4H). Score ≥ 5 → STRONG BUY (≥ 1 in test mode).
 3. A STRONG BUY must also pass a 30-minute-candle reversal confirmation (green candle + rising RSI + volume ≥ average) — skipped in test mode.
 4. Safety rails gate all trading (enforced in production, logged-only in test mode): a **BTC regime filter** blocks dip-buys while BTC is in a 4H downtrend, a **max-3 open trades** cap, and a **circuit breaker** that pauses trading after 3 stop-losses in 24h.
-5. Qualified coins are ranked; the top 2 per scan (1 in test mode) go to Claude Haiku — which also sees the bot's **recent live trade results** from Supabase — and it decides TRADE or SKIP and sizes the position (10–30% of the live USDT balance).
-6. An approved trade is placed as an **Option 3 trade**: market buy → OCO (take-profit + stop-loss on 50%) → conditional stop-loss (other 50%), so the **full position is SL-protected on OKX 24/7**. The trade is saved to Supabase.
+5. Qualified coins are ranked; the top 2 per scan (1 in test mode) go to Claude Opus 4.8 with rich context — **ATR volatility, support/resistance with suggested exits, funding rate, open interest, order-book imbalance, BTC regime, the coin's latest headlines (hack/lawsuit/delisting news vetoes the trade), and the bot's recent live results** — and it decides TRADE or SKIP and sizes the position (10–30% of balance, cap performance-weighted by the recent profit factor; funding > +0.10% auto-skips).
+6. An approved trade is placed as an **Option 3 trade**: maker-first limit entry (market fallback after 45 s) → OCO (take-profit + stop-loss on 50%) → conditional stop-loss (other 50%), so the **full position is SL-protected on OKX 24/7**. The trade is saved to Supabase.
 7. Every subsequent run, `monitor_option3_trades()` polls OKX for exits: partial TP hit → the 2nd-half SL is swapped for an active trailing stop (phase 2); SL hit → both halves stop out server-side; the trailing stop exit ends the trade. Every close records its outcome (`exit_reason`, `net_pnl_usdt`, `closed_at`) in Supabase and sends a Telegram message with the **exact USDT profit/loss net of OKX fees**.
 
 ## Development notes for the next AI/developer

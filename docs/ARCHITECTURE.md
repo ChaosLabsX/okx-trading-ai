@@ -48,7 +48,7 @@ They coordinate through the Supabase `option3_trades` table: a trade placed from
 
 1. cron-job.org (or GitHub's backup cron) triggers the workflow.
 2. `signal_checker.py` scans coins using OKX **public** endpoints (`/api/v5/market/candles`, `/api/v5/market/ticker`).
-3. A STRONG BUY passes filters → Claude Haiku is consulted (production only) → `place_option3_trade()` posts three orders to OKX **private** endpoints.
+3. A STRONG BUY passes filters → Claude Opus 4.8 is consulted (production only) → `place_option3_trade()` posts three orders to OKX **private** endpoints.
 4. The trade row is inserted into Supabase `option3_trades` with `phase = 1`.
 5. A Telegram message confirms the trade ("Trade Already Placed on OKX ✅").
 6. On every later run, `monitor_option3_trades()` reads all rows with `phase < 3`, checks OKX algo-order history for triggers, advances the phase, and sends exit Telegram messages with exact USDT P&L.
@@ -69,7 +69,7 @@ Encrypted cloud storage for the dashboard's API keys. Exactly one row (`id = 'ma
 | `iv` | text | Base64 12-byte AES-GCM IV |
 | `salt` | text | Random hex, used for both PBKDF2 and the password hash |
 
-The plaintext payload (never stored unencrypted) is: Claude API key, OKX key/secret/passphrase, Telegram token/chat ID, risk profile, refresh interval. Crypto: PBKDF2 (SHA-256, 100 000 iterations) → AES-GCM-256, all via the browser Web Crypto API (`encryptJSON`/`decryptJSON` in `app.js`). **The password is never stored** — only its salted hash; the worker has no access to this table and doesn't need it.
+The plaintext payload (never stored unencrypted) is: Claude API key, OKX key/secret/passphrase, Telegram token/chat ID. (Risk profile and refresh interval are hard-coded in `config.js` — always `aggressive` / 1 minute — and are no longer stored or shown in Settings; older cloud rows may still contain them, and they're simply ignored on load.) Crypto: PBKDF2 (SHA-256, 100 000 iterations) → AES-GCM-256, all via the browser Web Crypto API (`encryptJSON`/`decryptJSON` in `app.js`). **The password is never stored** — only its salted hash; the worker has no access to this table and doesn't need it.
 
 ### Table: `option3_trades`
 
@@ -125,13 +125,13 @@ alter table option3_trades
 |---|---|
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Telegram notifications |
 | `OKX_API_KEY`, `OKX_SECRET_KEY`, `OKX_PASSPHRASE` | OKX private API (needs **Read + Trade**, never Withdraw) |
-| `CLAUDE_API_KEY` | Claude Haiku trade advisor (auto-trade silently skips if unset) |
+| `CLAUDE_API_KEY` | Claude Opus 4.8 trade advisor (auto-trade silently skips if unset) |
 | `SUPABASE_URL`, `SUPABASE_KEY` | Trade persistence — without these, trades still get placed but the monitor can't track them (the trade-confirmation Telegram message warns loudly about this) |
 
 ## OKX API usage
 
-- **Public** (no auth): `/market/ticker`, `/market/candles` (1H/4H/30m), `/public/funding-rate`, `/public/open-interest` (the last two only from the browser, for the AI prompt).
-- **Private** (HMAC-SHA256-signed, ISO timestamp): `/account/balance`, `/asset/balances` (browser only — funding wallet), `/trade/order` (market buy/sell), `/trade/order-algo` (OCO `conditional` + `move_order_stop`), `/trade/cancel-algos`, `/trade/orders-algo-history` (exit detection), `/trade/order?instId=&ordId=` (exact fill price lookup).
+- **Public** (no auth): `/market/ticker`, `/market/candles` (1H/4H/30m — now including highs/lows for ATR and support/resistance), `/public/funding-rate` + `/public/open-interest` (browser for the manual AI prompt AND worker for auto-trade context), `/market/books` (worker — order-book bid/ask imbalance for top candidates), `/public/instruments` (worker — tick/lot sizes so limit entries are never rejected for precision).
+- **Private** (HMAC-SHA256-signed, ISO timestamp): `/account/balance`, `/asset/balances` (browser only — funding wallet), `/trade/order` (limit + market buys, market sells; also polled by order ID for limit-fill status and exact fill prices), `/trade/cancel-order` (limit-entry timeout fallback), `/trade/order-algo` (OCO `conditional` + `move_order_stop`), `/trade/cancel-algos`, `/trade/orders-algo-history` (exit detection).
 - The **browser** must route private calls through `https://corsproxy.io/?<url>` because OKX sends no CORS headers; two attempts with re-signing on retry (`okxProxyFetch`). The **worker** calls OKX directly.
 - OKX signature quirk (worker): the POST body must be the exact compact JSON string used in the HMAC pre-hash — `json.dumps(body, separators=(',', ':'))` — see `_okx_post()`.
 - Assumed taker fee: `OKX_FEE_RATE = 0.001` (0.1%), used for net-P&L math in Telegram messages.

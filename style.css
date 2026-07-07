@@ -1315,3 +1315,70 @@ tr.sig-ssell:hover { background: rgba(239,68,68,.08) !important; }
 ══════════════════════════════════════════════════════════ */
 .summary-bar { flex-wrap: nowrap; }
 @media (max-width: 1100px) { .summary-bar { flex-wrap: wrap; } .summary-item { min-width: 33%; } }
+
+/* ══════════════════════════════════════════════════════════
+   BOT PERFORMANCE PANEL  (header 📊 button — lazy-loaded)
+══════════════════════════════════════════════════════════ */
+.perf-card { opacity: 0; transform: translateY(-10px); transition: opacity .25s ease, transform .25s ease; }
+.perf-card.open { opacity: 1; transform: none; }
+.btn-icon.active { color: var(--accent); }
+
+.perf-ranges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.perf-range {
+  background: var(--bg-input); border: 1px solid var(--border); color: var(--text-dim);
+  padding: 5px 12px; border-radius: var(--radius-sm); cursor: pointer;
+  font-size: 12px; font-family: var(--font);
+}
+.perf-range:hover { border-color: var(--border-focus); color: var(--text); }
+.perf-range.active { background: var(--blue-dim); border-color: var(--accent); color: var(--text); }
+.perf-custom { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.perf-arrow { color: var(--text-muted); font-size: 12px; }
+.perf-date {
+  background: var(--bg-input); border: 1px solid var(--border); color: var(--text);
+  border-radius: var(--radius-sm); padding: 4px 6px; font-size: 12px;
+  font-family: var(--font); color-scheme: dark;
+}
+
+.perf-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.perf-stat {
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 4px;
+}
+.perf-stat.main { grid-column: 1 / -1; border-color: var(--border-focus); }
+.perf-stat.main .ps-value { font-size: 26px; }
+.ps-label { font-size: 11px; color: var(--text-muted); }
+.ps-value { font-size: 15px; font-weight: 600; font-family: var(--mono); }
+.ps-value small { color: var(--text-muted); font-weight: 400; }
+
+.perf-curve {
+  width: 100%; height: 110px; margin-bottom: 14px; display: block;
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.perf-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 640px) { .perf-tables { grid-template-columns: 1fr; } }
+.perf-empty { text-align: center; color: var(--text-muted); padding: 26px 10px; font-size: 13px; line-height: 1.7; }
+.perf-empty span { font-size: 11px; }
+
+/* ══════════════════════════════════════════════════════════
+   PORTRAIT-ONLY GUARD  (phones in landscape get a rotate prompt)
+══════════════════════════════════════════════════════════ */
+.rotate-overlay { display: none; }
+@media screen and (orientation: landscape) and (max-height: 500px) {
+  .rotate-overlay {
+    display: flex; position: fixed; inset: 0; z-index: 99999;
+    background: var(--bg); color: var(--text);
+    align-items: center; justify-content: center; text-align: center; font-size: 16px;
+  }
+}
+.rotate-inner { display: flex; flex-direction: column; gap: 8px; align-items: center; padding: 20px; }
+.rotate-icon { font-size: 42px; animation: rotphone 1.6s ease-in-out infinite; }
+@keyframes rotphone { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(90deg); } }
+.rotate-inner span { color: var(--text-muted); font-size: 12px; }
+
+/* Wrapper keeps the performance card aligned with .main-grid, zero footprint when hidden */
+.perf-wrap { max-width: 1800px; margin: 0 auto; padding: 0 12px; }
+.perf-card { margin-top: 12px; }
+@media (max-width: 520px) {
+  .perf-wrap { padding: 0 8px; }
+  .perf-card { margin-top: 8px; }
+}

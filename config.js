@@ -16,6 +16,17 @@ const CONFIG = {
   TELEGRAM_BOT_TOKEN: '',
   TELEGRAM_CHAT_ID: '',
 
+  // CryptoCompare News API — reliable, coin-tagged news (free read-only key,
+  // scope: price/polling endpoints only — safe to ship like the Supabase anon key)
+  CRYPTOCOMPARE_API_KEY: '9b260f1d70267786f07b9fc29fc785dae1f187863c7ae5466ede5e8a6f36b4a9',
+
+  // CryptoPanic — community bullish/bearish votes for news sentiment.
+  // NOTE (Jul 2026): CryptoPanic's API is now paid (~$50/week) — not worth it.
+  // Leave '' (keyword-based sentiment is used instead; trading is unaffected —
+  // the AI reads raw headlines itself). If a key ever appears here, voted
+  // sentiment activates automatically.
+  CRYPTOPANIC_API_KEY: '',
+
   // Supabase — encrypted cloud settings storage (pre-configured, no manual setup needed)
   SUPABASE_URL: 'https://trbfhtopkcupzeqmrnom.supabase.co',
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRyYmZodG9wa2N1cHplcW1ybm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExNDI1NDYsImV4cCI6MjA5NjcxODU0Nn0.6XKKIJIotc4lRVL_akt7P63woJiB8NyOVaUotQmmpHQ',
@@ -42,7 +53,9 @@ const CONFIG = {
     'STRK-USDT', 'ONDO-USDT', 'POL-USDT',  'LDO-USDT',
   ],
 
-  RISK_PROFILE: 'aggressive', // conservative | moderate | aggressive
+  // Fixed values — intentionally removed from the Settings UI (single-user app):
+  // risk profile is always aggressive, market data always refreshes every 1 minute.
+  RISK_PROFILE: 'aggressive',
   TRADING_CAPITAL: 0,         // total USDT you trade with — used for position sizing
   CURRENCY_SYMBOL: '$',
 };
