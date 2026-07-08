@@ -296,6 +296,30 @@ async function loadFromCloud(password) {
 // ═══════════════════════════════════════════════════════════
 //  LOCK SCREEN
 // ═══════════════════════════════════════════════════════════
+// Remembers the cloud password locally for 30 days (was session-only, i.e.
+// re-asked every browser restart). Refreshed on every successful unlock, so
+// in practice you're asked again ~once a month of actual use. Trade-off:
+// unlike sessionStorage, this survives browser restarts on the device —
+// only use "remember me" behavior like this on a device you trust.
+const CLOUD_AUTH_KEY = 'cloudAuth';
+const CLOUD_AUTH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+function saveCloudAuth(password) {
+  try { localStorage.setItem(CLOUD_AUTH_KEY, JSON.stringify({ p: password, exp: Date.now() + CLOUD_AUTH_TTL_MS })); } catch { }
+}
+
+function loadCloudAuth() {
+  try {
+    const raw = localStorage.getItem(CLOUD_AUTH_KEY);
+    if (!raw) return null;
+    const { p, exp } = JSON.parse(raw);
+    if (!p || !exp || Date.now() > exp) { localStorage.removeItem(CLOUD_AUTH_KEY); return null; }
+    return p;
+  } catch { return null; }
+}
+
+function clearCloudAuth() { try { localStorage.removeItem(CLOUD_AUTH_KEY); } catch { } }
+
 function setLockError(msg) {
   const e = el('lockError');
   e.textContent = msg;
@@ -328,7 +352,7 @@ async function handleUnlock() {
     });
 
     state.sessionPassword = password;
-    sessionStorage.setItem('sp', password);
+    saveCloudAuth(password);
     el('lockScreen').style.display = 'none';
     toast('Unlocked — settings loaded from cloud ✓', 'success');
     await loadAppData();
@@ -2102,6 +2126,7 @@ function wireEvents() {
       CONFIG.TELEGRAM_CHAT_ID = el('settingsTgChatId').value.trim();
       await saveToCloud(password);
       state.sessionPassword = password;
+      saveCloudAuth(password);
       el('settingsCloudPassword').value = '';
       toast('All settings saved to cloud ✓', 'success');
     } catch (err) {
@@ -2177,7 +2202,7 @@ async function init() {
 
   // If Supabase is configured, try auto-unlock from session first
   if (isSupabaseConfigured()) {
-    const saved = sessionStorage.getItem('sp');
+    const saved = loadCloudAuth();
     if (saved) {
       try {
         const data = await loadFromCloud(saved);
@@ -2188,10 +2213,11 @@ async function init() {
         if (data.tgToken) CONFIG.TELEGRAM_BOT_TOKEN = data.tgToken;
         if (data.tgChatId) CONFIG.TELEGRAM_CHAT_ID = data.tgChatId;
         state.sessionPassword = saved;
+        saveCloudAuth(saved); // refresh the 30-day TTL on successful use
         await loadAppData();
         return;
       } catch {
-        sessionStorage.removeItem('sp');
+        clearCloudAuth();
       }
     }
     el('lockScreen').style.display = 'flex';
