@@ -3,6 +3,24 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-07-08 — Test mode: fix the real bottleneck on test-trade cadence
+
+User reported "still too slow" waiting for test trades. Root-caused with a live Supabase
+query: it was **not** the STRONG_BUY_SCORE threshold — NEAR-USDT had been sitting open in
+phase 1, and a rule blocked **every** new test trade while *any* test trade was active,
+regardless of signal quality. Three changes were made, then two were rolled back at the
+user's request as unnecessary once the actual fix proved sufficient on its own:
+
+- **Kept:** replaced the "only ONE test trade at a time" block with `TEST_MAX_CONCURRENT = 3`
+  (matches the production `MAX_OPEN_TRADES` cap) — a slow-moving trade no longer stalls
+  every other signal. When slots are tight, the best-ranked candidates are kept (candidates
+  are sorted by rank before slicing, not truncated arbitrarily). Verified via simulation:
+  the exact "1 active trade + 2 new candidates" scenario that was silently dropping
+  everything now correctly lets new trades through.
+- **Reverted:** `STRONG_BUY_SCORE` (test mode) tried at 0.5, restored to **1.0**.
+- **Reverted:** `MAX_TRADES_PER_SCAN` tried unified at 2, restored to **1 in test mode**
+  (2 in production, unchanged).
+
 ## 2026-07-07 — Coin universe audit (33 → 38 coins)
 
 Full audit against **live OKX spot data** (volume ranks, listing status, perp availability).

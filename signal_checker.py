@@ -1894,6 +1894,11 @@ def monitor_option3_trades():
 
 # ── Single scan ───────────────────────────────────────────────────────────────
 MAX_TRADES_PER_SCAN = 1 if TEST_MODE else 2  # hard cap: never place more than this many trades in one scan
+# TEST_MODE previously allowed only ONE test trade alive at a time — a single
+# slow-moving trade (e.g. sitting flat for hours) silently blocked every new
+# signal regardless of score. Now allows several concurrent test trades, same
+# as the production open-trade cap, so testing isn't hostage to one trade.
+TEST_MAX_CONCURRENT = 3
 
 # Safety rails — enforced in production, logged-only in TEST_MODE so tests keep flowing.
 MAX_OPEN_TRADES = 3   # never hold more than this many Option 3 trades at once
@@ -2032,14 +2037,17 @@ def run_scan(cache, warm_up=False):
             print(f'  {symbol}: ERROR — {e}')
 
     # ── Pass 2: rank candidates, place top MAX_TRADES_PER_SCAN auto-trades ───
-    # TEST_MODE safety: keep only ONE test trade alive at a time. If a trade is
-    # already running, don't open another — just refresh the cache (no Telegram).
-    if TEST_MODE and active_symbols and candidates:
-        print(f'  [TEST MODE] {len(active_symbols)} active trade(s) — '
-              f'holding off on new test trades until they close')
-        for cand in candidates:
-            pending_alerts.append((cand['symbol'], cand['sig'], cand['ticker'], None, cand['cache_update']))
-        candidates = []
+    # TEST_MODE safety: cap concurrent test trades (TEST_MAX_CONCURRENT) instead
+    # of blocking on ANY active trade — one slow trade no longer stalls testing.
+    if TEST_MODE and candidates:
+        free_slots = max(0, TEST_MAX_CONCURRENT - len(active_symbols))
+        if free_slots < len(candidates):
+            candidates.sort(key=lambda x: x['rank_score'], reverse=True)  # keep the best, drop the rest
+            print(f'  [TEST MODE] {len(active_symbols)} active trade(s) — '
+                  f'only {free_slots} slot(s) free (cap {TEST_MAX_CONCURRENT})')
+            for cand in candidates[free_slots:]:
+                pending_alerts.append((cand['symbol'], cand['sig'], cand['ticker'], None, cand['cache_update']))
+            candidates = candidates[:free_slots]
 
     # ── Safety rails: BTC regime, open-trade cap, daily SL circuit breaker ────
     # Enforced in production; in TEST_MODE they are evaluated and logged only,

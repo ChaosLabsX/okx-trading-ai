@@ -10,7 +10,7 @@ TradingAI is a two-part system:
 The two halves share the same signal engine (identical scoring logic implemented twice — JS and Python), the same Supabase project (settings storage + trade tracking), the same OKX account, and the same Telegram bot.
 
 > **⚠️ CURRENT STATE: TEST MODE IS ON.**
-> `TEST_MODE = True` in `signal_checker.py` lowers the STRONG BUY bar (score ≥ 1 instead of ≥ 5), skips the reversal-confirmation gate and the AI advisor, and places fixed **$5 USDT** trades (TP 1.5% / SL 2% / trail 1%), one live test trade at a time — worst case ≈ $0.11 per test. Setting `TEST_MODE = False` (one line) restores all production behavior. See [docs/SIGNAL-CHECKER.md](docs/SIGNAL-CHECKER.md#test-mode).
+> `TEST_MODE = True` in `signal_checker.py` lowers the STRONG BUY bar (score ≥ 1 instead of ≥ 5), skips the reversal-confirmation gate and the AI advisor, and places fixed **$5 USDT** trades (TP 1.5% / SL 2% / trail 1%), up to 3 concurrent test trades — worst case ≈ $0.11 per test. Setting `TEST_MODE = False` (one line) restores all production behavior. See [docs/SIGNAL-CHECKER.md](docs/SIGNAL-CHECKER.md#test-mode).
 
 ## Documentation map
 
