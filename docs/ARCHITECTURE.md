@@ -1,7 +1,7 @@
 # Architecture
 
-- **GitHub repository:** [`ChaosLabsX/trading-ai`](https://github.com/ChaosLabsX/trading-ai) (branch `main`)
-- **Dashboard hosting:** GitHub Pages — the repo root *is* the static site, so every push to `main` deploys the dashboard to <https://chaoslabsx.github.io/trading-ai/>
+- **GitHub repository:** [`ChaosLabsX/okx-trading-ai`](https://github.com/ChaosLabsX/okx-trading-ai) (branch `main`)
+- **Dashboard hosting:** GitHub Pages — the repo root *is* the static site, so every push to `main` deploys the dashboard to <https://chaoslabsx.github.io/okx-trading-ai/>
 - **Worker hosting:** GitHub Actions in the same repo (workflow `.github/workflows/signal-checker.yml`)
 
 ## System overview

@@ -1,5 +1,5 @@
 """
-TradingAI — Background Signal Checker (24/7 mode)
+OKX AI — Background Signal Checker (24/7 mode)
 Runs every 5 minutes on GitHub Actions.
 Each run loops internally for ~4 minutes (one scan every 60 s).
 

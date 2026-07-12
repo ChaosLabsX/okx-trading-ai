@@ -91,4 +91,4 @@ Sections: Supabase config, Claude API key, Telegram (token/chat ID), OKX keys (R
 
 ## PWA (`sw.js`, `site.webmanifest`)
 
-Network-first with cache fallback for GET requests; OKX/Anthropic/API calls are never cached. Static assets pre-cached at install (`tradingai-v1`). This makes the dashboard installable on mobile and usable (read-only, last data) offline.
+Network-first with cache fallback for GET requests; OKX/Anthropic/API calls are never cached. Static assets pre-cached at install (`okx-ai-v1`). This makes the dashboard installable on mobile and usable (read-only, last data) offline.

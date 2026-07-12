@@ -1,4 +1,4 @@
-const CACHE = 'tradingai-v1';
+const CACHE = 'okx-ai-v1';
 const ASSETS = ['./index.html', './app.js', './style.css', './config.js', './manifest.json'];
 
 self.addEventListener('install', e => {

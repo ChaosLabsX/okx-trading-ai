@@ -1,8 +1,8 @@
-# TradingAI — Crypto Signal Dashboard + Autonomous OKX Trading Bot
+# OKX AI — Crypto Signal Dashboard + Autonomous OKX Trading Bot
 
-**Repository:** [`ChaosLabsX/trading-ai`](https://github.com/ChaosLabsX/trading-ai) · **Live dashboard:** hosted with GitHub Pages at <https://chaoslabsx.github.io/trading-ai/> (every push to `main` auto-deploys the static site).
+**Repository:** [`ChaosLabsX/okx-trading-ai`](https://github.com/ChaosLabsX/okx-trading-ai) · **Live dashboard:** hosted with GitHub Pages at <https://chaoslabsx.github.io/okx-trading-ai/> (every push to `main` auto-deploys the static site).
 
-TradingAI is a two-part system:
+OKX AI is a two-part system:
 
 1. **A browser dashboard** (static PWA — no build step, no framework, no backend server) that scans 38 crypto coins on OKX in real time, computes technical signals, shows news, and lets the user ask Claude AI for trade recommendations that can be executed on OKX with one click.
 2. **A Python background worker** (`signal_checker.py`) that runs 24/7 on GitHub Actions (triggered every ~5 minutes), detects STRONG BUY signals, **automatically places "Option 3" trades on OKX**, monitors those trades through their whole lifecycle, and reports every event to the user via Telegram.
@@ -27,7 +27,7 @@ The two halves share the same signal engine (identical scoring logic implemented
 ## Repository layout
 
 ```
-trading-ai/  (repo root)
+okx-trading-ai/  (repo root)
 ├── index.html              # Dashboard UI (single page: scanner, AI advisor, news, modals)
 ├── app.js                  # All dashboard logic (~2000 lines, vanilla JS)
 ├── config.js               # Public defaults: coin list, Supabase URL/anon key, refresh timings

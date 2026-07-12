@@ -1,6 +1,6 @@
 {
-  "name": "TradingAI — Crypto Signals",
-  "short_name": "TradingAI",
+  "name": "OKX AI — Crypto Signals",
+  "short_name": "OKX AI",
   "description": "Live crypto signal scanner with RSI, MACD, Bollinger Bands and AI advisor for OKX trading.",
   "start_url": "./index.html",
   "display": "standalone",

@@ -1,6 +1,6 @@
 # Background Worker (`signal_checker.py`)
 
-The autonomous half of TradingAI. Runs on GitHub Actions (see [CRON-JOB-ORG.md](CRON-JOB-ORG.md) for scheduling); each invocation loops for ~4 minutes doing one full scan per 60 s (`LOOP_DURATION` / `CHECK_INTERVAL`), then exits so the next trigger starts fresh.
+The autonomous half of OKX AI. Runs on GitHub Actions (see [CRON-JOB-ORG.md](CRON-JOB-ORG.md) for scheduling); each invocation loops for ~4 minutes doing one full scan per 60 s (`LOOP_DURATION` / `CHECK_INTERVAL`), then exits so the next trigger starts fresh.
 
 ```
 main()

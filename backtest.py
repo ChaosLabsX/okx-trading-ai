@@ -1,5 +1,5 @@
 """
-TradingAI — Backtesting harness ("time machine" for the bot's rules)
+OKX AI — Backtesting harness ("time machine" for the bot's rules)
 
 Replays the PRODUCTION signal + Option 3 exit logic over historical OKX candles
 and prints a report card: trades, win rate, profit factor, net P&L, drawdown,

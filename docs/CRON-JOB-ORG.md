@@ -21,7 +21,7 @@ The job is a plain scheduled HTTPS request configured on <https://cron-job.org> 
 
 | Setting | Value |
 |---|---|
-| URL | `https://api.github.com/repos/ChaosLabsX/trading-ai/dispatches` |
+| URL | `https://api.github.com/repos/ChaosLabsX/okx-trading-ai/dispatches` |
 | Method | `POST` |
 | Schedule | every 5 minutes |
 | Header | `Authorization: Bearer <GITHUB_PERSONAL_ACCESS_TOKEN>` |
@@ -32,7 +32,7 @@ The job is a plain scheduled HTTPS request configured on <https://cron-job.org> 
 Requirements & gotchas:
 
 - The `event_type` string must exactly match the `types:` entry in the workflow (`run-signal-checker`), or GitHub accepts the request (HTTP 204) but no workflow runs.
-- The PAT needs permission to create repository dispatches: classic token with `repo` scope, or a fine-grained token with **Contents: Read and write** on `ChaosLabsX/trading-ai`. If the token expires, the external trigger silently stops — the only symptom is runs arriving on GitHub's laggy backup cron. Check cron-job.org's execution history (it shows the HTTP status; 204 = success, 401/404 = bad/expired token).
+- The PAT needs permission to create repository dispatches: classic token with `repo` scope, or a fine-grained token with **Contents: Read and write** on `ChaosLabsX/okx-trading-ai`. If the token expires, the external trigger silently stops — the only symptom is runs arriving on GitHub's laggy backup cron. Check cron-job.org's execution history (it shows the HTTP status; 204 = success, 401/404 = bad/expired token).
 - `repository_dispatch` workflows always run on the **default branch** (`main`).
 
 ## Double-trigger protection
