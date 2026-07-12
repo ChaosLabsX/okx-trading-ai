@@ -66,7 +66,7 @@ Three sources fetched **in parallel and merged** (deduped by normalized title, s
 
 ### 7. Fear & Greed (summary bar)
 
-`fetchFearGreed()` shows the market-wide Fear & Greed Index (alternative.me, free/keyless) in the summary bar, color-coded (≤ 40 red, 41–59 amber, ≥ 60 green), refreshed on the news cadence (page load + every 10 min). The worker independently feeds the same index to AI trade decisions and the daily Telegram report.
+`fetchFearGreed()` shows the market-wide Fear & Greed Index (alternative.me, free/keyless) in the summary bar, color-coded (≤ 40 red, 41–59 amber, ≥ 60 green), refreshed on the news cadence (page load + every 10 min). The worker independently feeds the same index to AI trade decisions.
 
 ### 8. Balance sync
 

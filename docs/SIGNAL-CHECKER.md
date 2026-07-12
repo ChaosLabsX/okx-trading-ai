@@ -79,7 +79,7 @@ There is also `TEST_FORCE_SIGNAL` (normally `False`): forces a fake BTC STRONG B
 | Trailing stop exit | monitor | Exact USDT gain on 2nd half + recovered phase-1 profit + **whole-trade net result** |
 | Break-even exit | monitor | (fallback/legacy trades) 2nd-half result (≈ −fees) + phase-1 profit + whole-trade net result |
 | Auto-trading paused | circuit breaker | 3 stop-losses in 24 h — new trades resume automatically; sent at most once per day |
-| **Daily Report** (heartbeat) | `maybe_send_daily_digest()` | Once per UTC day (first run after 08:00 UTC): bot-alive + mode, Fear & Greed, open trades, win rate & net P&L (last 100 closed), profit factor → sizing tier, 7-day slice, best/worst coins. **Dead-man switch: if this message stops arriving, the pipeline is down** (check GitHub Actions + cron-job.org). Dedup state in the cache (`_daily_digest`). |
+| **Daily Report** (heartbeat) | `maybe_send_daily_digest()` | Once per UTC day (first run after 08:00 UTC), deliberately minimal — two lines: `💓 Daily Report — OKX Trading` + `📈 Open trades: N (COIN, COIN…)`. **Dead-man switch: if this message stops arriving, the pipeline is down** (check GitHub Actions + cron-job.org). Dedup state in the cache (`_daily_digest`). Full performance stats live in the dashboard's 📊 Bot Performance panel instead. |
 | Orders cancelled manually on OKX | monitor | Trade marked closed, fresh signals will re-trade the coin |
 
 P&L math (`_exit_pnl()`): `net = (fill − entry) × size − entry×size×fee − fill×size×fee` with `fee = 0.001`. When OKX won't return an exact fill price even after the fallback lookups, the message shows an **estimate marked with `~`** (computed from the trigger price) rather than omitting the USDT figure.

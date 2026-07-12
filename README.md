@@ -53,7 +53,7 @@ trading-ai/  (repo root)
 | **Anthropic (Claude)** | Worker trade advisor (`claude-opus-4-8` with adaptive thinking — the autonomous decision-maker) and the browser's manual AI Advisor (`claude-sonnet-4-6`, rarely used since the app is fully automated) | Browser: user's key in settings · Worker: `CLAUDE_API_KEY` secret |
 | **cron-job.org** | External scheduler that triggers the GitHub Actions workflow every 5 minutes (GitHub's own cron is unreliable) | GitHub PAT stored in the cron-job.org job config |
 | **CryptoCompare** | News: coin-tagged headlines for the dashboard AND for the worker's AI trade decisions (hack/lawsuit/delisting headlines veto trades) | Free read-only key, news scope only — ships publicly in `config.js` and `signal_checker.py` |
-| **alternative.me** | Crypto Fear & Greed Index (market-wide mood 0–100) — shown in the dashboard summary bar and fed to the worker's AI decisions and daily report | Free, no key needed |
+| **alternative.me** | Crypto Fear & Greed Index (market-wide mood 0–100) — shown in the dashboard summary bar and fed to the worker's AI decisions | Free, no key needed |
 | **CryptoPanic** *(dormant)* | Community-voted news sentiment for the dashboard — code is in place but unused: their API went paid (~$50/week, not worth it). Keyword sentiment is used instead; trading is unaffected (the AI reads raw headlines itself) | `CRYPTOPANIC_API_KEY` in `config.js` left empty on purpose |
 
 ## Quick "how it trades" summary

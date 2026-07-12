@@ -1541,6 +1541,7 @@ def _close_full_position_at_sl(trade, sl_fill_px):
         half2_px = sl_fill_px
 
     net_total = avg_exit = None
+    is_profit = False
     if sl_fill_px and entry_px > 0:
         exit_prices = [sl_fill_px] + ([half2_px] if second_half_sold else [])
         net_total = fee_total = 0.0
@@ -1548,52 +1549,43 @@ def _close_full_position_at_sl(trade, sl_fill_px):
             net, fees, _, _ = _exit_pnl(entry_px, px, sz_half)
             net_total += net
             fee_total += fees
-        avg_exit = sum(exit_prices) / len(exit_prices)
-        pct      = (avg_exit / entry_px - 1) * 100
-        approx   = '~' if estimated else ''
-        loss_str = f'{approx}{fmt_usdt(net_total)} USDT ({pct:+.1f}% incl. fees)'
-        detail   = (f"📉 OKX fees paid: ${fee_total:.4f} USDT\n"
-                    f"📍 Entry: {fmt_price(entry_px)} → Exit: {approx}{fmt_price(avg_exit)}")
+        avg_exit  = sum(exit_prices) / len(exit_prices)
+        pct       = (avg_exit / entry_px - 1) * 100
+        approx    = '~' if estimated else ''
+        is_profit = net_total >= 0
+        if is_profit:
+            # Rare (e.g. SL triggered right at/above entry) — show gross profit
+            # (excluding fees) plus a separate fee line so the two together give
+            # the exact net result, instead of a redundant fees-already-included line.
+            gross      = net_total + fee_total
+            result_str = f'{approx}{fmt_usdt(gross)} USDT ({pct:+.1f}%, excl. fees)'
+            detail     = (f"📉 OKX fees paid: ${fee_total:.4f} USDT\n"
+                          f"📍 Entry: {fmt_price(entry_px)} → Exit: {approx}{fmt_price(avg_exit)}")
+        else:
+            result_str = f'{approx}{fmt_usdt(net_total)} USDT ({pct:+.1f}% incl. fees)'
+            detail     = f"📍 Entry: {fmt_price(entry_px)} → Exit: {approx}{fmt_price(avg_exit)}"
     else:
-        loss_str = f'−{sl_pct}% on full position'
-        detail   = f"📍 Entry: {fmt_price(entry_px)}"
+        result_str = f'−{sl_pct}% on full position'
+        detail      = f"📍 Entry: {fmt_price(entry_px)}"
 
     _mark_trade_closed(trade['id'], 'sl', avg_exit, net_total)
     extra = '' if second_half_sold else '\n⚠️ Could not auto-sell remaining 50% — check OKX'
+    icon         = '🟢' if is_profit else '🔴'
+    result_label = 'Total profit' if is_profit else 'Total loss'
     send_telegram(
-        f"🔴 <b>Stop Loss Hit — {coin}</b>\n"
-        f"💸 Total loss: {loss_str}\n"
+        f"{icon} <b>Stop Loss Hit — {coin}</b>\n"
+        f"💸 {result_label}: {result_str}\n"
         f"{detail}\n"
         f"✅ Full position closed (both halves){extra}"
     )
 
 
-def _fetch_closed_trades(limit=100):
-    """Recent closed trades WITH recorded outcomes, newest first. [] on any problem."""
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return []
-    try:
-        r = requests.get(
-            f'{SUPABASE_URL}/rest/v1/option3_trades'
-            f'?phase=eq.3&exit_reason=not.is.null&net_pnl_usdt=not.is.null'
-            f'&order=closed_at.desc&limit={limit}'
-            f'&select=symbol,exit_reason,net_pnl_usdt,closed_at',
-            headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
-            timeout=10,
-        )
-        if r.status_code == 200:
-            return r.json()
-    except Exception:
-        pass
-    return []
-
-
 def maybe_send_daily_digest(cache):
     """
-    Once per UTC day (first run after DIGEST_UTC_HOUR): Telegram heartbeat +
-    performance report — win rate, net P&L, profit factor & sizing tier, 7-day
-    slice, best/worst coins, open trades, Fear & Greed. Doubles as a dead-man
-    switch: if this message stops arriving, the pipeline is down.
+    Once per UTC day (first run after DIGEST_UTC_HOUR): minimal Telegram
+    heartbeat — just the header and the currently open trades. Still doubles as
+    a dead-man switch: if this message stops arriving, the pipeline is down.
+    (Full performance stats live in the dashboard's 📊 Bot Performance panel.)
     """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
@@ -1604,54 +1596,14 @@ def maybe_send_daily_digest(cache):
     if cache.get('_daily_digest', {}).get('date') == today:
         return
 
-    lines = [
-        '💓 <b>Daily Report — TradingAI</b>',
-        f'🤖 Bot alive — scanning {len(SYMBOLS)} coins · mode: {"TEST" if TEST_MODE else "LIVE"}',
-    ]
-
-    fg_val, fg_label = fetch_fear_greed()
-    if fg_val is not None:
-        lines.append(f'🌡️ Fear & Greed: {fg_val}/100 — {fg_label}')
-
     open_trades = _fetch_option3_trades()
     if open_trades:
-        syms = ', '.join(t['symbol'].replace('-USDT', '') for t in open_trades)
-        lines.append(f'📈 Open trades: {len(open_trades)} ({syms})')
+        syms      = ', '.join(t['symbol'].replace('-USDT', '') for t in open_trades)
+        open_line = f'📈 Open trades: {len(open_trades)} ({syms})'
     else:
-        lines.append('📈 Open trades: none')
+        open_line = '📈 Open trades: none'
 
-    rows = _fetch_closed_trades()
-    if rows:
-        pnls   = [float(t.get('net_pnl_usdt') or 0) for t in rows]
-        wins   = [p for p in pnls if p > 0]
-        losses = [p for p in pnls if p < 0]
-        lines.append(f'📊 Last {len(rows)} closed: {len(wins)}W / {len(losses)}L '
-                     f'({len(wins) / len(pnls) * 100:.0f}% win rate) · net {fmt_usdt(sum(pnls))} USDT')
-        gross_l = -sum(losses)
-        if gross_l > 0:
-            pf   = sum(wins) / gross_l
-            tier = ('30% (full)' if pf >= 1.5 else
-                    '22% (reduced)' if pf >= 1.0 else '15% (defensive)')
-            lines.append(f'⚖️ Profit factor: {pf:.2f} → position cap {tier}')
-        week_cut = (now_utc - timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%S')
-        wk = [float(t.get('net_pnl_usdt') or 0) for t in rows if (t.get('closed_at') or '') >= week_cut]
-        if wk:
-            lines.append(f'🗓️ Last 7 days: {len(wk)} trade(s) · net {fmt_usdt(sum(wk))} USDT')
-        by_coin = {}
-        for t in rows:
-            coin = t['symbol'].replace('-USDT', '')
-            by_coin[coin] = by_coin.get(coin, 0.0) + float(t.get('net_pnl_usdt') or 0)
-        if len(by_coin) >= 2:
-            best  = max(by_coin.items(), key=lambda kv: kv[1])
-            worst = min(by_coin.items(), key=lambda kv: kv[1])
-            if best[0] != worst[0]:
-                lines.append(f'🥇 Best: {best[0]} {fmt_usdt(best[1])} · 🚨 Worst: {worst[0]} {fmt_usdt(worst[1])}')
-    else:
-        lines.append('📊 No closed trades with recorded outcomes yet')
-
-    lines.append('ℹ️ If this daily report stops arriving, the pipeline is down — '
-                 'check GitHub Actions and cron-job.org')
-    send_telegram('\n'.join(lines))
+    send_telegram(f'💓 <b>Daily Report — OKX Trading</b>\n{open_line}')
     cache['_daily_digest'] = {'date': today}
     print('  [Digest] Daily report sent ✓')
 

@@ -3,6 +3,16 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-07-08 — Daily Report simplified to a minimal heartbeat
+
+Per user preference, the daily Telegram digest is now exactly two lines:
+`💓 Daily Report — TradingAI` + `📈 Open trades: N (COIN, COIN…)`. All performance
+stats (win rate, profit factor, 7-day slice, best/worst coins, Fear & Greed, mode
+line, dead-man hint) were removed from the message — that information lives in the
+dashboard's 📊 Bot Performance panel instead. The once-per-UTC-day schedule, 08:00
+gate, and dead-man-switch role are unchanged. Removed the now-unused
+`_fetch_closed_trades()` helper (`fetch_fear_greed()` stays — the AI context uses it).
+
 ## 2026-07-08 — Test mode: fix the real bottleneck on test-trade cadence
 
 User reported "still too slow" waiting for test trades. Root-caused with a live Supabase
