@@ -30,7 +30,7 @@ First run downloads candles (~3–5 min for all 38 coins) into `backtest_cache/`
 | `--score` | 5.0 | STRONG BUY threshold (production value) |
 | `--atr-tp / --atr-sl / --atr-trail` | 2.0 / 2.5 / 1.0 | ATR exit multipliers |
 | `--stake` | 100 | USD per simulated trade (no compounding) |
-| `--max-open / --per-scan` | 3 / 2 | Concurrency caps (production values) |
+| `--max-open / --per-scan` | 3 / 1 | Concurrency caps (production values) |
 | `--no-regime / --no-reversal` | off | Disable a gate to measure its effect |
 
 ## Reading the report

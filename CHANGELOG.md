@@ -3,6 +3,19 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-07-13 — PRODUCTION MODE ON + max 1 trade per scan
+
+- **`TEST_MODE = False`** — testing finished and confirmed working. Production behavior
+  now active: STRONG BUY needs score ≥ 5.0, the 30-min reversal gate is required,
+  Claude Opus 4.8 decides and sizes every trade (10–30% of balance,
+  performance-weighted cap), and the safety rails (BTC regime filter, max 3 open
+  trades, 3-SL/24h circuit breaker) are enforced instead of logged-only.
+  Fully reversible: setting `TEST_MODE = True` restores all test behavior unchanged.
+- **`MAX_TRADES_PER_SCAN = 1`** (was 2 in production) — per user preference, only the
+  single best-ranked STRONG BUY is traded per scan to keep things simple; lower-ranked
+  signals wait for a later scan. The now-dead "refresh balance before the 2nd trade"
+  block was removed; `backtest.py --per-scan` default updated 2 → 1 to match.
+
 ## 2026-07-08 — Daily Report simplified to a minimal heartbeat
 
 Per user preference, the daily Telegram digest is now exactly two lines:

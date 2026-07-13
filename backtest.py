@@ -298,7 +298,7 @@ def main():
     ap.add_argument('--atr-trail', type=float, default=None)
     ap.add_argument('--stake', type=float, default=100.0)
     ap.add_argument('--max-open', type=int, default=3)
-    ap.add_argument('--per-scan', type=int, default=2)
+    ap.add_argument('--per-scan', type=int, default=1)
     ap.add_argument('--no-regime', action='store_true')
     ap.add_argument('--no-reversal', action='store_true')
     ap.add_argument('--refresh', action='store_true')

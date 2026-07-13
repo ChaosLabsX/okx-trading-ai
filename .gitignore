@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local runtime / state
+signal_cache.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Backtester candle cache
+backtest_cache/

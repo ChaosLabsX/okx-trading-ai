@@ -67,7 +67,7 @@ OKX_PASSPHRASE     = os.environ.get('OKX_PASSPHRASE', '')
 CLAUDE_API_KEY     = os.environ.get('CLAUDE_API_KEY', '')
 # Opus 4.8 with adaptive thinking — top-tier decision quality for trade sizing and
 # TP/SL/trail selection. Costs ~$0.01–0.02 per trade decision (only runs in
-# production, only for qualified STRONG BUY candidates, max 2 per scan).
+# production, only for qualified STRONG BUY candidates, max 1 per scan).
 CLAUDE_MODEL       = 'claude-opus-4-8'
 
 # CryptoCompare News — free read-only key (news/polling scope only; same key ships
@@ -107,7 +107,7 @@ TEST_FORCE_SIGNAL = False
 #
 # ►►►  TO RESTORE NORMAL (PRODUCTION) BEHAVIOUR: set TEST_MODE = False  ◄◄◄
 #      That one line reverts everything — all production values are preserved below.
-TEST_MODE = True
+TEST_MODE = False
 
 # Test bar of 1.0 fires on very common conditions (e.g. bullish MACD trend +0.5
 # plus price near the lower Bollinger Band +1) so test trades start quickly.
@@ -570,7 +570,7 @@ def format_alert(symbol, sig, ticker, trade_result=None):
     elif trade_result == 'error':
         msg += '\n\n⚠️ <i>Auto-trade failed — place manually on OKX if desired</i>'
     elif trade_result == 'cap':
-        msg += '\n\n⏩ <i>Signal qualified but ranked below top 2 this scan — no trade placed</i>'
+        msg += '\n\n⏩ <i>Signal qualified but ranked below the top pick this scan — no trade placed</i>'
     return msg
 
 
@@ -1215,7 +1215,7 @@ def _is_algo_cancelled(algo_id, ord_type='conditional'):
 def _rank_candidate(sig, rsi_1h, rsi_4h, vol_ratio):
     """
     Composite ranking score for a STRONG BUY candidate.
-    Used when multiple signals fire in the same scan to pick the top 2.
+    Used when multiple signals fire in the same scan to pick the best one.
 
     Components (higher = better opportunity):
       sig.score  (4–9) : aggregate RSI/MACD/BB/4H/vol indicator checks — dominant factor
@@ -1845,7 +1845,7 @@ def monitor_option3_trades():
 
 
 # ── Single scan ───────────────────────────────────────────────────────────────
-MAX_TRADES_PER_SCAN = 1 if TEST_MODE else 2  # hard cap: never place more than this many trades in one scan
+MAX_TRADES_PER_SCAN = 1  # hard cap: never place more than ONE trade per scan (test & production)
 # TEST_MODE previously allowed only ONE test trade alive at a time — a single
 # slow-moving trade (e.g. sitting flat for hours) silently blocked every new
 # signal regardless of score. Now allows several concurrent test trades, same
@@ -1864,9 +1864,8 @@ def run_scan(cache, warm_up=False):
 
     Trade placement uses a two-pass approach when multiple STRONG BUY signals fire:
       Pass 1 — scan all coins, collect every qualified STRONG BUY into `candidates`.
-      Pass 2 — rank by composite score, place top MAX_TRADES_PER_SCAN trades only.
-               Balance is refreshed between the 1st and 2nd trade so the 2nd trade
-               sizes itself off the actual remaining capital.
+      Pass 2 — rank by composite score, place only the single best trade
+               (MAX_TRADES_PER_SCAN = 1); lower-ranked signals wait for a later scan.
       Pass 3 — send all Telegram alerts (including 'cap' notices for skipped coins).
     """
     now = time.time()
@@ -2050,11 +2049,6 @@ def run_scan(cache, warm_up=False):
 
         for rank_i, cand in enumerate(top_candidates):
             symbol = cand['symbol']
-
-            # Refresh live balance after the first trade — 2nd trade sizes off real remainder
-            if rank_i > 0:
-                usdt_balance = _fetch_usdt_balance()
-                print(f'  [AutoTrade] Balance refreshed after trade #{rank_i}: ${usdt_balance:.2f} USDT')
 
             trade_result = None
             if TEST_MODE and OKX_API_KEY and usdt_balance >= MIN_TRADE_USDT:
