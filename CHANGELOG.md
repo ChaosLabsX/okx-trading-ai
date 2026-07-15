@@ -3,6 +3,34 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-07-15 — CRITICAL: the OCO take-profit leg was never placed
+
+Caught by inspecting the first real production trade (TAO, $16.50 @ 194.6): OKX showed
+**both** algo orders as SL-only at 189.1, no TP anywhere, and price had already run
+through the intended TP (199.85) without selling.
+
+- **Root cause:** the TP+SL order was sent with `ordType: 'conditional'`. Per OKX's API
+  docs, a `conditional` order given both TP and SL params performs *"only stop-loss logic
+  … take-profit logic will be ignored"* — accepted with a success response, TP silently
+  dropped. Both legs require **`ordType: 'oco'`** (same parameters otherwise).
+  **Impact:** no trade could ever take partial profit, arm the trailing stop, or reach
+  phase 2 — every Option 3 trade could only ever exit at its stop loss. Present in
+  `place_option3_trade()` (worker) *and* the mirrored `executeTrade()` (browser).
+- `orders-algo-history` is queried per `ordType`, so OCO lookups now use `oco`, with a
+  `conditional` fallback (`OCO_ORD_TYPES`) so trades placed before this fix stay
+  monitorable. Also fixed `_phase1_pnl()`, which looks up the OCO id and would otherwise
+  have dropped the "phase 1 profit / whole-trade net" lines from phase-2 Telegrams.
+- **Entry price now comes from the real market fill.** The market fallback set
+  `entry_price` to the *signal-time ticker* (`remaining / price`), but it runs ~45 s
+  later, so entry was recorded as exactly 194.6 on the TAO trade — an estimate, not a
+  fill. It now reads the order's `avgPx` (falling back to the ticker only if OKX returns
+  nothing). This anchors the TP/SL triggers and all P&L to reality, and closes a latent
+  bug where a worse-than-ticker fill made the two half-sells exceed actual holdings and
+  get rejected.
+- Verified with mocked-API tests: OCO body carries `ordType=oco` + both legs, the 2nd-half
+  SL stays single-leg `conditional`, legacy `conditional` OCOs still resolve, entry tracks
+  the real fill, and `2 × sz_half` fits inside actual holdings.
+
 ## 2026-07-13 — PRODUCTION MODE ON + max 1 trade per scan
 
 - **`TEST_MODE = False`** — testing finished and confirmed working. Production behavior

@@ -1676,15 +1676,18 @@ async function executeTrade(action, coinAmt) {
 
       btn.textContent = 'Setting up TP/SL/Trailing…';
 
-      // Order 2: OCO conditional — TP and SL in ONE order so OKX only reserves
-      // halfSz balance once (they're mutually exclusive). Separate orders would
-      // reserve halfSz each → 3 orders × 50% = 150% of owned coins → rejected.
+      // Order 2: OCO — TP and SL in ONE order so OKX only reserves halfSz balance
+      // once (they're mutually exclusive). Separate orders would reserve halfSz
+      // each → 3 orders × 50% = 150% of owned coins → rejected.
+      // ordType MUST be 'oco': with 'conditional' OKX accepts the order but
+      // performs only the stop-loss logic and silently ignores the take-profit,
+      // leaving an SL-only order that can never take profit.
       // Order 3: Conditional SL on the remaining 50% at the same trigger price —
       // the FULL position is stop-loss-protected on OKX 24/7. The background
       // monitor swaps this for a trailing stop once the partial TP fills.
       const [ocoResult, sl2Result] = await Promise.allSettled([
         okxSignedPost('/api/v5/trade/order-algo', {
-          ...baseAlgo, ordType: 'conditional', sz: halfSz,
+          ...baseAlgo, ordType: 'oco', sz: halfSz,
           tpTriggerPx: ptPrice.toFixed(8), tpOrdPx: '-1', tpTriggerPxType: 'last',
           slTriggerPx: slPrice.toFixed(8), slOrdPx: '-1', slTriggerPxType: 'last',
         }),

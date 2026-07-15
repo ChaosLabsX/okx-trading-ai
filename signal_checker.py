@@ -149,6 +149,16 @@ FUNDING_HARD_SKIP_PCT = 0.10    # 8h funding above this → longs dangerously cr
 LIMIT_ENTRY_OFFSET_PCT = 0.05   # place the buy 0.05% below market
 LIMIT_ENTRY_WAIT_SEC   = 45     # cancel + market-buy fallback after this wait
 
+# ── Option 3 order types ─────────────────────────────────────────────────────
+# The partial-TP order carries BOTH a TP and an SL leg, which on OKX requires
+# ordType='oco'. With ordType='conditional' OKX accepts the request but performs
+# only the stop-loss logic and silently ignores the take-profit — leaving an
+# SL-only order that can never take profit or reach phase 2.
+# Trades placed before 2026-07-15 carry 'conditional' OCOs, so algo-history
+# lookups for an OCO id try 'oco' first and fall back to 'conditional'.
+OCO_ORD_TYPE  = 'oco'
+OCO_ORD_TYPES = ('oco', 'conditional')
+
 # ── Daily Telegram digest (heartbeat + performance report) ───────────────────
 # Fires on the first run after this UTC hour, once per day. The message doubles
 # as a dead-man switch: if it stops arriving, the pipeline is down.
@@ -1048,7 +1058,7 @@ def place_option3_trade(symbol, params, ticker):
     remaining    = amt_usdt - filled_usdt
     market_coins = 0.0
     if remaining >= 1.0:
-        _okx_post('/api/v5/trade/order', {
+        mkt_resp = _okx_post('/api/v5/trade/order', {
             'instId':  symbol,
             'tdMode':  'cash',
             'side':    'buy',
@@ -1057,11 +1067,20 @@ def place_option3_trade(symbol, params, ticker):
             'tgtCcy':  'quote_ccy',
         })
         print(f'  [Trade] {symbol}: market buy ${remaining:.2f} USDT ✓')
-        market_coins = remaining / price
+        # Price the fill off the real average, not the signal-time ticker: the
+        # market fallback runs ~45 s after the signal, so `price` can be stale by
+        # then — and entry_price drives the TP/SL triggers and every P&L figure.
+        mkt_ord_id = mkt_resp.get('data', [{}])[0].get('ordId', '')
+        time.sleep(1.0)   # let OKX register the fill before asking for its price
+        mkt_px = _get_order_fill_price(symbol, mkt_ord_id) if mkt_ord_id else None
+        if not mkt_px:
+            mkt_px = price
+            print(f'  [Trade] {symbol}: market fill price unavailable — estimating entry at {fmt_price(price)}')
+        market_coins = remaining / mkt_px
     else:
         remaining = 0.0
 
-    # Give OKX 1.5 s to register the fill before placing algo orders
+    # Give OKX time to register the fill before placing algo orders
     time.sleep(1.5)
 
     # Coin quantity from actual fills (exact for limit, estimated for market)
@@ -1076,10 +1095,12 @@ def place_option3_trade(symbol, params, ticker):
     sl_price  = entry_px * (1 - sl_pct  / 100)
     base_algo = {'instId': symbol, 'tdMode': 'cash', 'side': 'sell'}
 
-    # 2. OCO: TP and SL on first 50% (one order — OKX only reserves balance once)
+    # 2. OCO: TP and SL on first 50% (one order — OKX only reserves balance once).
+    #    ordType MUST be 'oco' — see OCO_ORD_TYPE: 'conditional' would silently
+    #    drop the TP leg and leave an SL-only order.
     oco_resp = _okx_post('/api/v5/trade/order-algo', {
         **base_algo,
-        'ordType':          'conditional',
+        'ordType':          OCO_ORD_TYPE,
         'sz':               f'{half_sz:.8f}',
         'tpTriggerPx':      f'{tp_price:.8f}',
         'tpOrdPx':          '-1',
@@ -1152,16 +1173,27 @@ def _fetch_option3_trades():
     return []
 
 
+def _algo_history(algo_id, ord_type):
+    """
+    Algo-history rows for one algo ID. ord_type is an OKX ordType, or a tuple of
+    candidates to try in order (OCO_ORD_TYPES — an OCO id is 'oco' on new trades
+    but 'conditional' on ones placed before the OCO fix). Returns [] if not found.
+    """
+    for t in ((ord_type,) if isinstance(ord_type, str) else ord_type):
+        try:
+            rows = [o for o in _okx_get(
+                        f'/api/v5/trade/orders-algo-history?ordType={t}&algoId={algo_id}'
+                    ).get('data', []) if o.get('algoId') == algo_id]
+            if rows:
+                return rows
+        except Exception as e:
+            print(f'  [Option3] Algo history error ({algo_id}, ordType={t}): {e}')
+    return []
+
+
 def _is_algo_triggered(algo_id, ord_type='conditional'):
     """Return True if an OKX algo order has triggered (state=effective in history)."""
-    try:
-        d = _okx_get(f'/api/v5/trade/orders-algo-history?ordType={ord_type}&algoId={algo_id}')
-        for order in d.get('data', []):
-            if order.get('algoId') == algo_id and order.get('state') == 'effective':
-                return True
-    except Exception as e:
-        print(f'  [Option3] Algo check error ({algo_id}): {e}')
-    return False
+    return any(o.get('state') == 'effective' for o in _algo_history(algo_id, ord_type))
 
 
 def _get_order_fill_price(symbol, ord_id):
@@ -1184,9 +1216,8 @@ def _get_fill_price(algo_id, ord_type='conditional', symbol=None):
     then to the avgPx of the child market order the algo triggered (ordId).
     """
     try:
-        d = _okx_get(f'/api/v5/trade/orders-algo-history?ordType={ord_type}&algoId={algo_id}')
-        for order in d.get('data', []):
-            if order.get('algoId') == algo_id and order.get('state') == 'effective':
+        for order in _algo_history(algo_id, ord_type):
+            if order.get('state') == 'effective':
                 for key in ('avgPx', 'actualPx'):
                     px = float(order.get(key, '0') or '0')
                     if px > 0:
@@ -1202,14 +1233,8 @@ def _get_fill_price(algo_id, ord_type='conditional', symbol=None):
 
 def _is_algo_cancelled(algo_id, ord_type='conditional'):
     """Return True if an OKX algo order was manually cancelled or failed (not triggered)."""
-    try:
-        d = _okx_get(f'/api/v5/trade/orders-algo-history?ordType={ord_type}&algoId={algo_id}')
-        for order in d.get('data', []):
-            if order.get('algoId') == algo_id and order.get('state') in ('canceled', 'order_failed'):
-                return True
-    except Exception as e:
-        print(f'  [Option3] Cancel check error ({algo_id}): {e}')
-    return False
+    return any(o.get('state') in ('canceled', 'order_failed')
+               for o in _algo_history(algo_id, ord_type))
 
 
 def _rank_candidate(sig, rsi_1h, rsi_4h, vol_ratio):
@@ -1475,7 +1500,7 @@ def _phase1_pnl(trade):
     tp_id    = trade.get('partial_tp_id')
     if not tp_id or entry_px <= 0 or sz_half <= 0:
         return None
-    tp_fill = _get_fill_price(tp_id, 'conditional', trade.get('symbol'))
+    tp_fill = _get_fill_price(tp_id, OCO_ORD_TYPES, trade.get('symbol'))
     if tp_fill and tp_fill > entry_px:
         net, _, _, _ = _exit_pnl(entry_px, tp_fill, sz_half)
         return net
@@ -1640,9 +1665,12 @@ def monitor_option3_trades():
                 tp_id  = trade['partial_tp_id']
                 sl_id  = trade.get('sl_id')
                 is_oco = (tp_id and sl_id and tp_id == sl_id)
+                # An OCO id lives under ordType 'oco'; a legacy separate TP order is
+                # a plain 'conditional'.
+                tp_types = OCO_ORD_TYPES if is_oco else 'conditional'
 
-                if _is_algo_triggered(tp_id, 'conditional'):
-                    fill_px  = _get_fill_price(tp_id, 'conditional', symbol)
+                if _is_algo_triggered(tp_id, tp_types):
+                    fill_px  = _get_fill_price(tp_id, tp_types, symbol)
                     tp_fired = (not is_oco) or (fill_px is not None and fill_px > entry_px)
 
                     if tp_fired:
@@ -1737,7 +1765,7 @@ def monitor_option3_trades():
                     _cancel_algo(symbol, tp_id)
                     _close_full_position_at_sl(trade, fill_px)
 
-                elif _is_algo_cancelled(tp_id, 'conditional'):
+                elif _is_algo_cancelled(tp_id, tp_types):
                     # ── OCO order manually cancelled on OKX ───────────────────────
                     print(f'  [Option3] {symbol}: OCO cancelled — marking trade closed...')
                     trailing_id = trade.get('trailing_id')
