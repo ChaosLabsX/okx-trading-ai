@@ -97,16 +97,42 @@ The shared trade-tracking table. Written by `saveOption3Trade()` (`app.js`) and 
 
 Rows are never deleted — `phase = 3` marks a finished trade. The monitor queries `?phase=lt.3`.
 
-**Required migration** (run once in Supabase → SQL Editor; the code degrades gracefully but loses 2nd-half tracking, the circuit breaker, and AI history without it):
+**Required migration** (run once in Supabase → SQL Editor; the code degrades gracefully but loses 2nd-half tracking, the circuit breaker, AI history, and the trade journal without it):
 
 ```sql
 alter table option3_trades
-  add column if not exists sl2_id       text,
-  add column if not exists exit_reason  text,
-  add column if not exists exit_price   numeric,
-  add column if not exists net_pnl_usdt numeric,
-  add column if not exists closed_at    timestamptz;
+  add column if not exists sl2_id        text,
+  add column if not exists exit_reason   text,
+  add column if not exists exit_price    numeric,
+  add column if not exists net_pnl_usdt  numeric,
+  add column if not exists closed_at     timestamptz,
+  -- Trade journal (learning loop)
+  add column if not exists entry_context jsonb,
+  add column if not exists followup      jsonb,
+  add column if not exists followup_at   timestamptz;
+
+-- Setups the AI declined — the other half of the mistake ledger
+create table if not exists skipped_setups (
+  id            bigserial primary key,
+  symbol        text not null,
+  price         numeric,
+  reason        text,
+  entry_context jsonb,
+  created_at    timestamptz default now(),
+  followup      jsonb,
+  followup_at   timestamptz
+);
 ```
+
+### The trade journal (`entry_context` / `followup` / `skipped_setups`)
+
+The AI's learning loop. Three parts:
+
+- **`entry_context`** (jsonb, written at placement by `_build_entry_snapshot()`) — the market picture the decision was made on: score + reasons, RSI 1H/4H, MACD, BB %B, volume ratio, ATR, funding, order-book ratio, support/resistance, BTC regime, Fear & Greed, and the TP/SL/trail chosen. Every value was already computed to make the trade; before this it was discarded. ~600 bytes/trade.
+- **`followup`** (jsonb, written ~24 h after close by `grade_journal_followups()`) — what price did *after* the exit, as a verdict: `shakeout` (stopped us out, then reached our TP anyway → SL too tight) · `good_save` (kept falling → stop earned its keep) · `partial_recovery` · `flat_after_stop` · `left_money` (ran well past our trailing exit) · `well_timed` · `fair_exit`. **This is what makes losses useful** — `shakeout` and `good_save` are both stop-losses, identical in a P&L column, and imply opposite fixes.
+- **`skipped_setups`** — every AI `[SKIP]` (and funding auto-skip) with the same snapshot, graded the same way: `missed_win` (would have hit target — too cautious) · `good_skip` (would have stopped out) · `neutral_skip`. Mechanical `Option3Preflight` rejections are deliberately **not** logged — they're size limits, not judgments, and would pollute the AI's record.
+
+`_trade_history_context()` and `_skip_history_context()` render this back into every prompt, with code-computed patterns ("3 of 8 trades were SHAKEOUTS → widen slPct") rather than model-inferred ones. Below `JOURNAL_MIN_SAMPLES` (10) closed trades the prompt explicitly labels the history **anecdote, not statistics**, to stop the AI over-generalizing from noise. Note this is in-context memory re-read each decision — the model itself is never retrained.
 
 > Note: because `partial_tp_id` and `sl_id` share one OCO order ID in phase 1, the monitor distinguishes "TP fired" from "SL fired" by comparing the actual fill price to `entry_price` (fill above entry = TP side, otherwise SL side).
 

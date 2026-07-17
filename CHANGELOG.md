@@ -3,6 +3,35 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-07-17 — Trade journal: the AI can now learn from its losses (and its skips)
+
+Goal: let Claude Opus learn from earlier mistakes. It already saw *that* a trade lost
+(`_trade_history_context`), never *why* — and the conditions were computed at decision
+time and then thrown away. Three additions close that loop:
+
+- **Entry snapshot** (`entry_context` jsonb, `_build_entry_snapshot()`): freezes the market
+  picture every decision was made on — score/reasons, RSI 1H+4H, MACD, BB %B, volume, ATR,
+  funding, order-book ratio, S/R, BTC regime, Fear & Greed, chosen TP/SL/trail. ~600 bytes,
+  zero extra API calls.
+- **Post-exit verdict** (`followup` jsonb, `grade_journal_followups()`): ~24 h after a trade
+  closes the worker fetches the candles since the exit and grades it — `shakeout` (stopped us
+  out then hit our TP anyway → SL too tight) · `good_save` (kept falling → stop earned its
+  keep) · `left_money` (ran past our trailing exit) · `well_timed` · `fair_exit` etc.
+  **This is what makes a loss teachable**: `shakeout` and `good_save` are identical in a P&L
+  column and imply opposite fixes.
+- **Skip ledger** (`skipped_setups` table): every AI `[SKIP]` logged with the same snapshot and
+  graded the same way (`missed_win` / `good_skip` / `neutral_skip`) — because refusing a good
+  trade is a mistake that never shows up in P&L. Mechanical `Option3Preflight` size rejections
+  are deliberately not logged (limits, not judgments). `ai_trade_params()` now returns
+  `(params, skip_reason)`.
+- Both histories are rendered back into every prompt with **code-computed** patterns ("3 of 8
+  were SHAKEOUTS → widen slPct"), never model-inferred ones. Under `JOURNAL_MIN_SAMPLES` (10)
+  closed trades the prompt labels the data **anecdote, not statistics** and forbids blacklisting
+  a coin or jumping size over one or two results — the main over-fitting risk at this sample size.
+- Grading runs once per Actions run, ≤5 rows, public candles only. Degrades silently if the
+  migration isn't run (`_save_option3_trade` now strips any missing optional column).
+- **Requires the updated SQL migration in docs/ARCHITECTURE.md** (new columns + `skipped_setups`).
+
 ## 2026-07-17 — CRITICAL: small trades left unprotected positions, silently
 
 User found HYPE on their OKX account they never authorised: two buys (~$10 each,

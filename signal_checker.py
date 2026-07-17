@@ -164,6 +164,16 @@ OCO_ORD_TYPES = ('oco', 'conditional')
 # as a dead-man switch: if it stops arriving, the pipeline is down.
 DIGEST_UTC_HOUR = 8
 
+# ── Trade journal (the learning loop) ────────────────────────────────────────
+# Every trade AND every AI skip is stored with the market picture it was decided
+# on; this many hours later the worker looks at what price actually did and
+# records a verdict. Outcomes alone cannot teach: a stop-loss that was a shakeout
+# and one that saved you from a crash are identical in a P&L column but imply
+# opposite fixes. The graded history is fed back into the next AI decision.
+JOURNAL_FOLLOWUP_HOURS = 24
+JOURNAL_GRADE_BATCH    = 5      # rows graded per run — keeps the API cost trivial
+JOURNAL_MIN_SAMPLES    = 10     # below this the prompt calls the history anecdotal
+
 
 # ── Zone helpers ──────────────────────────────────────────────────────────────
 def direction_zone(label):
@@ -188,6 +198,38 @@ def fetch_candles(symbol, bar='1H', limit=100):
         'closes':  [float(c[4]) for c in rows],
         'volumes': [float(c[5]) for c in rows],
     }
+
+
+def fetch_candles_window(symbol, start_ms, hours=24, bar='15m'):
+    """
+    Candles covering [start_ms, start_ms + hours] — what price did after a moment
+    in the past. OKX's `after` returns records EARLIER than the given ts, so anchor
+    at the END of the window and let it page backwards, landing on exactly the
+    window we want. Returns None if the data isn't available.
+    """
+    end_ms = int(start_ms) + int(hours * 3600 * 1000)
+    limit  = max(1, min(100, int(hours * 60 // 15)))
+    try:
+        r = requests.get(
+            f'{OKX_BASE}/api/v5/market/candles?instId={symbol}&bar={bar}'
+            f'&after={end_ms}&limit={limit}',
+            timeout=15,
+        )
+        r.raise_for_status()
+        d = r.json()
+        if d.get('code') != '0' or not d.get('data'):
+            return None
+        rows = [c for c in reversed(d['data']) if int(c[0]) >= int(start_ms)]
+        if not rows:
+            return None
+        return {
+            'highs':  [float(c[2]) for c in rows],
+            'lows':   [float(c[3]) for c in rows],
+            'closes': [float(c[4]) for c in rows],
+        }
+    except Exception as e:
+        print(f'  [Journal] {symbol}: follow-up candle fetch failed: {e}')
+        return None
 
 
 def fetch_ticker(symbol):
@@ -674,7 +716,8 @@ def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data
     and what parameters to use. `extra` carries the rich decision context built by
     _build_trade_context(): ATR, support/resistance, suggested exits, funding rate,
     open interest, order-book imbalance, BTC regime, and the coin's latest headlines.
-    Returns a dict with trade params, or None if Claude says SKIP.
+    Returns (params_dict, None) on TRADE, or (None, reason) on SKIP — the reason is
+    logged to the journal so skips can be graded later like trades.
     """
     coin     = symbol.replace('-USDT', '')
     rsi_1h_s = f'{rsi_1h:.1f}' if rsi_1h is not None else 'N/A'
@@ -697,7 +740,9 @@ def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data
     vol_s = f'{vol_ratio:.1f}× average' if vol_ratio is not None else 'N/A'
 
     history, pf = _trade_history_context(symbol)
-    history_s   = f'\n\nRECENT LIVE RESULTS (this bot\'s actual closed trades):\n{history}' if history else ''
+    history_s   = f'\n\nTRADE JOURNAL — this bot\'s real closed trades:\n{history}' if history else ''
+    skips       = _skip_history_context(symbol)
+    skips_s     = f'\n\nYOUR PAST SKIPS (graded {JOURNAL_FOLLOWUP_HOURS}h later):\n{skips}' if skips else ''
 
     # Performance-weighted sizing: shrink the hard cap when the system is cold.
     cap_pct = 0.30
@@ -782,10 +827,19 @@ DO NOT TRADE ([SKIP]) if:
 - Fewer than 2 indicator confirmations in the reasons list
 - Available USDT < $10
 
-RECENT LIVE RESULTS (when provided) are this bot's actual trade outcomes — weigh them:
-- This coin's last trades repeatedly hit stop-loss → require a stronger setup or SKIP
+TRADE JOURNAL (when provided) — this bot's real results. Each past trade lists the
+conditions it was ENTERED on and what price did AFTER the exit. Use it:
+- SHAKEOUT verdict = the stop sat inside normal noise and price recovered to our target
+  anyway → widen slPct on setups like that one (this is a losing trade worth learning from)
+- GOOD_SAVE verdict = the stop correctly avoided a deeper fall → keep that stop distance
+- LEFT_MONEY verdict = price ran well past our exit → widen trailingCallbackPct
+- This coin repeatedly stopping out on similar conditions → require a stronger setup or SKIP
 - Overall results negative → size toward the LOWER end of the capital range
-- Overall results positive and this coin has been winning → normal sizing rules apply
+- YOUR PAST SKIPS: MISSED_WIN means you were too cautious in those conditions;
+  GOOD_SKIP means the caution was right. Weigh both — refusing good trades is also a mistake.
+EVIDENCE DISCIPLINE: when the journal shows fewer than {JOURNAL_MIN_SAMPLES} closed trades it
+is anecdote, not statistics. Make only obvious, small parameter corrections; never blacklist a
+coin or jump position size over one or two results. Reason from the CONDITIONS, not the coin name.
 
 Respond with EXACTLY ONE line — nothing else:
 Trade:  [TRADE:{{"side":"buy","symbol":"{symbol}","amountUsdt":0,"partialTpPct":0,"trailingCallbackPct":0,"slPct":0}}]
@@ -802,7 +856,7 @@ RSI 4H:  {rsi_4h_s}
 MACD:    {macd_s}
 BB:      {bb_s}
 Volume:  {vol_s}
-USDT available: ${usdt_balance:.2f}{struct_s}{news_s}{history_s}
+USDT available: ${usdt_balance:.2f}{struct_s}{news_s}{history_s}{skips_s}
 
 Place this trade?"""
 
@@ -842,7 +896,7 @@ Place this trade?"""
             amount = float(p.get('amountUsdt', 0))
             if amount < 10:
                 print(f'  [Claude] Amount too small (${amount:.2f}) — skipping')
-                return None
+                return None, f'AI sized it at ${amount:.2f}, below the $10 minimum'
             # Safety cap: performance-weighted (30% / 22% / 15% by profit factor)
             cap = usdt_balance * cap_pct
             if amount > cap:
@@ -858,21 +912,21 @@ Place this trade?"""
                 'partial_tp_pct': round(tp, 2),
                 'trailing_pct':   round(trail, 2),
                 'sl_pct':         round(sl, 2),
-            }
+            }, None
 
         # Parse SKIP tag
         if re.search(r'\[SKIP', text, re.IGNORECASE):
             m2 = re.search(r'\[SKIP[:\s]*(.*?)\]', text, re.IGNORECASE)
             reason = m2.group(1).strip() if m2 else 'no reason given'
             print(f'  [Claude] SKIP — {reason}')
-            return None
+            return None, reason
 
         print(f'  [Claude] Unexpected response format — skipping trade')
-        return None
+        return None, 'unexpected AI response format'
 
     except Exception as e:
         print(f'  [Claude] API error: {e}')
-        return None
+        return None, f'AI call failed: {e}'
 
 
 def _build_trade_context(cand, regime_msg):
@@ -903,6 +957,225 @@ def _build_trade_context(cand, regime_msg):
     }
 
 
+# ── Trade journal: capture, grade, recall ────────────────────────────────────
+def _rnd(v, n):
+    """Round unless None — keeps snapshot JSON compact without a guard at every field."""
+    return round(float(v), n) if v is not None else None
+
+
+def _sb_headers(extra=None):
+    h = {'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'}
+    h.update(extra or {})
+    return h
+
+
+def _build_entry_snapshot(cand, extra=None, params=None):
+    """
+    Freeze the market picture a decision was made on. Costs nothing extra — every
+    value here was already computed to make the call, and is otherwise thrown away
+    — but without it a closed trade records only THAT it lost, never the conditions
+    that produced the loss, which is precisely what turns a loss into a lesson.
+    """
+    sig  = cand.get('sig') or {}
+    macd = cand.get('macd_data') or {}
+    bb   = cand.get('bb_data') or {}
+    snap = {
+        'score':      _rnd(sig.get('score'), 2),
+        'reasons':    sig.get('reasons') or [],
+        'rsi_1h':     _rnd(cand.get('rsi_1h'), 1),
+        'rsi_4h':     _rnd(cand.get('rsi_4h'), 1),
+        'macd_trend': macd.get('trend'),
+        'macd_cross': bool(macd.get('bullish_cross')),
+        'bb_pct_b':   _rnd(bb.get('pct_b'), 3),
+        'vol_ratio':  _rnd(cand.get('vol_ratio'), 2),
+        'change_24h': _rnd((cand.get('ticker') or {}).get('change_pct'), 2),
+    }
+    if extra:
+        fg_val, fg_label = extra.get('fear_greed') or (None, '')
+        snap.update({
+            'atr_pct':     _rnd(extra.get('atr_pct'), 2),
+            'funding_pct': _rnd(extra.get('funding_pct'), 4),
+            'book_ratio':  _rnd(extra.get('book_ratio'), 2),
+            'support':     extra.get('support'),
+            'resistance':  extra.get('resistance'),
+            'fear_greed':  fg_val,
+            'fg_label':    fg_label or None,
+            'btc_regime':  extra.get('regime'),
+            'suggested':   extra.get('exits'),
+            'had_news':    bool(extra.get('news')),
+        })
+    if params:
+        snap['chosen'] = {
+            'amount_usdt': params.get('amount_usdt'),
+            'tp_pct':      params.get('partial_tp_pct'),
+            'sl_pct':      params.get('sl_pct'),
+            'trail_pct':   params.get('trailing_pct'),
+        }
+    return {k: v for k, v in snap.items() if v is not None and v != [] and v != ''}
+
+
+def _log_skipped_setup(symbol, price, reason, snapshot):
+    """
+    Record a setup the AI declined. Mistakes come in two kinds — trades that lost,
+    and trades never taken that would have won. A skip otherwise vanishes without
+    a trace, so the AI can never learn it is being too cautious (or rightly careful).
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    try:
+        r = requests.post(
+            f'{SUPABASE_URL}/rest/v1/skipped_setups',
+            headers=_sb_headers({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
+            json={'symbol': symbol, 'price': price,
+                  'reason': (reason or 'no reason given')[:300], 'entry_context': snapshot},
+            timeout=10,
+        )
+        if r.status_code in (200, 201, 204):
+            print(f'  [Journal] {symbol}: skip logged for grading in {JOURNAL_FOLLOWUP_HOURS}h ✓')
+        else:
+            print(f'  [Journal] skip log failed (HTTP {r.status_code}) — is the '
+                  f'skipped_setups table created? See docs/ARCHITECTURE.md')
+    except Exception as e:
+        print(f'  [Journal] skip log error: {e}')
+
+
+def _patch_journal(table, row_id, payload):
+    try:
+        requests.patch(
+            f'{SUPABASE_URL}/rest/v1/{table}?id=eq.{row_id}',
+            headers=_sb_headers({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
+            json=payload, timeout=10,
+        )
+    except Exception as e:
+        print(f'  [Journal] patch error ({table} {row_id}): {e}')
+
+
+def _grade_exit(exit_reason, exit_px, tp_px, c):
+    """
+    Verdict on a closed trade: what did price do after we left? This is where a
+    losing trade earns its keep — 'shakeout' and 'good_save' are both stop-losses
+    but they teach opposite lessons, and P&L alone cannot tell them apart.
+    """
+    peak, trough, last = max(c['highs']), min(c['lows']), c['closes'][-1]
+    up   = (peak / exit_px - 1) * 100
+    down = (trough / exit_px - 1) * 100
+
+    if exit_reason in ('sl', 'tp_then_sl'):
+        if tp_px and peak >= tp_px:
+            v, note = 'shakeout', 'price reached our original TP after stopping us out — SL sat inside the noise'
+        elif up >= 2.0:
+            v, note = 'partial_recovery', 'price bounced after our stop — SL may be slightly tight'
+        elif down <= -3.0:
+            v, note = 'good_save', 'price kept falling — the stop did its job'
+        else:
+            v, note = 'flat_after_stop', 'price went nowhere after the stop'
+    elif exit_reason in ('tp_trail', 'break_even'):
+        if up >= 3.0:
+            v, note = 'left_money', 'price ran well past our exit — trail was too tight'
+        elif down <= -3.0:
+            v, note = 'well_timed', 'price dropped after we exited — good timing'
+        else:
+            v, note = 'fair_exit', 'price drifted after our exit'
+    else:
+        return None
+    return {'verdict': v, 'note': note, 'hours': JOURNAL_FOLLOWUP_HOURS,
+            'peak_pct': round(up, 2), 'trough_pct': round(down, 2),
+            'end_pct': round((last / exit_px - 1) * 100, 2)}
+
+
+def _grade_skip(price, tp_pct, sl_pct, c):
+    """
+    Would the declined setup have won? Walk the candles in order and see which of
+    the suggested exits would have triggered first. SL wins an ambiguous candle —
+    the same conservative assumption backtest.py makes.
+    """
+    tp_px, sl_px = price * (1 + tp_pct / 100), price * (1 - sl_pct / 100)
+    peak = (max(c['highs']) / price - 1) * 100
+    trough = (min(c['lows']) / price - 1) * 100
+    base = {'hours': JOURNAL_FOLLOWUP_HOURS, 'peak_pct': round(peak, 2),
+            'trough_pct': round(trough, 2), 'tp_pct': tp_pct, 'sl_pct': sl_pct}
+    for h, l in zip(c['highs'], c['lows']):
+        if l <= sl_px:
+            return {**base, 'verdict': 'good_skip',
+                    'note': f'would have hit the −{sl_pct}% stop — correctly avoided'}
+        if h >= tp_px:
+            return {**base, 'verdict': 'missed_win',
+                    'note': f'would have hit the +{tp_pct}% target — too cautious here'}
+    return {**base, 'verdict': 'neutral_skip', 'note': 'neither target nor stop was reached'}
+
+
+def grade_journal_followups():
+    """
+    Grade trades that closed (and setups skipped) JOURNAL_FOLLOWUP_HOURS ago by
+    looking at what price actually did next. Each row is graded exactly once.
+    Silently inactive until the journal migration is run (docs/ARCHITECTURE.md).
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(hours=JOURNAL_FOLLOWUP_HOURS)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # ── Closed trades ────────────────────────────────────────────────────────
+    try:
+        r = requests.get(
+            f'{SUPABASE_URL}/rest/v1/option3_trades'
+            f'?phase=eq.3&followup_at=is.null&exit_reason=not.is.null'
+            f'&closed_at=not.is.null&closed_at=lt.{cutoff}&limit={JOURNAL_GRADE_BATCH}'
+            f'&select=id,symbol,entry_price,exit_price,exit_reason,partial_tp_pct,closed_at',
+            headers=_sb_headers(), timeout=10,
+        )
+        if r.status_code == 200:
+            for t in r.json():
+                entry_px = float(t.get('entry_price') or 0)
+                exit_px  = float(t.get('exit_price') or 0)
+                if entry_px <= 0 or exit_px <= 0:
+                    _patch_journal('option3_trades', t['id'],
+                                   {'followup': {'verdict': 'ungradable', 'note': 'no exit price recorded'},
+                                    'followup_at': now_iso})
+                    continue
+                closed_ms = int(datetime.fromisoformat(t['closed_at']).timestamp() * 1000)
+                c = fetch_candles_window(t['symbol'], closed_ms, JOURNAL_FOLLOWUP_HOURS)
+                if not c:
+                    continue   # try again next run
+                tp_px = entry_px * (1 + float(t.get('partial_tp_pct') or 0) / 100)
+                v = _grade_exit(t['exit_reason'], exit_px, tp_px, c)
+                if v:
+                    _patch_journal('option3_trades', t['id'], {'followup': v, 'followup_at': now_iso})
+                    print(f"  [Journal] {t['symbol']} {t['exit_reason']} → {v['verdict']} ({v['note']})")
+        elif r.status_code != 200:
+            print(f'  [Journal] trade grading inactive (HTTP {r.status_code}) — run the SQL migration')
+    except Exception as e:
+        print(f'  [Journal] trade grading error: {e}')
+
+    # ── Skipped setups ───────────────────────────────────────────────────────
+    try:
+        r = requests.get(
+            f'{SUPABASE_URL}/rest/v1/skipped_setups'
+            f'?followup_at=is.null&created_at=lt.{cutoff}&limit={JOURNAL_GRADE_BATCH}'
+            f'&select=id,symbol,price,entry_context,created_at',
+            headers=_sb_headers(), timeout=10,
+        )
+        if r.status_code != 200:
+            return
+        for s in r.json():
+            px = float(s.get('price') or 0)
+            if px <= 0:
+                _patch_journal('skipped_setups', s['id'],
+                               {'followup': {'verdict': 'ungradable'}, 'followup_at': now_iso})
+                continue
+            created_ms = int(datetime.fromisoformat(s['created_at']).timestamp() * 1000)
+            c = fetch_candles_window(s['symbol'], created_ms, JOURNAL_FOLLOWUP_HOURS)
+            if not c:
+                continue
+            sug = (s.get('entry_context') or {}).get('suggested') or {}
+            v = _grade_skip(px, float(sug.get('tp') or 3.0), float(sug.get('sl') or 4.0), c)
+            _patch_journal('skipped_setups', s['id'], {'followup': v, 'followup_at': now_iso})
+            print(f"  [Journal] {s['symbol']} skip → {v['verdict']} ({v['note']})")
+    except Exception as e:
+        print(f'  [Journal] skip grading error: {e}')
+
+
 # ── Option 3 auto-trade placement ────────────────────────────────────────────
 def _save_option3_trade(trade_data):
     """Persist Option 3 trade to Supabase so the monitor can track it. Returns True on success."""
@@ -925,10 +1198,12 @@ def _save_option3_trade(trade_data):
         if r.status_code in (200, 201, 204):
             print(f'  [Supabase] Trade saved ✓ (id={trade_data.get("id")})')
             return True
-        # If the sl2_id column doesn't exist yet (migration not run), retry without it
-        # so the trade is at least tracked in legacy mode.
-        if 'sl2_id' in trade_data:
-            slim = {k: v for k, v in trade_data.items() if k != 'sl2_id'}
+        # If an optional column doesn't exist yet (migration not run), retry without
+        # them so the trade is at least tracked. Losing the journal or 2nd-half
+        # tracking is bad; losing the whole row would be worse.
+        optional = [c for c in ('sl2_id', 'entry_context') if c in trade_data]
+        if optional:
+            slim = {k: v for k, v in trade_data.items() if k not in optional}
             r2 = requests.post(
                 f'{SUPABASE_URL}/rest/v1/option3_trades',
                 headers={
@@ -941,8 +1216,8 @@ def _save_option3_trade(trade_data):
                 timeout=10,
             )
             if r2.status_code in (200, 201, 204):
-                print(f'  [Supabase] Trade saved WITHOUT sl2_id — run the SQL migration '
-                      f'in docs/ARCHITECTURE.md to enable full 2nd-half tracking!')
+                print(f'  [Supabase] Trade saved WITHOUT {", ".join(optional)} — run the SQL '
+                      f'migration in docs/ARCHITECTURE.md to enable full tracking + journal!')
                 return True
         # Loud failure: exact status + body + which keys we sent, so the log pinpoints the cause
         print(f'  [Supabase] Save FAILED: HTTP {r.status_code} — {r.text[:300]}')
@@ -1081,7 +1356,7 @@ def _abort_unprotected(symbol, sz_coin, algo_ids, reason):
     return 'position unwound' if sold else 'UNWIND FAILED — manual action needed'
 
 
-def place_option3_trade(symbol, params, ticker):
+def place_option3_trade(symbol, params, ticker, snapshot=None):
     """
     Execute a full Option 3 trade on OKX:
       0. Pre-flight: both halves must clear OKX's minimum order size (see below)
@@ -1215,6 +1490,8 @@ def place_option3_trade(symbol, params, ticker):
         'sl_pct':         sl_pct,
         'trailing_pct':   trail_pct,
         'phase':          1,
+        # Journal: the market picture this decision was made on, graded after the exit
+        'entry_context':  snapshot or {},
     })
 
     return {
@@ -1514,11 +1791,42 @@ def _count_recent_sl(hours=24):
     return 0
 
 
+def _fmt_journal_trade(t):
+    """One closed trade as: outcome | the conditions it was entered on | what price did after."""
+    ctx  = t.get('entry_context') or {}
+    fu   = t.get('followup') or {}
+    coin = t['symbol'].replace('-USDT', '')
+    parts = [f"{coin} {t.get('exit_reason')} {float(t.get('net_pnl_usdt') or 0):+.2f}"]
+
+    ins = []
+    if ctx.get('score')       is not None: ins.append(f"score {ctx['score']:+.1f}")
+    if ctx.get('rsi_1h')      is not None: ins.append(f"RSI {ctx['rsi_1h']:.0f}")
+    if ctx.get('rsi_4h')      is not None: ins.append(f"4H {ctx['rsi_4h']:.0f}")
+    if ctx.get('vol_ratio')   is not None: ins.append(f"vol {ctx['vol_ratio']:.1f}x")
+    if ctx.get('atr_pct')     is not None: ins.append(f"ATR {ctx['atr_pct']:.1f}%")
+    if ctx.get('fear_greed')  is not None: ins.append(f"F&G {ctx['fear_greed']}")
+    if ctx.get('funding_pct') is not None: ins.append(f"fund {ctx['funding_pct']:+.3f}%")
+    ch = ctx.get('chosen') or {}
+    if ch.get('sl_pct'):    ins.append(f"SL -{ch['sl_pct']}%")
+    if ch.get('trail_pct'): ins.append(f"trail {ch['trail_pct']}%")
+    if ins:
+        parts.append('entered on: ' + ', '.join(ins))
+
+    if fu.get('verdict') and fu['verdict'] != 'ungradable':
+        parts.append(f"{fu.get('hours', JOURNAL_FOLLOWUP_HOURS)}h after exit: "
+                     f"peak {fu.get('peak_pct', 0):+.1f}% / trough {fu.get('trough_pct', 0):+.1f}% "
+                     f"→ {fu['verdict'].upper()} ({fu.get('note', '')})")
+    return ' | '.join(parts)
+
+
 def _trade_history_context(symbol):
     """
-    Recent live trade outcomes formatted for the Claude prompt, plus the recent
-    PROFIT FACTOR (money won ÷ money lost, last 30 closed trades) that drives
-    performance-weighted position sizing.
+    The trade journal, rendered for the Claude prompt: every recent closed trade with
+    the conditions it was ENTERED on and — once graded — what price did AFTER the exit,
+    plus the PROFIT FACTOR (last 30 trades) that drives performance-weighted sizing.
+
+    The follow-up verdicts are what make losses useful: 'shakeout' and 'good_save' are
+    both stop-losses, look identical in a P&L column, and imply opposite fixes.
     Returns (text, profit_factor) — ('', None) when no data exists yet;
     profit_factor stays None until 30 closed trades have accumulated.
     """
@@ -1528,20 +1836,29 @@ def _trade_history_context(symbol):
         r = requests.get(
             f'{SUPABASE_URL}/rest/v1/option3_trades'
             f'?phase=eq.3&exit_reason=not.is.null&order=closed_at.desc&limit=30'
-            f'&select=symbol,exit_reason,net_pnl_usdt,closed_at',
-            headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
-            timeout=10,
+            f'&select=symbol,exit_reason,net_pnl_usdt,closed_at,entry_context,followup',
+            headers=_sb_headers(), timeout=10,
         )
         if r.status_code != 200:
-            return '', None
+            # Journal columns missing (migration not run) — fall back to bare outcomes
+            r = requests.get(
+                f'{SUPABASE_URL}/rest/v1/option3_trades'
+                f'?phase=eq.3&exit_reason=not.is.null&order=closed_at.desc&limit=30'
+                f'&select=symbol,exit_reason,net_pnl_usdt,closed_at',
+                headers=_sb_headers(), timeout=10,
+            )
+            if r.status_code != 200:
+                return '', None
         rows = r.json()
         if not rows:
             return '', None
+
         pnls  = [float(t.get('net_pnl_usdt') or 0) for t in rows]
         wins  = sum(1 for p in pnls if p > 0)
         total = sum(pnls)
-        lines = [f'Last {len(rows)} closed trades overall: {wins} wins / '
-                 f'{len(rows) - wins} losses, net {total:+.2f} USDT']
+        lines = [f'Overall: {len(rows)} closed trades, {wins} wins / {len(rows) - wins} losses, '
+                 f'net {total:+.2f} USDT']
+
         pf = None
         if len(rows) >= 30:
             gross_win  = sum(p for p in pnls if p > 0)
@@ -1552,16 +1869,79 @@ def _trade_history_context(symbol):
             elif gross_win > 0:
                 pf = 99.0
                 lines.append('Profit factor (last 30 trades): no losses')
-        coin_rows = [t for t in rows if t.get('symbol') == symbol][:5]
+
+        # Patterns worth acting on — computed in code, not inferred by the model
+        verdicts  = [(t.get('followup') or {}).get('verdict') for t in rows]
+        shakeouts = verdicts.count('shakeout')
+        left      = verdicts.count('left_money')
+        saves     = verdicts.count('good_save')
+        if shakeouts:
+            lines.append(f'PATTERN: {shakeouts} of {len(rows)} trades were SHAKEOUTS — the stop sat '
+                         f'inside normal noise and price recovered to our target afterwards. '
+                         f'Consider a wider slPct on similar setups.')
+        if left:
+            lines.append(f'PATTERN: {left} exit(s) left significant money on the table — '
+                         f'consider a wider trailingCallbackPct so winners run further.')
+        if saves:
+            lines.append(f'{saves} stop-loss exit(s) correctly avoided a deeper fall — those stops earned their keep.')
+
+        # This coin first — most relevant — then the rest of the journal
+        coin_rows  = [t for t in rows if t.get('symbol') == symbol][:5]
+        other_rows = [t for t in rows if t.get('symbol') != symbol][:8]
         if coin_rows:
-            parts = [f"{t.get('exit_reason')} {float(t.get('net_pnl_usdt') or 0):+.2f}"
-                     for t in coin_rows]
-            lines.append(f'{symbol} most recent: ' + ' · '.join(parts))
+            lines.append(f'\n{symbol} history:')
+            lines += [f'  - {_fmt_journal_trade(t)}' for t in coin_rows]
         else:
-            lines.append(f'{symbol}: no closed trades yet')
+            lines.append(f'\n{symbol}: no closed trades yet')
+        if other_rows:
+            lines.append('\nOther recent trades:')
+            lines += [f'  - {_fmt_journal_trade(t)}' for t in other_rows]
+
+        if len(rows) < JOURNAL_MIN_SAMPLES:
+            lines.append(f'\nNOTE: only {len(rows)} closed trade(s) so far — this is ANECDOTE, not '
+                         f'statistics. Use it for obvious parameter problems only. Do NOT blacklist '
+                         f'a coin or make large sizing jumps from one or two results.')
         return '\n'.join(lines), pf
     except Exception:
         return '', None
+
+
+def _skip_history_context(symbol):
+    """
+    Graded record of setups the AI declined — the other half of the mistake ledger.
+    Being too cautious never shows up in P&L, so it is surfaced explicitly.
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return ''
+    try:
+        r = requests.get(
+            f'{SUPABASE_URL}/rest/v1/skipped_setups'
+            f'?followup_at=not.is.null&order=created_at.desc&limit=20'
+            f'&select=symbol,reason,followup,created_at',
+            headers=_sb_headers(), timeout=10,
+        )
+        if r.status_code != 200:
+            return ''
+        rows = r.json()
+        if not rows:
+            return ''
+        verdicts = [(s.get('followup') or {}).get('verdict') for s in rows]
+        missed, good = verdicts.count('missed_win'), verdicts.count('good_skip')
+        lines = [f'Last {len(rows)} graded skips: {good} correctly avoided a loss, '
+                 f'{missed} would have hit target ({verdicts.count("neutral_skip")} went nowhere)']
+        if missed >= 3 and missed > good:
+            lines.append('PATTERN: most recent skips would have WON — you are being too cautious; '
+                         'do not skip setups that meet the rules without a concrete reason.')
+        if good >= 3 and good > missed:
+            lines.append('PATTERN: recent skips correctly avoided losses — your caution is working.')
+        coin_rows = [s for s in rows if s.get('symbol') == symbol][:3]
+        for s in coin_rows:
+            fu = s.get('followup') or {}
+            lines.append(f"  - {symbol} skipped ({(s.get('reason') or '')[:60]}) → "
+                         f"{fu.get('verdict', '?').upper()}: {fu.get('note', '')}")
+        return '\n'.join(lines)
+    except Exception:
+        return ''
 
 
 def _phase1_pnl(trade):
@@ -2164,7 +2544,8 @@ def run_scan(cache, warm_up=False):
                 }
                 print(f'  {symbol}: [TEST MODE] placing fixed ${params["amount_usdt"]:.2f} trade (AI bypassed)...')
                 try:
-                    trade_result = place_option3_trade(symbol, params, cand['ticker'])
+                    trade_result = place_option3_trade(symbol, params, cand['ticker'],
+                                                       _build_entry_snapshot(cand, None, params))
                     print(f'  {symbol}: [TEST MODE] Option 3 trade placed ✓')
                 except Option3Preflight as e:
                     print(f'  {symbol}: trade not viable — {e}')
@@ -2176,22 +2557,28 @@ def run_scan(cache, warm_up=False):
                 # Rich decision context: ATR, S/R, suggested exits, funding, OI, order book
                 extra = _build_trade_context(cand, regime_msg)
                 if extra.get('funding_pct') is not None and extra['funding_pct'] > FUNDING_HARD_SKIP_PCT:
-                    print(f'  {symbol}: funding {extra["funding_pct"]:+.3f}% > '
-                          f'+{FUNDING_HARD_SKIP_PCT}% — longs dangerously crowded, auto-skip')
+                    reason = (f'funding {extra["funding_pct"]:+.3f}% above '
+                              f'+{FUNDING_HARD_SKIP_PCT}% — longs dangerously crowded')
+                    print(f'  {symbol}: {reason}, auto-skip')
                     trade_result = 'skip'
+                    _log_skipped_setup(symbol, cand['ticker']['price'], reason,
+                                       _build_entry_snapshot(cand, extra))
                 else:
                     print(f'  {symbol}: asking Claude for trade params '
                           f'(rank #{rank_i + 1}/{len(top_candidates)}, score={cand["rank_score"]:.2f})...')
-                    params = ai_trade_params(
+                    params, skip_reason = ai_trade_params(
                         symbol, cand['sig'], cand['ticker'], usdt_balance,
                         cand['rsi_1h'], cand['rsi_4h'], cand['macd_data'], cand['bb_data'], cand['vol_ratio'],
                         extra=extra,
                     )
                     if params:
                         try:
-                            trade_result = place_option3_trade(symbol, params, cand['ticker'])
+                            trade_result = place_option3_trade(symbol, params, cand['ticker'],
+                                                               _build_entry_snapshot(cand, extra, params))
                             print(f'  {symbol}: Option 3 trade placed ✓  (rank #{rank_i + 1})')
                         except Option3Preflight as e:
+                            # A mechanical size limit, not a judgment call — keep it out
+                            # of the skip ledger so the AI's record stays honest.
                             print(f'  {symbol}: trade not viable — {e}')
                             trade_result = 'skip'
                         except Exception as e:
@@ -2199,6 +2586,8 @@ def run_scan(cache, warm_up=False):
                             trade_result = 'error'
                     else:
                         trade_result = 'skip'
+                        _log_skipped_setup(symbol, cand['ticker']['price'], skip_reason,
+                                           _build_entry_snapshot(cand, extra))
 
             pending_alerts.append((symbol, cand['sig'], cand['ticker'], trade_result, cand['cache_update']))
 
@@ -2236,6 +2625,8 @@ def main():
 
         run_scan(cache, warm_up=(fresh and scan_num == 1))
         monitor_option3_trades()
+        if scan_num == 1:
+            grade_journal_followups()   # once per Actions run is plenty — nothing here is urgent
         maybe_send_daily_digest(cache)
         save_cache(cache)
 
