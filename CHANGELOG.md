@@ -3,6 +3,32 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-07-17 — CRITICAL: small trades left unprotected positions, silently
+
+User found HYPE on their OKX account they never authorised: two buys (~$10 each,
+07/17 00:43 and 05:46), no TP/SL orders, no Telegram, no Supabase row. Not a
+compromise — the bot's own worker, failing in the worst possible way.
+
+- **Root cause: an Option 3 position is sold in two halves, and each half must clear
+  the instrument's `minSz`.** A $10 HYPE trade buys 0.1617 HYPE; each half is 0.0808,
+  under HYPE's 0.1 minimum. OKX **accepts the buy** and only rejects the protective
+  orders afterwards → `_okx_post` raised → the coins were already bought → **naked
+  position with no stop loss**. Only HYPE ($11.79 min) and ZEC ($10.63) breach this at
+  the $10 floor; the other 36 coins are unaffected.
+- **Three failures compounded it:** (1) no size pre-check, (2) `run_scan` swallowed the
+  exception into `trade_result = 'error'` and Pass 3 only ever notified on success, so
+  the user was never told, and (3) no Supabase row meant the symbol never entered
+  `active_symbols` — so the coin stayed eligible and **re-bought on the next signal**,
+  which is why HYPE was purchased twice.
+- **Fixes:** a pre-flight `minSz` check (`Option3Preflight`) rejects an unviable trade
+  **before any money moves**, treated as a skip; if a protective order fails *after* the
+  entry fills, `_abort_unprotected()` cancels any placed algos, market-sells the position
+  straight back, and sends a Telegram either way; `'error'` outcomes now always notify.
+  Same pre-check added to the browser's `executeTrade()`. `_fetch_instrument_spec()` now
+  also returns `minSz`.
+- Verified with mocked-API tests covering all four paths: $10 HYPE blocked pre-buy, $15
+  HYPE trades normally, post-buy rejection unwinds + alerts, and a failed unwind escalates.
+
 ## 2026-07-15 — CRITICAL: the OCO take-profit leg was never placed
 
 Caught by inspecting the first real production trade (TAO, $16.50 @ 194.6): OKX showed

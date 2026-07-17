@@ -954,7 +954,7 @@ def _save_option3_trade(trade_data):
 
 
 def _fetch_instrument_spec(symbol):
-    """Return (tickSz, lotSz) as strings for a spot instrument, or (None, None)."""
+    """Return (tickSz, lotSz, minSz) as strings for a spot instrument, or (None, None, None)."""
     try:
         d = requests.get(
             f'{OKX_BASE}/api/v5/public/instruments?instType=SPOT&instId={symbol}',
@@ -962,10 +962,10 @@ def _fetch_instrument_spec(symbol):
         ).json()
         if d.get('code') == '0' and d.get('data'):
             it = d['data'][0]
-            return it.get('tickSz'), it.get('lotSz')
+            return it.get('tickSz'), it.get('lotSz'), it.get('minSz')
     except Exception as e:
         print(f'  [Trade] {symbol}: instrument spec fetch failed: {e}')
-    return None, None
+    return None, None, None
 
 
 def _fmt_step(value, step_str):
@@ -983,7 +983,7 @@ def _limit_entry_buy(symbol, amt_usdt, price):
     the race where the order fills during cancellation).
     Returns (filled_coins, avg_px) — (0.0, None) when nothing filled.
     """
-    tick, lot = _fetch_instrument_spec(symbol)
+    tick, lot, _ = _fetch_instrument_spec(symbol)
     if not tick or not lot:
         return 0.0, None
     limit_px_s = _fmt_step(price * (1 - LIMIT_ENTRY_OFFSET_PCT / 100), tick)
@@ -1032,18 +1032,69 @@ def _limit_entry_buy(symbol, amt_usdt, price):
     return 0.0, None
 
 
+class Option3Preflight(Exception):
+    """
+    Trade rejected BEFORE any order was placed — no money was spent, nothing to
+    clean up. Distinct from a mid-flight failure, which can leave real coins on
+    the books and must never be reported as a harmless skip.
+    """
+
+
+def _abort_unprotected(symbol, sz_coin, algo_ids, reason):
+    """
+    The entry filled but a protective order was rejected — the position is live
+    with NO stop loss. Never leave it that way silently: cancel whatever did get
+    placed, sell the coins straight back, and tell the user either way.
+    Returns a short note for the raised exception.
+    """
+    coin = symbol.replace('-USDT', '')
+    for aid in [a for a in algo_ids if a]:
+        _cancel_algo(symbol, aid)
+
+    sold = False
+    try:
+        _okx_post('/api/v5/trade/order', {
+            'instId': symbol, 'tdMode': 'cash', 'side': 'sell',
+            'ordType': 'market', 'sz': f'{sz_coin * 0.9985:.8f}',
+        })
+        sold = True
+        print(f'  [Option3] {symbol}: position unwound after protection failure ✓')
+    except Exception as e:
+        print(f'  [Option3] {symbol}: EMERGENCY — unwind sell failed: {e}')
+
+    if sold:
+        send_telegram(
+            f"🚨 <b>Trade Aborted — {coin}</b>\n"
+            f"⚠️ OKX rejected the protective orders, so the position was sold "
+            f"straight back — you are flat (cost ≈ fees only).\n"
+            f"📋 {reason}"
+        )
+    else:
+        send_telegram(
+            f"🚨 <b>URGENT — Unprotected {coin} Position</b>\n"
+            f"⚠️ The buy filled, OKX rejected the protective orders, and the "
+            f"automatic sell-back ALSO failed.\n"
+            f"👉 You are holding ~{sz_coin:.8f} {coin} with NO stop loss — "
+            f"close it manually on OKX now.\n"
+            f"📋 {reason}"
+        )
+    return 'position unwound' if sold else 'UNWIND FAILED — manual action needed'
+
+
 def place_option3_trade(symbol, params, ticker):
     """
     Execute a full Option 3 trade on OKX:
+      0. Pre-flight: both halves must clear OKX's minimum order size (see below)
       1. Entry: maker-first limit buy slightly below market (cheaper fee, no
          spread), with a market-buy fallback so the signal is never missed
-      2. OCO conditional — TP + SL on first 50% (single order avoids balance reservation issue)
+      2. OCO — TP + SL on first 50% (single order avoids balance reservation issue)
       3. Conditional SL on remaining 50% at the same trigger price — the FULL position
          is stop-loss-protected server-side 24/7. The monitor swaps this for an
          immediately-active trailing stop once the partial TP fills.
       4. Save to Supabase for monitoring
 
-    Raises on failure so the caller can send the appropriate Telegram message.
+    Raises Option3Preflight (nothing bought) or Exception (see _abort_unprotected)
+    so the caller can send the appropriate Telegram message.
     Returns a dict with trade summary on success.
     """
     price     = ticker['price']
@@ -1051,6 +1102,21 @@ def place_option3_trade(symbol, params, ticker):
     tp_pct    = params['partial_tp_pct']
     sl_pct    = params['sl_pct']
     trail_pct = params['trailing_pct']
+
+    # 0. Pre-flight — the position is sold in two halves, so EACH half must clear
+    #    the instrument's minSz. Checked before a single order goes out: OKX
+    #    accepts the buy and only rejects the protective orders afterwards, which
+    #    would strand an unprotected position (this stranded two real HYPE buys —
+    #    $10 buys 0.16 HYPE, but each half is 0.08 vs HYPE's 0.1 minimum).
+    _, _, min_sz = _fetch_instrument_spec(symbol)
+    if min_sz:
+        min_viable = float(min_sz) * price * 2 / 0.9985
+        if amt_usdt < min_viable:
+            raise Option3Preflight(
+                f'${amt_usdt:.2f} is too small for {symbol}: each half would be '
+                f'{amt_usdt / price * 0.5 * 0.9985:.8f} vs OKX minimum {min_sz} — '
+                f'needs ${min_viable:.2f}+. No order placed.'
+            )
 
     # 1. Entry — maker-first limit buy, market fallback (cuts fees + slippage ~half)
     filled_coins, limit_avg = _limit_entry_buy(symbol, amt_usdt, price)
@@ -1095,36 +1161,44 @@ def place_option3_trade(symbol, params, ticker):
     sl_price  = entry_px * (1 - sl_pct  / 100)
     base_algo = {'instId': symbol, 'tdMode': 'cash', 'side': 'sell'}
 
-    # 2. OCO: TP and SL on first 50% (one order — OKX only reserves balance once).
-    #    ordType MUST be 'oco' — see OCO_ORD_TYPE: 'conditional' would silently
-    #    drop the TP leg and leave an SL-only order.
-    oco_resp = _okx_post('/api/v5/trade/order-algo', {
-        **base_algo,
-        'ordType':          OCO_ORD_TYPE,
-        'sz':               f'{half_sz:.8f}',
-        'tpTriggerPx':      f'{tp_price:.8f}',
-        'tpOrdPx':          '-1',
-        'tpTriggerPxType':  'last',
-        'slTriggerPx':      f'{sl_price:.8f}',
-        'slOrdPx':          '-1',
-        'slTriggerPxType':  'last',
-    })
-    oco_id = oco_resp.get('data', [{}])[0].get('algoId', '')
-    print(f'  [Trade] {symbol}: OCO TP +{tp_pct}% / SL −{sl_pct}% (ID: {oco_id}) ✓')
+    # 2+3. Protective orders. From here the coins are REAL: any failure means an
+    #      unprotected position, so both placements share one guard that unwinds
+    #      the trade rather than leaving it naked.
+    oco_id = sl2_id = ''
+    try:
+        # 2. OCO: TP and SL on first 50% (one order — OKX only reserves balance once).
+        #    ordType MUST be 'oco' — see OCO_ORD_TYPE: 'conditional' would silently
+        #    drop the TP leg and leave an SL-only order.
+        oco_resp = _okx_post('/api/v5/trade/order-algo', {
+            **base_algo,
+            'ordType':          OCO_ORD_TYPE,
+            'sz':               f'{half_sz:.8f}',
+            'tpTriggerPx':      f'{tp_price:.8f}',
+            'tpOrdPx':          '-1',
+            'tpTriggerPxType':  'last',
+            'slTriggerPx':      f'{sl_price:.8f}',
+            'slOrdPx':          '-1',
+            'slTriggerPxType':  'last',
+        })
+        oco_id = oco_resp.get('data', [{}])[0].get('algoId', '')
+        print(f'  [Trade] {symbol}: OCO TP +{tp_pct}% / SL −{sl_pct}% (ID: {oco_id}) ✓')
 
-    # 3. Conditional SL on remaining 50% at the same trigger price — full position
-    #    protected on OKX even if the monitor is down. Swapped for a trailing stop
-    #    by the monitor when the TP fires.
-    sl2_resp = _okx_post('/api/v5/trade/order-algo', {
-        **base_algo,
-        'ordType':         'conditional',
-        'sz':              f'{half_sz:.8f}',
-        'slTriggerPx':     f'{sl_price:.8f}',
-        'slOrdPx':         '-1',
-        'slTriggerPxType': 'last',
-    })
-    sl2_id = sl2_resp.get('data', [{}])[0].get('algoId', '')
-    print(f'  [Trade] {symbol}: 2nd-half SL −{sl_pct}% (ID: {sl2_id}) ✓')
+        # 3. Conditional SL on remaining 50% at the same trigger price — full position
+        #    protected on OKX even if the monitor is down. Swapped for a trailing stop
+        #    by the monitor when the TP fires.
+        sl2_resp = _okx_post('/api/v5/trade/order-algo', {
+            **base_algo,
+            'ordType':         'conditional',
+            'sz':              f'{half_sz:.8f}',
+            'slTriggerPx':     f'{sl_price:.8f}',
+            'slOrdPx':         '-1',
+            'slTriggerPxType': 'last',
+        })
+        sl2_id = sl2_resp.get('data', [{}])[0].get('algoId', '')
+        print(f'  [Trade] {symbol}: 2nd-half SL −{sl_pct}% (ID: {sl2_id}) ✓')
+    except Exception as e:
+        note = _abort_unprotected(symbol, sz_coin, [oco_id, sl2_id], f'Protective order rejected: {e}')
+        raise Exception(f'protective orders failed ({e}) — {note}')
 
     # 4. Save to Supabase for monitor_option3_trades() to track
     saved = _save_option3_trade({
@@ -2092,6 +2166,9 @@ def run_scan(cache, warm_up=False):
                 try:
                     trade_result = place_option3_trade(symbol, params, cand['ticker'])
                     print(f'  {symbol}: [TEST MODE] Option 3 trade placed ✓')
+                except Option3Preflight as e:
+                    print(f'  {symbol}: trade not viable — {e}')
+                    trade_result = 'skip'
                 except Exception as e:
                     print(f'  {symbol}: trade placement failed — {e}')
                     trade_result = 'error'
@@ -2114,6 +2191,9 @@ def run_scan(cache, warm_up=False):
                         try:
                             trade_result = place_option3_trade(symbol, params, cand['ticker'])
                             print(f'  {symbol}: Option 3 trade placed ✓  (rank #{rank_i + 1})')
+                        except Option3Preflight as e:
+                            print(f'  {symbol}: trade not viable — {e}')
+                            trade_result = 'skip'
                         except Exception as e:
                             print(f'  {symbol}: trade placement failed — {e}')
                             trade_result = 'error'
@@ -2127,11 +2207,13 @@ def run_scan(cache, warm_up=False):
             print(f'  {cand["symbol"]}: STRONG BUY ranked #{rank_num} — skipped (cap={MAX_TRADES_PER_SCAN})')
             pending_alerts.append((cand['symbol'], cand['sig'], cand['ticker'], 'cap', cand['cache_update']))
 
-    # ── Pass 3: send Telegram only when a trade was actually placed ───────────
-    # skip, cap, error, and signal-only (None) get no notification —
-    # the user only wants to hear about confirmed new trades.
+    # ── Pass 3: notify ────────────────────────────────────────────────────────
+    # Placed trades and FAILED placements are both reported. skip, cap, and
+    # signal-only (None) stay silent — the user only wants to hear about
+    # confirmed new trades — but 'error' means an order may have reached OKX,
+    # and a money-touching failure must never be silent.
     for symbol, sig, ticker, trade_result, cache_update in pending_alerts:
-        if isinstance(trade_result, dict):
+        if isinstance(trade_result, dict) or trade_result == 'error':
             send_telegram(format_alert(symbol, sig, ticker, trade_result))
         cache[symbol] = cache_update
         time.sleep(0.3)

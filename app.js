@@ -20,6 +20,7 @@ const state = {
   usdtBalance: 0,        // free USDT from OKX sync
   sessionPassword: null, // set after successful cloud unlock
   derivData: {},         // {symbol: {fundingRate, nextFundingRate, openInterest}}
+  minSizes: {},          // {symbol: minSz} — OKX minimum order size, fetched on demand
   perfRows: null,        // closed-trade history — lazy-loaded on first panel open, then cached
   perfRange: { days: 7 },
 };
@@ -189,6 +190,22 @@ async function fetchOKXDerivData(symbol) {
 
     if (Object.keys(deriv).length > 0) state.derivData[symbol] = deriv;
   } catch { }
+}
+
+// Smallest order OKX will accept for a spot instrument, in coin units.
+// Public endpoint, no key needed. Returns null if unavailable (caller proceeds —
+// OKX still enforces it server-side, we just lose the friendly pre-check).
+async function fetchOKXMinSize(symbol) {
+  if (state.minSizes[symbol] !== undefined) return state.minSizes[symbol];
+  try {
+    const res = await fetch(`${CONFIG.OKX_BASE}/api/v5/public/instruments?instType=SPOT&instId=${encodeURIComponent(symbol)}`);
+    const d = await res.json();
+    const minSz = d.code === '0' && d.data?.[0] ? parseFloat(d.data[0].minSz) : null;
+    state.minSizes[symbol] = minSz;
+    return minSz;
+  } catch {
+    return null;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1658,6 +1675,22 @@ async function executeTrade(action, coinAmt) {
     if (!price) throw new Error('Current price unavailable — refresh market data and try again');
     const isBuy = action.side === 'buy';
     const szCoin = coinAmt ?? (action.amountUsdt / price);
+
+    // Pre-flight: an Option 3 position is sold in two halves, so EACH half must
+    // clear the instrument's minSz. OKX accepts the buy and only rejects the
+    // protective orders afterwards, which would strand an unprotected position —
+    // so bail out before spending anything.
+    if (isBuy && action._pTpPct > 0) {
+      const minSz = await fetchOKXMinSize(action.symbol);
+      if (minSz && szCoin * 0.5 * 0.9985 < minSz) {
+        const minUsdt = minSz * price * 2 / 0.9985;
+        throw new Error(
+          `Trade too small for ${action.symbol.replace('-USDT', '')}: each half would be ` +
+          `${(szCoin * 0.5 * 0.9985).toFixed(8)} vs OKX's ${minSz} minimum. ` +
+          `Use at least $${minUsdt.toFixed(2)}. Nothing was bought.`
+        );
+      }
+    }
 
     // 1. Main market order
     const orderBody = isBuy
