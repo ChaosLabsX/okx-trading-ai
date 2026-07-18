@@ -8,6 +8,10 @@ venv/
 # Local runtime / state
 signal_cache.json
 
+# Secrets and VPS runtime - the VPS clone holds real keys and logs; never commit them
+.env
+logs/
+
 # OS / editor
 .DS_Store
 Thumbs.db
