@@ -49,7 +49,8 @@ jobs:
           OKX_API_KEY:        ${{ secrets.OKX_API_KEY }}
           OKX_SECRET_KEY:     ${{ secrets.OKX_SECRET_KEY }}
           OKX_PASSPHRASE:     ${{ secrets.OKX_PASSPHRASE }}
-          # Claude Haiku — AI trade advisor for auto-trade sizing and parameters.
+          # Claude Opus 4.8 — AI trade advisor for auto-trade sizing and parameters
+          # (signal_checker.py uses claude-opus-4-8; the "Haiku" here was stale).
           # Add CLAUDE_API_KEY as a GitHub Secret (your Anthropic API key).
           # Auto-trade is silently skipped if this secret is not set.
           CLAUDE_API_KEY:     ${{ secrets.CLAUDE_API_KEY }}
