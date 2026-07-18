@@ -44,21 +44,39 @@ foreach ($line in Get-Content $EnvFile) {
     }
 }
 
-# UTF-8 so a printed Telegram line containing emoji cannot crash Python with a
-# cp1252 UnicodeEncodeError when stdout is redirected to the log file.
+# Emit UTF-8 (so a printed em-dash / bullet / emoji can't UnicodeEncodeError),
+# and flush every line so the log tails live instead of in 4-min chunks.
 $env:PYTHONIOENCODING = "utf-8"
 $env:PYTHONUTF8 = "1"
+$env:PYTHONUNBUFFERED = "1"
+
+# Decode the worker's UTF-8 stdout correctly. Without this, PowerShell reads it
+# through the console's OEM/cp1252 codepage and every non-ASCII char lands in
+# the log as mojibake (the "Cache is empty ???" we saw). Verified: cp1252 turns
+# the em-dash E2 80 94 into E2 AC 1D; UTF-8 keeps it E2 80 94.
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
 
 # Run from the repo dir so signal_cache.json (the dedup state) persists there
 # and survives every relaunch - which is what keeps continuous mode from
 # re-alerting or re-trading on a signal it already handled.
 Set-Location $Root
 
+# The run loop must NOT inherit the setup's ErrorActionPreference=Stop: with
+# Stop, a single line the worker writes to STDERR (a library warning, say) is
+# raised as a terminating NativeCommandError and caught below as a fake "crash",
+# aborting a healthy run. A genuinely bad interpreter path still throws
+# (CommandNotFoundException is terminating regardless) and is still caught.
+$ErrorActionPreference = "Continue"
+
 Log "runner starting (continuous)"
 while ($true) {
     $started = Get-Date
     try {
-        & $Python $Script *>> $Log
+        # 2>&1 | Out-File -Encoding utf8 (not *>>): *>> writes UTF-16 and decodes
+        # via the console codepage, which both mangled the text and clashed with
+        # the utf8 Log() lines. This path is UTF-8 end to end and streams live.
+        & $Python $Script 2>&1 | Out-File -FilePath $Log -Append -Encoding utf8
     } catch {
         Log ("launch error: " + $_.Exception.Message)
     }
