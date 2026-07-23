@@ -743,6 +743,15 @@ def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data
     history_s   = f'\n\nTRADE JOURNAL — this bot\'s real closed trades:\n{history}' if history else ''
     skips       = _skip_history_context(symbol)
     skips_s     = f'\n\nYOUR PAST SKIPS (graded {JOURNAL_FOLLOWUP_HOURS}h later):\n{skips}' if skips else ''
+    # Distilled statistics over the FULL history (the recent-30 journal above only
+    # sees a rolling window). Empty unless the learning pass has run AND injection
+    # has been deliberately enabled (LEARN_INJECT=1) — see learn.py.
+    try:
+        from learn import _learned_rules_context
+        learned = _learned_rules_context()
+    except Exception:
+        learned = ''
+    learned_s   = f'\n\nLEARNED FROM FULL HISTORY (auto-distilled statistics):\n{learned}' if learned else ''
 
     # Performance-weighted sizing: shrink the hard cap when the system is cold.
     cap_pct = 0.30
@@ -856,7 +865,7 @@ RSI 4H:  {rsi_4h_s}
 MACD:    {macd_s}
 BB:      {bb_s}
 Volume:  {vol_s}
-USDT available: ${usdt_balance:.2f}{struct_s}{news_s}{history_s}{skips_s}
+USDT available: ${usdt_balance:.2f}{struct_s}{news_s}{history_s}{skips_s}{learned_s}
 
 Place this trade?"""
 
@@ -885,8 +894,13 @@ Place this trade?"""
         blocks = r.json().get('content', [])
         text   = next((b.get('text', '') for b in blocks if b.get('type') == 'text'), '').strip()
         if not text:
+            # Must stay a 2-tuple: the caller does `params, skip_reason = ...`, so a
+            # bare `return None` raised TypeError and killed the whole Actions run
+            # (before monitor_option3_trades), leaving open trades untracked that
+            # cycle. Most likely trigger: adaptive thinking consuming max_tokens and
+            # leaving no text block. Treat it as a skip, not a crash.
             print(f'  [Claude] {coin}: no text block in response — skipping')
-            return None
+            return None, 'no text block in AI response (thinking may have consumed max_tokens)'
         print(f'  [Claude] {coin}: {text[:150]}')
 
         # Parse TRADE tag
@@ -2627,6 +2641,15 @@ def main():
         monitor_option3_trades()
         if scan_num == 1:
             grade_journal_followups()   # once per Actions run is plenty — nothing here is urgent
+            # Long-horizon learning pass: reads the FULL graded history, not just the
+            # recent-30 window the per-trade prompt sees. Trigger-gated (fires only
+            # after enough new trades) and wrapped so a hiccup here can never take
+            # down the trading loop.
+            try:
+                from learn import run_learning_pass
+                run_learning_pass()
+            except Exception as e:
+                print(f'  [Learn] pass errored (non-fatal): {e}')
         maybe_send_daily_digest(cache)
         save_cache(cache)
 

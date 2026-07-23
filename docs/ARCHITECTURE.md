@@ -122,6 +122,19 @@ create table if not exists skipped_setups (
   followup      jsonb,
   followup_at   timestamptz
 );
+
+-- Distilled-journal learning pass (learn.py). One row per pass. `cohorts` holds the
+-- code-computed statistics, `learned_block`/`proposals` hold Opus's judgement. The
+-- code degrades silently (prints a one-line note) if this table is absent.
+create table if not exists learned_rules (
+  id              bigserial primary key,
+  created_at      timestamptz default now(),
+  trades_analyzed int,
+  cohorts         jsonb,
+  summary         text,
+  learned_block   text,
+  proposals       jsonb
+);
 ```
 
 ### The trade journal (`entry_context` / `followup` / `skipped_setups`)
@@ -133,6 +146,34 @@ The AI's learning loop. Three parts:
 - **`skipped_setups`** — every AI `[SKIP]` (and funding auto-skip) with the same snapshot, graded the same way: `missed_win` (would have hit target — too cautious) · `good_skip` (would have stopped out) · `neutral_skip`. Mechanical `Option3Preflight` rejections are deliberately **not** logged — they're size limits, not judgments, and would pollute the AI's record.
 
 `_trade_history_context()` and `_skip_history_context()` render this back into every prompt, with code-computed patterns ("3 of 8 trades were SHAKEOUTS → widen slPct") rather than model-inferred ones. Below `JOURNAL_MIN_SAMPLES` (10) closed trades the prompt explicitly labels the history **anecdote, not statistics**, to stop the AI over-generalizing from noise. Note this is in-context memory re-read each decision — the model itself is never retrained.
+
+### The learning pass (`learn.py`)
+
+The per-trade journal above shows the AI only the **last ~30** trades — a rolling
+window that plateaus (trade #500 sees about as much as trade #40). The learning pass
+is the long-horizon complement: it reads the **entire** graded history and distils it
+into conditional statistics that keep compounding past that window.
+
+Same discipline as the journal, drawn harder: **code computes every number** (cohort
+counts and profit factors are exact aggregations in `_compute_cohorts()`), and Opus
+only **judges** the pre-computed cohorts — which look like a real parameter problem vs
+noise, and what bounded change follows. It never estimates a statistic.
+
+- Runs once per Actions run, and only after `LEARN_TRIGGER_NEW_TRADES` (25) newly
+  graded trades since the last pass — so at real volume it fires roughly monthly, on
+  evidence, not on a clock. Wrapped in `try/except` so it can never take down the loop.
+- Only cohorts of `LEARN_MIN_COHORT` (25) trades or more are ever shown to the model —
+  the primary guard against manufacturing a rule from a thin sample. The model is
+  additionally forbidden, in its system prompt, from ever proposing a coin blacklist.
+- **Two outputs.** `learned_block` (statistics only) is stored and, once you opt in,
+  injected into the live trade prompt. `proposals` (parameter changes) are sent to
+  **Telegram for you to approve and apply by hand** — never auto-applied.
+- **Injection is OFF by default.** The pass reports and stores from day one, but nothing
+  reaches a live decision until you set the `LEARN_INJECT=1` env var / Actions secret —
+  after you've read a couple of runs and trust the statistics. It reuses `CLAUDE_MODEL`
+  (Opus 4.8): this is a bounded single-turn judgement, not the long-horizon work a pricier
+  model would earn its cost on.
+- Requires the `learned_rules` table (migration above); degrades silently without it.
 
 > Note: because `partial_tp_id` and `sl_id` share one OCO order ID in phase 1, the monitor distinguishes "TP fired" from "SL fired" by comparing the actual fill price to `entry_price` (fill above entry = TP side, otherwise SL side).
 
