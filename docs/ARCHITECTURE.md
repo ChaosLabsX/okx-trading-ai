@@ -145,7 +145,25 @@ The AI's learning loop. Three parts:
 - **`followup`** (jsonb, written ~24 h after close by `grade_journal_followups()`) — what price did *after* the exit, as a verdict: `shakeout` (stopped us out, then reached our TP anyway → SL too tight) · `good_save` (kept falling → stop earned its keep) · `partial_recovery` · `flat_after_stop` · `left_money` (ran well past our trailing exit) · `well_timed` · `fair_exit`. **This is what makes losses useful** — `shakeout` and `good_save` are both stop-losses, identical in a P&L column, and imply opposite fixes.
 - **`skipped_setups`** — every AI `[SKIP]` (and funding auto-skip) with the same snapshot, graded the same way: `missed_win` (would have hit target — too cautious) · `good_skip` (would have stopped out) · `neutral_skip`. Mechanical `Option3Preflight` rejections are deliberately **not** logged — they're size limits, not judgments, and would pollute the AI's record.
 
-`_trade_history_context()` and `_skip_history_context()` render this back into every prompt, with code-computed patterns ("3 of 8 trades were SHAKEOUTS → widen slPct") rather than model-inferred ones. Below `JOURNAL_MIN_SAMPLES` (10) closed trades the prompt explicitly labels the history **anecdote, not statistics**, to stop the AI over-generalizing from noise. Note this is in-context memory re-read each decision — the model itself is never retrained.
+`_trade_history_context()` and `_skip_history_context()` render this back into every prompt, with code-computed patterns rather than model-inferred ones. Below `JOURNAL_MIN_SAMPLES` (10) closed trades the prompt explicitly labels the history **anecdote, not statistics**, to stop the AI over-generalizing from noise. Note this is in-context memory re-read each decision — the model itself is never retrained.
+
+#### A `PATTERN:` line has to earn the word
+
+A pattern line tells the model to change a money-affecting parameter, so it must first clear a significance bar: the **Wilson 95% lower bound** on the observed rate has to sit above `JOURNAL_PATTERN_NULL_RATE` (0.15) — the rate a well-tuned bot shows anyway — with a hard floor of `JOURNAL_MIN_SAMPLES` graded trades beneath it. In practice that means roughly **9 of 30** graded trades, not 1.
+
+This gate replaced `if shakeouts:`, which fired the directive "consider a wider slPct" on a **single** shakeout in thirty trades. That is noise wearing the word PATTERN, and retuning stops on it is how a feedback loop makes decisions worse over time while looking like it is learning. The sister MT5 project's research log is the cautionary case: across 48+ backtests it found *fewer* significant results than chance predicts.
+
+Three details that matter:
+
+- **Counts are still shown when the gate fails** — as description, not instruction ("2 of 14 graded trades were shakeouts — below the level that separates a real problem from ordinary stop noise"). The model keeps the data and loses only the licence to act on too little of it. The system prompt states explicitly that a bare count is *no evidence at all*, not a weak pattern to split the difference on.
+- **Rates are over GRADED trades, not all closed ones.** A trade that closed within the last `JOURNAL_FOLLOWUP_HOURS` has no verdict yet; counting it as "not a shakeout" silently diluted every rate.
+- **Skips are judged as a two-way split.** Among skips that actually resolved (`neutral_skip` decided nothing), is the missed/good split far enough from a coin flip to mention? The old test — `missed >= 3 and missed > good` — called 3-vs-2 a PATTERN.
+
+#### `evidence`: what the decision was actually told
+
+`_build_entry_snapshot()` also records an `evidence` block — journal sample size, which directives fired, whether `learn.py`'s block was injected, the profit factor and sizing cap in force. `entry_context` freezes what the *market* looked like; `evidence` freezes what the model was told about *its own past*.
+
+Without it the journal can never validate itself. The only question that proves a feedback loop works is whether decisions made with more history turned out better than decisions made with less — and that is unanswerable unless you recorded which was which at the time. It rides inside the existing `entry_context` jsonb on both trades and skips, so **no migration is needed**.
 
 ### The learning pass (`learn.py`)
 

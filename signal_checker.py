@@ -174,6 +174,49 @@ JOURNAL_FOLLOWUP_HOURS = 24
 JOURNAL_GRADE_BATCH    = 5      # rows graded per run — keeps the API cost trivial
 JOURNAL_MIN_SAMPLES    = 10     # below this the prompt calls the history anecdotal
 
+# A PATTERN line tells the model to CHANGE a money-affecting parameter, so it has
+# to clear a significance bar first. Earlier this block fired on `if shakeouts:` —
+# one shakeout in thirty trades emitted "consider a wider slPct". That is noise
+# wearing the word PATTERN, and it is exactly the failure the sister MT5 project's
+# research log is a monument to: across 48+ backtests it found FEWER significant
+# results than chance predicts, so acting on thin evidence manufactures the false
+# positive that later gets funded.
+#
+# The bar: the Wilson 95% lower bound on the observed rate must sit above a null
+# rate that a well-tuned bot would show anyway. Some stops SHOULD get shaken out;
+# the question is never "did this happen" but "does it happen more than normal".
+# Counts are still reported either way — only the directive is gated, so the model
+# keeps the data and loses only the instruction to act on too little of it.
+JOURNAL_PATTERN_NULL_RATE = 0.15   # unremarkable background rate for a verdict class
+JOURNAL_PATTERN_Z         = 1.96   # 95%, matching the CI convention used in backtests
+
+
+def _wilson_lower(k, n, z=JOURNAL_PATTERN_Z):
+    """
+    Lower bound of the Wilson score interval for k successes in n trials.
+
+    Wilson rather than the textbook normal approximation because it stays sane at
+    the small n and extreme proportions this journal actually operates at (3 of 8),
+    where the normal interval famously runs off the end of [0, 1). Hand-rolled and
+    dependency-free on purpose — the worker's only dependency is `requests`.
+    """
+    if n <= 0:
+        return 0.0
+    p = k / n
+    z2 = z * z
+    denom = 1 + z2 / n
+    centre = (p + z2 / (2 * n)) / denom
+    margin = (z / denom) * math.sqrt(p * (1 - p) / n + z2 / (4 * n * n))
+    return max(0.0, centre - margin)
+
+
+def _pattern_is_real(k, n):
+    """True when k-of-n is too frequent to be the background rate — the gate a
+    prescriptive PATTERN line must pass. The absolute floor matters independently:
+    without it 5-of-5 clears the bound, and five trades is an anecdote no matter
+    how lopsided it looks."""
+    return n >= JOURNAL_MIN_SAMPLES and _wilson_lower(k, n) > JOURNAL_PATTERN_NULL_RATE
+
 
 # ── Zone helpers ──────────────────────────────────────────────────────────────
 def direction_zone(label):
@@ -710,7 +753,8 @@ def _fetch_usdt_balance():
 
 
 # ── Claude Opus 4.8 — AI trade advisor ───────────────────────────────────────
-def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data, bb_data, vol_ratio, extra=None):
+def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data, bb_data, vol_ratio,
+                    extra=None, evidence_out=None):
     """
     Ask Claude (Opus 4.8, adaptive thinking) whether this STRONG BUY is worth trading
     and what parameters to use. `extra` carries the rich decision context built by
@@ -718,6 +762,11 @@ def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data
     open interest, order-book imbalance, BTC regime, and the coin's latest headlines.
     Returns (params_dict, None) on TRADE, or (None, reason) on SKIP — the reason is
     logged to the journal so skips can be graded later like trades.
+
+    Pass a dict as `evidence_out` to receive the provenance of the decision: how much
+    history the prompt carried, which PATTERN directives fired, whether the distilled
+    learn.py block was injected. Stored on the resulting trade or skip so the feedback
+    loop's own effect can be measured later rather than assumed.
     """
     coin     = symbol.replace('-USDT', '')
     rsi_1h_s = f'{rsi_1h:.1f}' if rsi_1h is not None else 'N/A'
@@ -739,9 +788,9 @@ def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data
 
     vol_s = f'{vol_ratio:.1f}× average' if vol_ratio is not None else 'N/A'
 
-    history, pf = _trade_history_context(symbol)
+    history, pf, ev_trades = _trade_history_context(symbol)
     history_s   = f'\n\nTRADE JOURNAL — this bot\'s real closed trades:\n{history}' if history else ''
-    skips       = _skip_history_context(symbol)
+    skips, ev_skips = _skip_history_context(symbol)
     skips_s     = f'\n\nYOUR PAST SKIPS (graded {JOURNAL_FOLLOWUP_HOURS}h later):\n{skips}' if skips else ''
     # Distilled statistics over the FULL history (the recent-30 journal above only
     # sees a rolling window). Empty unless the learning pass has run AND injection
@@ -760,6 +809,19 @@ def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data
             cap_pct = 0.15
         elif pf < 1.5:
             cap_pct = 0.22
+
+    # Provenance of THIS decision: exactly which evidence the model was shown.
+    # Filled through an out-parameter rather than a third return value on purpose —
+    # this function has six return points and a scar from the last arity change
+    # (see the `no text block` branch below, where a bare `return None` took down a
+    # whole Actions run). Widening all six is the same trap; filling a dict is not.
+    if evidence_out is not None:
+        evidence_out.update({
+            **ev_trades, **ev_skips,
+            'learned_injected': bool(learned),
+            'cap_pct':          cap_pct,
+            'model':            CLAUDE_MODEL,
+        })
 
     # Market structure & derivatives context (ATR, S/R, funding, OI, order book, BTC regime)
     extra = extra or {}
@@ -849,6 +911,11 @@ conditions it was ENTERED on and what price did AFTER the exit. Use it:
 EVIDENCE DISCIPLINE: when the journal shows fewer than {JOURNAL_MIN_SAMPLES} closed trades it
 is anecdote, not statistics. Make only obvious, small parameter corrections; never blacklist a
 coin or jump position size over one or two results. Reason from the CONDITIONS, not the coin name.
+Only a line beginning "PATTERN:" is actionable. Those have already passed a statistical test in
+code (the 95% lower bound on the rate clears the level a well-tuned bot shows anyway). A bare
+count — "2 of 14 graded trades were shakeouts" — is CONTEXT, not an instruction: it did not clear
+that bar, and retuning on it would be fitting noise. Do not treat a raw count as a weak PATTERN
+and split the difference; treat it as no evidence at all.
 
 Respond with EXACTLY ONE line — nothing else:
 Trade:  [TRADE:{{"side":"buy","symbol":"{symbol}","amountUsdt":0,"partialTpPct":0,"trailingCallbackPct":0,"slPct":0}}]
@@ -983,12 +1050,18 @@ def _sb_headers(extra=None):
     return h
 
 
-def _build_entry_snapshot(cand, extra=None, params=None):
+def _build_entry_snapshot(cand, extra=None, params=None, evidence=None):
     """
     Freeze the market picture a decision was made on. Costs nothing extra — every
     value here was already computed to make the call, and is otherwise thrown away
     — but without it a closed trade records only THAT it lost, never the conditions
     that produced the loss, which is precisely what turns a loss into a lesson.
+
+    `evidence` records the second half of that story: not what the MARKET looked
+    like, but what the model was TOLD about its own past when it decided. Without
+    it the journal can never answer the only question that validates it — whether
+    decisions made with more history turned out better than decisions made with
+    less. Every trade would be evidence about the market and none about the loop.
     """
     sig  = cand.get('sig') or {}
     macd = cand.get('macd_data') or {}
@@ -1025,6 +1098,8 @@ def _build_entry_snapshot(cand, extra=None, params=None):
             'sl_pct':      params.get('sl_pct'),
             'trail_pct':   params.get('trailing_pct'),
         }
+    if evidence:
+        snap['evidence'] = evidence
     return {k: v for k, v in snap.items() if v is not None and v != [] and v != ''}
 
 
@@ -1841,11 +1916,15 @@ def _trade_history_context(symbol):
 
     The follow-up verdicts are what make losses useful: 'shakeout' and 'good_save' are
     both stop-losses, look identical in a P&L column, and imply opposite fixes.
-    Returns (text, profit_factor) — ('', None) when no data exists yet;
-    profit_factor stays None until 30 closed trades have accumulated.
+
+    Returns (text, profit_factor, evidence). `evidence` is the provenance record of
+    what this prompt was actually shown — sample size, which directives fired — so a
+    decision can later be attributed to the evidence behind it instead of leaving
+    "did the journal help?" permanently unanswerable. profit_factor stays None until
+    30 closed trades have accumulated.
     """
     if not SUPABASE_URL or not SUPABASE_KEY:
-        return '', None
+        return '', None, {}
     try:
         r = requests.get(
             f'{SUPABASE_URL}/rest/v1/option3_trades'
@@ -1862,10 +1941,10 @@ def _trade_history_context(symbol):
                 headers=_sb_headers(), timeout=10,
             )
             if r.status_code != 200:
-                return '', None
+                return '', None, {}
         rows = r.json()
         if not rows:
-            return '', None
+            return '', None, {}
 
         pnls  = [float(t.get('net_pnl_usdt') or 0) for t in rows]
         wins  = sum(1 for p in pnls if p > 0)
@@ -1884,20 +1963,36 @@ def _trade_history_context(symbol):
                 pf = 99.0
                 lines.append('Profit factor (last 30 trades): no losses')
 
-        # Patterns worth acting on — computed in code, not inferred by the model
+        # Patterns worth acting on — computed in code, not inferred by the model,
+        # and only PRESCRIPTIVE once the rate clears _pattern_is_real(). Note the
+        # denominator: rates are over GRADED trades, not all closed ones. A trade
+        # that closed in the last JOURNAL_FOLLOWUP_HOURS has no verdict yet, and
+        # counting it as "not a shakeout" silently dilutes every rate here.
         verdicts  = [(t.get('followup') or {}).get('verdict') for t in rows]
+        graded    = sum(1 for v in verdicts if v)
         shakeouts = verdicts.count('shakeout')
         left      = verdicts.count('left_money')
         saves     = verdicts.count('good_save')
-        if shakeouts:
-            lines.append(f'PATTERN: {shakeouts} of {len(rows)} trades were SHAKEOUTS — the stop sat '
-                         f'inside normal noise and price recovered to our target afterwards. '
+        fired     = []
+
+        if _pattern_is_real(shakeouts, graded):
+            fired.append('shakeout')
+            lines.append(f'PATTERN: {shakeouts} of {graded} graded trades were SHAKEOUTS — the stop '
+                         f'sat inside normal noise and price recovered to our target afterwards. '
                          f'Consider a wider slPct on similar setups.')
-        if left:
-            lines.append(f'PATTERN: {left} exit(s) left significant money on the table — '
-                         f'consider a wider trailingCallbackPct so winners run further.')
+        elif shakeouts:
+            lines.append(f'{shakeouts} of {graded} graded trades were shakeouts — below the level '
+                         f'that separates a real problem from ordinary stop noise. Do not retune on it.')
+
+        if _pattern_is_real(left, graded):
+            fired.append('left_money')
+            lines.append(f'PATTERN: {left} of {graded} graded exits left significant money on the '
+                         f'table — consider a wider trailingCallbackPct so winners run further.')
+        elif left:
+            lines.append(f'{left} of {graded} graded exits left money on the table — not yet a pattern.')
+
         if saves:
-            lines.append(f'{saves} stop-loss exit(s) correctly avoided a deeper fall — those stops earned their keep.')
+            lines.append(f'{saves} stop-loss exit(s) correctly avoided a deeper fall.')
 
         # This coin first — most relevant — then the rest of the journal
         coin_rows  = [t for t in rows if t.get('symbol') == symbol][:5]
@@ -1915,18 +2010,34 @@ def _trade_history_context(symbol):
             lines.append(f'\nNOTE: only {len(rows)} closed trade(s) so far — this is ANECDOTE, not '
                          f'statistics. Use it for obvious parameter problems only. Do NOT blacklist '
                          f'a coin or make large sizing jumps from one or two results.')
-        return '\n'.join(lines), pf
+
+        evidence = {
+            'journal_n':   len(rows),
+            'journal_graded': graded,
+            'journal_pf':  round(pf, 2) if pf is not None else None,
+            'shakeouts':   shakeouts,
+            'left_money':  left,
+            'good_saves':  saves,
+            'patterns':    fired,
+        }
+        return '\n'.join(lines), pf, evidence
     except Exception:
-        return '', None
+        return '', None, {}
 
 
 def _skip_history_context(symbol):
     """
     Graded record of setups the AI declined — the other half of the mistake ledger.
     Being too cautious never shows up in P&L, so it is surfaced explicitly.
+
+    Returns (text, evidence). The "too cautious / correctly cautious" call is a
+    two-way split, so it is judged as one: among skips that actually resolved
+    (neutral_skip decided nothing either way), is the missed/good split far enough
+    from a coin flip to be worth telling the model about? The old test — `missed >= 3
+    and missed > good` — called 3-vs-2 a PATTERN, which is a coin flip with a label.
     """
     if not SUPABASE_URL or not SUPABASE_KEY:
-        return ''
+        return '', {}
     try:
         r = requests.get(
             f'{SUPABASE_URL}/rest/v1/skipped_setups'
@@ -1935,27 +2046,39 @@ def _skip_history_context(symbol):
             headers=_sb_headers(), timeout=10,
         )
         if r.status_code != 200:
-            return ''
+            return '', {}
         rows = r.json()
         if not rows:
-            return ''
+            return '', {}
         verdicts = [(s.get('followup') or {}).get('verdict') for s in rows]
         missed, good = verdicts.count('missed_win'), verdicts.count('good_skip')
+        decisive = missed + good      # neutral_skip resolved nothing — it is not evidence either way
         lines = [f'Last {len(rows)} graded skips: {good} correctly avoided a loss, '
                  f'{missed} would have hit target ({verdicts.count("neutral_skip")} went nowhere)']
-        if missed >= 3 and missed > good:
-            lines.append('PATTERN: most recent skips would have WON — you are being too cautious; '
-                         'do not skip setups that meet the rules without a concrete reason.')
-        if good >= 3 and good > missed:
-            lines.append('PATTERN: recent skips correctly avoided losses — your caution is working.')
+
+        fired = []
+        if decisive >= JOURNAL_MIN_SAMPLES and _wilson_lower(missed, decisive) > 0.5:
+            fired.append('too_cautious')
+            lines.append(f'PATTERN: {missed} of {decisive} resolved skips would have WON — you are '
+                         f'being too cautious; do not skip setups that meet the rules without a '
+                         f'concrete reason.')
+        elif decisive >= JOURNAL_MIN_SAMPLES and _wilson_lower(good, decisive) > 0.5:
+            fired.append('caution_working')
+            lines.append(f'PATTERN: {good} of {decisive} resolved skips correctly avoided losses — '
+                         f'your caution is working.')
+        elif decisive:
+            lines.append(f'The {decisive} resolved skips split {missed} missed / {good} avoided — '
+                         f'too close to a coin flip to conclude anything about your caution level.')
+
         coin_rows = [s for s in rows if s.get('symbol') == symbol][:3]
         for s in coin_rows:
             fu = s.get('followup') or {}
             lines.append(f"  - {symbol} skipped ({(s.get('reason') or '')[:60]}) → "
                          f"{fu.get('verdict', '?').upper()}: {fu.get('note', '')}")
-        return '\n'.join(lines)
+        return '\n'.join(lines), {'skips_n': len(rows), 'skips_decisive': decisive,
+                                  'missed_win': missed, 'good_skip': good, 'skip_patterns': fired}
     except Exception:
-        return ''
+        return '', {}
 
 
 def _phase1_pnl(trade):
@@ -2580,15 +2703,18 @@ def run_scan(cache, warm_up=False):
                 else:
                     print(f'  {symbol}: asking Claude for trade params '
                           f'(rank #{rank_i + 1}/{len(top_candidates)}, score={cand["rank_score"]:.2f})...')
+                    # Filled in place by ai_trade_params — the record of what this
+                    # decision was actually shown, stored on the trade or the skip.
+                    evidence = {}
                     params, skip_reason = ai_trade_params(
                         symbol, cand['sig'], cand['ticker'], usdt_balance,
                         cand['rsi_1h'], cand['rsi_4h'], cand['macd_data'], cand['bb_data'], cand['vol_ratio'],
-                        extra=extra,
+                        extra=extra, evidence_out=evidence,
                     )
                     if params:
                         try:
                             trade_result = place_option3_trade(symbol, params, cand['ticker'],
-                                                               _build_entry_snapshot(cand, extra, params))
+                                                               _build_entry_snapshot(cand, extra, params, evidence))
                             print(f'  {symbol}: Option 3 trade placed ✓  (rank #{rank_i + 1})')
                         except Option3Preflight as e:
                             # A mechanical size limit, not a judgment call — keep it out
@@ -2601,7 +2727,7 @@ def run_scan(cache, warm_up=False):
                     else:
                         trade_result = 'skip'
                         _log_skipped_setup(symbol, cand['ticker']['price'], skip_reason,
-                                           _build_entry_snapshot(cand, extra))
+                                           _build_entry_snapshot(cand, extra, None, evidence))
 
             pending_alerts.append((symbol, cand['sig'], cand['ticker'], trade_result, cand['cache_update']))
 

@@ -3,6 +3,47 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-07-27 — The journal now has to prove a pattern before prescribing one
+
+The learning loop was telling the AI to retune stops on a single data point. Its
+pattern block fired on `if shakeouts:` — **one** shakeout in thirty trades emitted
+`PATTERN: ... Consider a wider slPct on similar setups`. A feedback loop that acts
+on n=1 doesn't get better over time; it chases noise while looking like it's
+learning, and it does so with real money.
+
+- **Significance gate** (`_wilson_lower()`, `_pattern_is_real()`): a prescriptive
+  `PATTERN:` line now requires the Wilson 95% lower bound on the rate to clear
+  `JOURNAL_PATTERN_NULL_RATE` (0.15), over at least `JOURNAL_MIN_SAMPLES` graded
+  trades. At n=30 that's 9 shakeouts, not 1. Hand-rolled, no new dependency —
+  the worker still needs only `requests`. `learn.py` already held this line with
+  `LEARN_MIN_COHORT = 25`; the per-trade journal did not.
+- **Counts survive, directives don't.** Below the bar the model still sees
+  "2 of 14 graded trades were shakeouts" as context, and the system prompt now
+  says plainly that a bare count is *no evidence at all* — not a weak pattern to
+  half-act on. Without that line the gate would have been cosmetic.
+- **Bug found while gating it: rates were diluted by ungraded trades.** The
+  denominator was every closed trade, including those closed inside the last 24 h
+  that have no verdict yet — counting "not graded" as "not a shakeout". Rates are
+  now over graded trades only.
+- **Skips judged as a two-way split.** `missed >= 3 and missed > good` called
+  3-vs-2 a PATTERN. Now: among skips that actually *resolved* (`neutral_skip`
+  decided nothing either way), the missed/good split must be distinguishable from
+  a coin flip. `_skip_history_context()` returns `(text, evidence)`.
+- **`evidence`: the decision's provenance** — journal sample size, which
+  directives fired, whether the `learn.py` block was injected, the PF and cap in
+  force. Stored inside the existing `entry_context` jsonb on both trades and
+  skips, so **no migration**. This is what makes "did the journal help?"
+  answerable later instead of permanently unknowable: you cannot compare
+  decisions made with more history against ones made with less unless you
+  recorded which was which.
+- `ai_trade_params()` takes an `evidence_out` dict rather than returning a third
+  value — it has six return points and a scar from the last arity change (the
+  `no text block` branch, where a bare `return None` took down a whole Actions
+  run). Widening all six is the same trap.
+- Verified by exercising the real functions against fabricated Supabase
+  responses: 1-of-30 stays silent, 12-of-30 fires, 5-of-5 never fires, ungraded
+  rows don't dilute, and every degraded path still returns the right arity.
+
 ## 2026-07-17 — Trade journal: the AI can now learn from its losses (and its skips)
 
 Goal: let Claude Opus learn from earlier mistakes. It already saw *that* a trade lost
