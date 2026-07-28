@@ -797,9 +797,12 @@ function generateSignal(rsi, macd, bb, rsi4h = null, volRatio = null) {
   }
 
   // ── 4H RSI confirmation (max ±1) ──
+  // Labels kept in step with signal_checker.py:generate_signal — rsi4h <= 40 is
+  // the 4H being weak, not an uptrend, and rsi4h >= 55 is it being strong, not a
+  // downtrend. The old wording claimed the opposite. Scoring is unchanged.
   if (rsi4h !== null) {
-    if (score > 0 && rsi4h <= 40) { score += 1; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — higher-TF uptrend confirmed`); }
-    else if (score < 0 && rsi4h >= 55) { score -= 1; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — higher-TF downtrend confirmed`); }
+    if (score > 0 && rsi4h <= 40) { score += 1; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — 4H oversold as well`); }
+    else if (score < 0 && rsi4h >= 55) { score -= 1; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — 4H still elevated`); }
     else if (score > 0 && rsi4h >= 70) { score -= 0.5; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — caution: overbought on 4H`); }
     else if (score < 0 && rsi4h <= 30) { score += 0.5; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — caution: oversold on 4H`); }
   }

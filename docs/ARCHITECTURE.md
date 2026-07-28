@@ -53,6 +53,33 @@ They coordinate through the Supabase `option3_trades` table: a trade placed from
 5. A Telegram message confirms the trade ("Trade Already Placed on OKX ✅").
 6. On every later run, `monitor_option3_trades()` reads all rows with `phase < 3`, checks OKX algo-order history for triggers, advances the phase, and sends exit Telegram messages with exact USDT P&L.
 
+### Concurrency is exposure, not diversification
+
+Between steps 3 and 4 sits `correlation_block()`. `MAX_OPEN_TRADES` counts
+positions; it cannot tell three separate bets from one bet placed three times.
+On 2026-07-29 FET, POL and ADA were opened on the same oversold + lower-BB setup
+and stopped out together for a combined −$1.25 — the cap of 3 was never reached,
+so nothing intervened.
+
+The guard refuses a candidate whose **downside** correlation against any open
+position reaches `CORRELATION_MAX`. Plain correlation was tried first and
+rejected on measurement, not taste: FET/POL averages r = +0.394 across all hourly
+bars but +0.844 on the hours BTC fell hard, and 83–100% of hard-down hours saw
+both coins of every tested pair red together. A threshold loose enough to permit
+normal trading on average-r would have allowed all three losers. Correlation
+converges in drawdowns, which is the only regime the guard exists for, so r is
+computed over down bars only and taken as the max of both directions (otherwise
+the verdict depends on which coin was bought first).
+
+It fails **open** — missing or short candle history skips the comparison and
+prints why. `MAX_OPEN_TRADES` remains the hard backstop, and a coin dropping off
+the watchlist must not halt trading.
+
+Practical consequence, stated plainly: in the current watchlist almost every pair
+clears the threshold, so this behaves as "one open position at a time" until the
+universe contains genuinely unrelated assets. That is the measurement, not a
+misconfiguration.
+
 ## Supabase
 
 One Supabase project. The URL and **anon key** ship publicly in `config.js` (this is by design — the anon key is meant to be public; data protection comes from encryption for settings, and row content for trades is not sensitive). The worker authenticates with `SUPABASE_URL` / `SUPABASE_KEY` GitHub Secrets, using the same REST (PostgREST) API.

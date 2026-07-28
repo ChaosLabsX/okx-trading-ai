@@ -3,6 +3,43 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-07-29 — Two coins fell together and the bot called it two opinions
+
+Three trades (FET, POL, ADA) opened on the same setup within one session and all
+three hit their stops for a combined −$1.25. Two separate defects surfaced.
+
+- **The AI was being told the opposite of the truth.** `generate_signal()`
+  labelled `rsi_4h <= 40` as *"higher-TF uptrend confirmed"* and awarded +1.
+  RSI 40 on the 4H is the higher timeframe being **weak**. The mirrored branch
+  had the same inversion (`rsi_4h >= 55` → *"downtrend confirmed"*). This was not
+  cosmetic: the reasons list is pasted verbatim into the Opus prompt as
+  `Confirmed by: ...`, so every one of the three losers told the model the 4H
+  agreed while it was falling. Labels are now `4H oversold as well` /
+  `4H still elevated`, in `signal_checker.py` and the dashboard's `app.js` copy.
+  **Scoring is deliberately unchanged** — whether stacked-oversold is confluence
+  or a falling knife is an empirical question, `rsi_4h` is in every entry
+  snapshot, and the journal can answer it at ~30 graded trades. Reproducing the
+  published `[+5.5]` score for the real FET alert is the regression test.
+- **`correlation_block()`: concurrency is exposure.** `MAX_OPEN_TRADES = 3`
+  counts positions, not bets. The cap was never reached, so nothing stopped one
+  bet being placed three times.
+- **Average correlation was built, measured, and thrown out.** The first version
+  used Pearson r on hourly returns at a 0.75 cap. Against the real candles it
+  would have waved all three trades through — FET/POL is only +0.394 on average.
+  But on hours BTC fell >0.4% that same pair is **+0.844**, and 83–100% of
+  hard-down hours had both coins of every pair red. Average r measures the market
+  you are not afraid of. The shipped guard conditions on down bars (~50 of 99
+  survive; conditioning on hard-down hours only leaves ~6, which is noise) and
+  takes the max of both directions so the verdict is order-independent. All six
+  FET/POL/ADA orderings now block.
+- **`CORRELATION_MAX = 0.50` is a judgement call and is documented as one.** In
+  the current watchlist nearly every pair clears it, so the guard effectively
+  means "one open position at a time". Recorded as the finding it is rather than
+  tuned until it looked comfortable.
+- Fails **open** on missing or short history, printing why — `MAX_OPEN_TRADES`
+  is still the hard backstop and a watchlist change must not halt trading.
+  Logged-only in `TEST_MODE`, matching the existing rails.
+
 ## 2026-07-27 — The journal now has to prove a pattern before prescribing one
 
 The learning loop was telling the AI to retune stops on a single data point. Its

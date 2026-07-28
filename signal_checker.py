@@ -546,12 +546,26 @@ def generate_signal(rsi, macd, bb, vol_ratio=None, rsi_4h=None):
         if   vol_ratio >= 2.0: score += 1; reasons.append(f'Volume {vol_ratio:.1f}× avg — strong buying interest')
         elif vol_ratio >= 1.5:             reasons.append(f'Volume {vol_ratio:.1f}× avg — elevated')
 
-    # 4H RSI confirmation — mirrors the browser dashboard logic (max ±1 point)
+    # 4H RSI confirmation — mirrors the browser dashboard logic (max ±1 point).
+    #
+    # The first two branches used to be labelled "higher-TF uptrend/downtrend
+    # confirmed". Both were backwards: rsi_4h <= 40 is the 4H being WEAK, not
+    # trending up, and rsi_4h >= 55 is the 4H being STRONG, not trending down.
+    # That text is not cosmetic — the reasons list is pasted verbatim into the
+    # AI prompt as "Confirmed by: ...", so the model was being told the higher
+    # timeframe agreed when it said the opposite. FET/POL/ADA all carried
+    # "4H RSI 34 — higher-TF uptrend confirmed" into their entry decisions on
+    # 2026-07-29 and all three stopped out.
+    #
+    # Only the labels changed. The +1/-1 is deliberately left alone: whether
+    # stacked-oversold is confluence or a falling knife is an empirical
+    # question, and rsi_4h is recorded in every entry snapshot so the journal
+    # can answer it around 30 graded trades. Do not flip the sign on a hunch.
     if rsi_4h is not None:
         if   score > 0 and rsi_4h <= 40:
-            score += 1;   reasons.append(f'4H RSI {rsi_4h:.0f} — higher-TF uptrend confirmed')
+            score += 1;   reasons.append(f'4H RSI {rsi_4h:.0f} — 4H oversold as well')
         elif score < 0 and rsi_4h >= 55:
-            score -= 1;   reasons.append(f'4H RSI {rsi_4h:.0f} — higher-TF downtrend confirmed')
+            score -= 1;   reasons.append(f'4H RSI {rsi_4h:.0f} — 4H still elevated')
         elif score > 0 and rsi_4h >= 70:
             score -= 0.5; reasons.append(f'4H RSI {rsi_4h:.0f} — caution: overbought on 4H')
         elif score < 0 and rsi_4h <= 30:
@@ -562,6 +576,93 @@ def generate_signal(rsi, macd, bb, vol_ratio=None, rsi_4h=None):
              'STRONG SELL' if score <= STRONG_SELL_SCORE else
              'SELL'        if score <= -2 else 'HOLD')
     return {'label': label, 'score': score, 'reasons': reasons}
+
+
+def _returns(closes):
+    """
+    Bar-to-bar returns. A non-positive prior close yields 0.0 rather than being
+    dropped — dropping would shorten one series and silently misalign the two
+    being compared, which is worse than one dead bar.
+    """
+    out = []
+    for i in range(1, len(closes)):
+        prev = closes[i - 1]
+        out.append((closes[i] / prev - 1) if prev > 0 else 0.0)
+    return out
+
+
+def _pearson(a, b):
+    """Pearson r over two equal-length series. Hand-rolled — this worker has no numpy."""
+    n = len(a)
+    if n < 2 or n != len(b):
+        return None
+    ma, mb = sum(a) / n, sum(b) / n
+    cov = sum((x - ma) * (y - mb) for x, y in zip(a, b))
+    va  = sum((x - ma) ** 2 for x in a)
+    vb  = sum((y - mb) ** 2 for y in b)
+    if va <= 0 or vb <= 0:      # a flat series has no correlation to measure
+        return None
+    return cov / math.sqrt(va * vb)
+
+
+def _downside_corr(a_closes, b_closes):
+    """
+    Correlation of two coins on the bars that matter — the ones where they fell.
+
+    Computed in both directions (bars where A fell, bars where B fell) and
+    reported as the max, so the answer does not depend on which coin happens to
+    be held and which is the candidate. Returns None when neither direction has
+    CORRELATION_MIN_DOWN bars to work with.
+    """
+    n = min(len(a_closes), len(b_closes))
+    ra, rb = _returns(a_closes[-n:]), _returns(b_closes[-n:])
+
+    best = None
+    for ref, other in ((ra, rb), (rb, ra)):
+        idx = [i for i, v in enumerate(ref) if v < 0]
+        if len(idx) < CORRELATION_MIN_DOWN:
+            continue
+        r = _pearson([ref[i] for i in idx], [other[i] for i in idx])
+        if r is not None and (best is None or r > best):
+            best = r
+    return best
+
+
+def correlation_block(symbol, closes_by_symbol, active_symbols):
+    """
+    Is this candidate just another copy of a position we already hold?
+
+    Returns (blocking_symbol, r) when downside correlation reaches
+    CORRELATION_MAX against some open position, else (None, highest_r_seen).
+
+    Fails OPEN when a series is missing or too short: MAX_OPEN_TRADES is still
+    the hard cap, and a coin leaving the watchlist must not halt trading. Every
+    fail-open prints, so "no correlation data" can never pass silently. Series
+    are the same scan's 1H candles, so bars line up; a gap on one side would
+    understate r, which errs toward allowing the trade — the same direction as
+    the explicit fail-open.
+    """
+    mine = closes_by_symbol.get(symbol)
+    if not mine or len(mine) < CORRELATION_MIN_BARS:
+        print(f'  [Corr] {symbol}: no usable candle history — guard skipped')
+        return None, None
+
+    worst_sym, worst_r = None, None
+    for other in sorted(active_symbols):
+        theirs = closes_by_symbol.get(other)
+        if not theirs or len(theirs) < CORRELATION_MIN_BARS:
+            print(f'  [Corr] {other}: open position has no candle history — not compared')
+            continue
+        r = _downside_corr(mine, theirs)
+        if r is None:
+            print(f'  [Corr] {symbol} vs {other}: too few down bars to judge — not compared')
+            continue
+        if worst_r is None or r > worst_r:
+            worst_sym, worst_r = other, r
+
+    if worst_r is not None and worst_r >= CORRELATION_MAX:
+        return worst_sym, worst_r
+    return None, worst_r
 
 
 def btc_regime_ok():
@@ -2475,6 +2576,43 @@ TEST_MAX_CONCURRENT = 3
 MAX_OPEN_TRADES = 3   # never hold more than this many Option 3 trades at once
 MAX_SL_PER_DAY  = 3   # circuit breaker: pause new trades after this many stop-losses in 24h
 
+# Correlation guard. MAX_OPEN_TRADES counts POSITIONS; it cannot see EXPOSURE.
+# On 2026-07-29 FET, POL and ADA were each opened on the same oversold + lower-BB
+# setup and all three stopped out together for a combined -$1.25. Three
+# "independent" trades that were one market move. The cap of 3 was never
+# reached, so nothing blocked it, and the journal records it as three data
+# points when it is really one.
+#
+# WHY DOWNSIDE CORRELATION AND NOT PLAIN CORRELATION. The obvious guard —
+# Pearson r on hourly returns — was built first and measured against the real
+# candles for those three coins. It does not work:
+#
+#     pair       all bars   hours BTC fell >0.4%
+#     FET/POL      +0.394           +0.844
+#     ADA/POL      +0.412           +0.598
+#     FET/ADA      +0.643           +0.616
+#
+# On average these coins look only loosely related, and a plain-r guard at any
+# threshold loose enough to permit normal trading would have waved all three
+# through. But correlations converge in drawdowns — that is the whole
+# phenomenon — and 83-100% of hard-down hours saw both coins of every pair red
+# together. Average r measures the market you are not afraid of.
+#
+# So r is computed only over the bars where one side actually fell, and taken as
+# the max of both directions so the verdict does not depend on which coin
+# happened to be bought first. ~50 of 99 bars survive that filter, which is
+# enough to estimate; conditioning on hard-down hours only would be truer still
+# but leaves ~6 bars, which is noise.
+#
+# CORRELATION_MAX is a judgement call, not a derived number: half the downside
+# variance shared is enough to call two positions one bet. Be aware that in the
+# current universe nearly every pair clears it, so in practice this guard means
+# "one open position at a time" until the watchlist holds genuinely unrelated
+# assets. That is the finding, not a bug.
+CORRELATION_MAX      = 0.50   # refuse a new trade this co-exposed with an open one
+CORRELATION_MIN_BARS = 50     # fewer bars than this and the estimate is noise
+CORRELATION_MIN_DOWN = 20     # ...and this many must be down bars to condition on
+
 
 def run_scan(cache, warm_up=False):
     """
@@ -2503,6 +2641,10 @@ def run_scan(cache, warm_up=False):
     # ── Pass 1: scan all coins, collect signal data ──────────────────────────
     pending_alerts = []  # (symbol, sig, ticker, trade_result, cache_update)
     candidates     = []  # STRONG BUY coins eligible for auto-trade, to be ranked
+    # symbol → 1H closes, kept for the correlation guard. Filled for EVERY scanned
+    # coin, not just candidates — the open positions we compare against are exactly
+    # the ones that get filtered out of `candidates` further down.
+    closes_by_symbol = {}
 
     for symbol in SYMBOLS:
         try:
@@ -2516,6 +2658,8 @@ def run_scan(cache, warm_up=False):
             closes    = candle_data['closes']
             volumes   = candle_data['volumes']
             vol_ratio = calc_vol_ratio(volumes)
+
+            closes_by_symbol[symbol] = closes
 
             candle_30m = fetch_candles(symbol, bar='30m', limit=50)
             if candle_30m:
@@ -2653,6 +2797,28 @@ def run_scan(cache, warm_up=False):
                 for cand in candidates:
                     pending_alerts.append((cand['symbol'], cand['sig'], cand['ticker'], None, cand['cache_update']))
                 candidates = []
+
+    # ── Correlation guard: refuse a second copy of a bet we already hold ──────
+    # Runs after the rails above, so it only ever filters candidates that were
+    # otherwise going to trade. Blocked coins still get their Telegram alert —
+    # the signal was real, we just already own that exposure.
+    if candidates and active_symbols:
+        kept = []
+        for cand in candidates:
+            blocker, r = correlation_block(cand['symbol'], closes_by_symbol, active_symbols)
+            if blocker and TEST_MODE:
+                print(f'  [Corr] {cand["symbol"]}: r={r:.2f} vs open {blocker} — '
+                      f'TEST MODE: logged only, trading anyway')
+                kept.append(cand)
+            elif blocker:
+                print(f'  [Corr] {cand["symbol"]}: r={r:.2f} vs open {blocker} '
+                      f'(cap {CORRELATION_MAX}) — same bet, not a new one')
+                pending_alerts.append((cand['symbol'], cand['sig'], cand['ticker'], None, cand['cache_update']))
+            else:
+                if r is not None:
+                    print(f'  [Corr] {cand["symbol"]}: max r={r:.2f} vs open positions — independent enough')
+                kept.append(cand)
+        candidates = kept
 
     if candidates:
         candidates.sort(key=lambda x: x['rank_score'], reverse=True)
