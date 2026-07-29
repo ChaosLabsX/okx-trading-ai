@@ -90,10 +90,16 @@ def step_trade(tr, cd, stake):
     e = tr['entry']
     if tr['phase'] == 1:
         tp_px = e * (1 + tr['tp'] / 100)
-        sl_px = e * (1 - tr['sl'] / 100)
-        if cd['l'] <= sl_px:                                   # SL first when ambiguous (conservative)
-            fill = cd['o'] if cd['o'] <= sl_px else sl_px      # gap-down fills worse
-            return 'sl', _net_frac(e, fill) * stake, fill
+        # tr['sl'] is None under --no-sl: the position simply never stops out and
+        # holds until TP, or until the replay ends and it is marked to market as
+        # 'eod'. That force-close is what keeps the comparison honest — an
+        # underwater position left open is a loss you have not booked, not a loss
+        # you have avoided, and it must show up in the P&L either way.
+        if tr['sl'] is not None:
+            sl_px = e * (1 - tr['sl'] / 100)
+            if cd['l'] <= sl_px:                               # SL first when ambiguous (conservative)
+                fill = cd['o'] if cd['o'] <= sl_px else sl_px  # gap-down fills worse
+                return 'sl', _net_frac(e, fill) * stake, fill
         if cd['h'] >= tp_px:                                   # partial TP fills
             fill = cd['o'] if cd['o'] >= tp_px else tp_px      # gap-up fills better
             tr['phase']  = 2
@@ -225,7 +231,8 @@ def run(args):
         for rank, coin, i, ex in cands[:min(args.per_scan, slots)]:
             open_tr[coin] = {'entry': arr[coin]['o'][i + 1], 'entry_idx': i + 1,
                              'entry_ts': arr[coin]['ts'][i + 1], 'phase': 1,
-                             'tp': ex['tp'], 'sl': ex['sl'], 'trail': ex['trail']}
+                             'tp': ex['tp'], 'sl': None if args.no_sl else ex['sl'],
+                             'trail': ex['trail']}
         if len(cands) > min(args.per_scan, slots):
             stats['blocked_slots'] += len(cands) - min(args.per_scan, slots)
 
@@ -273,6 +280,16 @@ def report(args, coins, closed, stats):
     print(f'Profit factor: {pf:.2f}   Max drawdown: {dd:.2f} USD   '
           f'Avg hold: {sum(t["hours"] for t in closed) / len(closed):.0f}h')
     print(f'Exits: {by_type}')
+    # 'eod' = never reached an exit; still open when the data ran out. Under
+    # --no-sl these are the "waiting for the pump" positions, valued at the last
+    # close. Their count and age is the real cost of the strategy: capital that
+    # was locked and could not take the next signal.
+    eod = [t for t in closed if t['type'] == 'eod']
+    if eod:
+        held = sum(t['hours'] for t in eod) / len(eod)
+        print(f'Never exited: {len(eod)} of {len(closed)} ({len(eod) / len(closed) * 100:.0f}%) '
+              f'still open at end, avg age {held:.0f}h ({held / 24:.1f} days), '
+              f'marked to market at {sum(t["pnl"] for t in eod):+.2f} USD')
     print(f"Gates: {stats['signals']} STRONG BUY signals → regime-blocked {stats['blocked_regime']}, "
           f"no-reversal {stats['no_reversal']}, slot-capped {stats['blocked_slots']}, "
           f"no-ATR {stats['no_atr']}")
@@ -289,6 +306,14 @@ def report(args, coins, closed, stats):
 
 
 def main():
+    # The report uses >=, mid-dot, arrow and warning glyphs. A default Windows
+    # console is cp1252 and raises UnicodeEncodeError on the first of them —
+    # after the fetch and the entire replay have already run, so the whole run
+    # is lost at the print. Widen the stream rather than hunting the glyphs;
+    # errors='replace' means a stranger console degrades instead of crashing.
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
     ap = argparse.ArgumentParser(description='Replay TradingAI production rules over OKX history.')
     ap.add_argument('--days', type=int, default=90)
     ap.add_argument('--coins', default='')
@@ -299,6 +324,9 @@ def main():
     ap.add_argument('--stake', type=float, default=100.0)
     ap.add_argument('--max-open', type=int, default=3)
     ap.add_argument('--per-scan', type=int, default=1)
+    ap.add_argument('--no-sl', action='store_true',
+                    help='place trades with NO stop-loss and hold until TP (or end of data, '
+                         'marked to market). Tests "it will pump eventually" against history.')
     ap.add_argument('--no-regime', action='store_true')
     ap.add_argument('--no-reversal', action='store_true')
     ap.add_argument('--refresh', action='store_true')

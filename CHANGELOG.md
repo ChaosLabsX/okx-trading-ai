@@ -3,48 +3,61 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
-## 2026-07-29 — The stop was tighter than the noise it was meant to survive
+## 2026-07-29 — The stop floor was widened, measured properly, and put back
 
-`SL_BOUNDS` floor raised **2.0% → 8.0%**. The ceiling stays 12%.
+`SL_BOUNDS` went 2.0 → 8.0 and back to 2.0 the same day. Net code change is a
+comment. The reasoning is the deliverable.
 
-Measured over 59 historical `RSI<=30 + at lower BB` signals across 6 coins
-(~33 days of 1H candles, replayed through the live `calc_rsi`/`calc_bb`):
+**The case for widening**, from 59 historical `RSI<=30 + at lower BB` signals
+across 6 coins: a −2.8% stop was hit on 24% of them, and most recovered
+afterwards. ADA on 2026-07-27 was exactly that — stopped at −2.9%, back above
+its original target within a day.
 
-| stop | stopped out | reached +2% TP | net per signal |
-|---|---|---|---|
-| −2.8% (previous typical) | 24% | 76% | **+0.86%** |
-| −6% | 5% | 95% | +1.59% |
-| −12% | 0% | 100% | **+2.00%** |
-| none | 0% | 100% | +2.00% |
+**Why that was not enough.** The test only asked *does price reach +2% before
+−X%*. It modelled none of the machinery that actually determines a trade's P&L:
+the 50% partial TP, the trailing stop on the remainder, fees, or the BTC regime
+gate that blocks ~88% of signals before they are traded. Replaying the full
+engine over 90 days × 38 coins via `backtest.py`:
 
-About a quarter of entries were being shaken out by ordinary hourly noise and
-then recovering — ADA on 2026-07-27 was exactly that, stopped at −2.9% and back
-above the original target within a day.
+| `SL_BOUNDS` | net P&L | PF | max DD | avg hold |
+|---|---|---|---|---|
+| **(2, 12)** | **−6.50** | **0.63** | 11.27 | 26h |
+| (8, 12) | −9.86 | 0.60 | 16.38 | 59h |
+| no stop | **−44.53** | 0.22 | 56.99 | 296h |
 
-- **Removing the stop entirely was proposed, tested, and rejected.** It scored
-  *identically* to a −12% stop over those 59 signals, so it buys nothing
-  measurable while surrendering the tail case, the `MAX_SL_PER_DAY` circuit
-  breaker, and the journal — an unstopped loser never closes, never gets an
-  `exit_reason`, and so silently freezes the learning loop that the last two
-  releases were spent building. The ceiling of 12% already sits below the worst
-  observed drawdown-before-target (−11.2%).
-- **Two lines, not one.** The bounds are also stated in the system prompt
-  (`Absolute bounds: ... slPct 2–12`). Changing only the constant would have
-  told Claude it could pick 3% while the code clamped to 8% — reasoning built on
-  a stop that does not exist, the same defect class as the 4H label above. The
-  prompt line now interpolates `TP_BOUNDS`/`SL_BOUNDS`/`TRAIL_BOUNDS` directly so
-  the two cannot drift again.
-- Verified on both paths that set a stop: `suggest_exit_params()` (ATR × 2.5,
-  floored) and the AI answer (an `slPct` of 2.8 now clamps to 8.0).
-- Cost side, stated plainly: max loss per $15 trade moves from ~$0.42 to
-  ~$1.20–1.80, i.e. ~1.1–1.6% of a $110 balance instead of ~0.4%.
-- **Caveat recorded, not buried.** 33 days is one regime; the test excludes the
-  most recent week by construction (it needs a week of forward data per signal,
-  so the live FET position sitting at −10.6% is invisible to it); and every coin
-  sampled is still listed and liquid, which is textbook survivorship. `+2.00%` is
-  an upper bound, not a forecast. The journal records `slPct` per trade, so
-  whether the wider stop earned its keep is answerable in ~30 graded trades
-  rather than by argument.
+Wider stop, worse result — and the reason is structural, not incidental. Wins
+exit on a partial TP plus a trail and average about +2; an 8% stop loses −8.19.
+That is ~1:4 against, needing an ~80% win rate to break even where the replay
+managed 70%. Widening a stop without widening the target does not give a trade
+room, it just makes every loss bigger.
+
+Reverted not because 10 trades prove 2 beats 8 — at that sample the gap is
+noise — but because the evidence used to justify the change did not survive the
+full replay, and absent a good reason to change, don't.
+
+- **The no-stop row is the one result here that is not sample-size dependent.**
+  3 of 8 positions never exited, average age 30.5 days, marked to market at
+  −56.99. That is a mechanism — capital locked while the scanner finds signals it
+  cannot take — not a coin flip. It also freezes the journal: a trade that never
+  closes never gets an `exit_reason` and is never graded, so the learning loop
+  built over the last two releases goes silent.
+- **Bounds are now interpolated into the system prompt** rather than restated by
+  hand. The prompt said `slPct 2–12` while the constant said 8, which would have
+  had Claude reasoning about a stop that did not exist — the same defect class as
+  the 4H label below. It now tracks the constants automatically, which is what
+  made this revert a one-line change instead of two.
+- **`backtest.py --no-sl`** added: places trades with no stop and holds to TP or
+  end of data, marked to market. Positions still open at the end are reported
+  with their count and average age, because an underwater position left open is
+  a loss you have not booked, not a loss you have avoided.
+- **Fixed: `backtest.py` crashed at the report line on a default Windows
+  console.** cp1252 cannot encode `≥`, `·`, `→` or `⚠`, so the process died
+  *after* the fetch and the entire replay had run. `sys.stdout.reconfigure(...)`
+  in `main()` widens the stream once instead of hunting glyphs.
+- **The finding that outranks stop placement: every configuration loses money**
+  over those 90 days, PF 0.60–0.63, 10 trades. Ten trades cannot establish that
+  either, but it is a reason to treat the strategy as unproven and keep sizes
+  small rather than tuning exits on a system whose edge has not been shown.
 
 ## 2026-07-29 — Two coins fell together and the bot called it two opinions
 

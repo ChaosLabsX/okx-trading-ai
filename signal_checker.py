@@ -137,25 +137,45 @@ ATR_TP_MULT    = 2.0            # partial TP = 2.0 × ATR above entry
 ATR_SL_MULT    = 2.5            # stop loss  = 2.5 × ATR below entry (outside noise)
 ATR_TRAIL_MULT = 1.0            # trailing   = 1.0 × ATR callback
 TP_BOUNDS      = (1.5, 10.0)    # absolute % clamps whatever ATR/AI says
-# SL floor raised 2.0 -> 8.0 on 2026-07-29. Measured over 59 historical
-# RSI<=30 + lower-BB signals across 6 coins (~33 days), a -2.8% stop was hit on
-# 24% of them and netted +0.86% per signal; the same signals with a -12% stop
-# were never stopped out and netted +2.00%. Roughly a quarter of entries were
-# being shaken out by ordinary hourly noise and then recovering — ADA on
-# 2026-07-27 was one. A stop tighter than typical noise is not risk control, it
-# is a rounding error on volatility.
+# The SL floor was raised to 8.0 on 2026-07-29 and reverted the same day. Both
+# the change and the reversal are recorded here because the reasoning is the
+# useful part.
 #
-# The ceiling stays 12: the same test showed the worst drawdown-before-target
-# was -11.2%, so 12 still bounds the disaster case. Removing the stop entirely
-# was considered and rejected — it scored IDENTICALLY to -12% over those 59
-# signals, so it buys nothing measurable while surrendering the tail, the
-# MAX_SL_PER_DAY circuit breaker, and the journal (ungraded trades never close,
-# so an unstopped loser silently freezes the learning loop).
+# The case for widening: over 59 historical RSI<=30 + lower-BB signals, a -2.8%
+# stop was hit on 24% of them, and most of those recovered afterwards. True, and
+# still true. But that test only asked "does price reach +2% before -X%". It
+# modelled none of the machinery that decides a real trade's P&L — the 50%
+# partial TP, the trailing stop on the remainder, fees, or the BTC regime gate
+# that blocks ~88% of signals before they are ever traded.
 #
-# Caveat kept deliberately visible: 33 days is one regime, the test excludes the
-# most recent week by construction, and every coin sampled is still listed.
-# Treat +2.00% as an upper bound, not a forecast.
-SL_BOUNDS      = (8.0, 12.0)
+# Replaying the full engine over 90 days x 38 coins (scripts: backtest.py):
+#
+#     SL_BOUNDS      net P&L    PF     max DD   avg hold
+#     (2, 12)         -6.50    0.63     11.27      26h
+#     (8, 12)         -9.86    0.60     16.38      59h
+#     no stop        -44.53    0.22     56.99     296h
+#
+# Wider stop, worse result. The reason is structural: wins exit on a partial TP
+# plus a trail and average roughly +2, while an 8% stop loses -8.19. That is
+# ~1:4 against, needing an ~80% win rate to break even where the replay got 70%.
+# Widening a stop without widening the target does not give a trade room; it
+# just makes every loss bigger.
+#
+# So: back to 2.0. Not because 10 trades prove 2 beats 8 — at that sample the
+# gap is noise — but because the evidence used to justify the change did not
+# survive the full replay, and absent a good reason to change, don't.
+#
+# The no-stop row is the one result here that is NOT sample-size dependent:
+# 3 of 8 positions never exited, average age 30.5 days, marked to market at
+# -56.99. That is a mechanism (capital locked while the scanner finds signals it
+# cannot take), not a coin flip. Removing the stop also silently freezes the
+# learning loop, since a trade that never closes never gets an exit_reason and
+# so is never graded.
+#
+# Standing caveat: every configuration above LOSES money over those 90 days,
+# PF 0.60-0.63. Stop placement is not the binding problem. Treat the strategy as
+# unproven and keep sizes small.
+SL_BOUNDS      = (2.0, 12.0)
 TRAIL_BOUNDS   = (1.0, 5.0)
 SR_TP_GAP_PCT  = 0.5            # sell this far below the nearest resistance
 SR_SL_GAP_PCT  = 0.75           # stop this far below the nearest support
