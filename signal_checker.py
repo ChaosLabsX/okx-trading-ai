@@ -137,7 +137,25 @@ ATR_TP_MULT    = 2.0            # partial TP = 2.0 × ATR above entry
 ATR_SL_MULT    = 2.5            # stop loss  = 2.5 × ATR below entry (outside noise)
 ATR_TRAIL_MULT = 1.0            # trailing   = 1.0 × ATR callback
 TP_BOUNDS      = (1.5, 10.0)    # absolute % clamps whatever ATR/AI says
-SL_BOUNDS      = (2.0, 12.0)
+# SL floor raised 2.0 -> 8.0 on 2026-07-29. Measured over 59 historical
+# RSI<=30 + lower-BB signals across 6 coins (~33 days), a -2.8% stop was hit on
+# 24% of them and netted +0.86% per signal; the same signals with a -12% stop
+# were never stopped out and netted +2.00%. Roughly a quarter of entries were
+# being shaken out by ordinary hourly noise and then recovering — ADA on
+# 2026-07-27 was one. A stop tighter than typical noise is not risk control, it
+# is a rounding error on volatility.
+#
+# The ceiling stays 12: the same test showed the worst drawdown-before-target
+# was -11.2%, so 12 still bounds the disaster case. Removing the stop entirely
+# was considered and rejected — it scored IDENTICALLY to -12% over those 59
+# signals, so it buys nothing measurable while surrendering the tail, the
+# MAX_SL_PER_DAY circuit breaker, and the journal (ungraded trades never close,
+# so an unstopped loser silently freezes the learning loop).
+#
+# Caveat kept deliberately visible: 33 days is one regime, the test excludes the
+# most recent week by construction, and every coin sampled is still listed.
+# Treat +2.00% as an upper bound, not a forecast.
+SL_BOUNDS      = (8.0, 12.0)
 TRAIL_BOUNDS   = (1.0, 5.0)
 SR_TP_GAP_PCT  = 0.5            # sell this far below the nearest resistance
 SR_SL_GAP_PCT  = 0.75           # stop this far below the nearest support
@@ -973,7 +991,7 @@ nearby support/resistance (TP just below the ceiling, SL just below the floor an
 outside normal noise). Rules:
 - Start from the suggested TP/SL/trail; adjust within ±30% only when the data justifies it
 - Stronger setups (score ≥ 5, deep 1H+4H oversold, MACD cross) → push TP toward the upper end
-- Absolute bounds: partialTpPct 1.5–10, slPct 2–12, trailingCallbackPct 1–5
+- Absolute bounds: partialTpPct {TP_BOUNDS[0]:g}–{TP_BOUNDS[1]:g}, slPct {SL_BOUNDS[0]:g}–{SL_BOUNDS[1]:g}, trailingCallbackPct {TRAIL_BOUNDS[0]:g}–{TRAIL_BOUNDS[1]:g} (values outside are clamped, so stay inside)
 - trailingCallbackPct must stay BELOW partialTpPct (protects the break-even guarantee)
 
 DERIVATIVES & ORDER BOOK RULES:

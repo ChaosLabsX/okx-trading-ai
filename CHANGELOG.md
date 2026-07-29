@@ -3,6 +3,49 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-07-29 — The stop was tighter than the noise it was meant to survive
+
+`SL_BOUNDS` floor raised **2.0% → 8.0%**. The ceiling stays 12%.
+
+Measured over 59 historical `RSI<=30 + at lower BB` signals across 6 coins
+(~33 days of 1H candles, replayed through the live `calc_rsi`/`calc_bb`):
+
+| stop | stopped out | reached +2% TP | net per signal |
+|---|---|---|---|
+| −2.8% (previous typical) | 24% | 76% | **+0.86%** |
+| −6% | 5% | 95% | +1.59% |
+| −12% | 0% | 100% | **+2.00%** |
+| none | 0% | 100% | +2.00% |
+
+About a quarter of entries were being shaken out by ordinary hourly noise and
+then recovering — ADA on 2026-07-27 was exactly that, stopped at −2.9% and back
+above the original target within a day.
+
+- **Removing the stop entirely was proposed, tested, and rejected.** It scored
+  *identically* to a −12% stop over those 59 signals, so it buys nothing
+  measurable while surrendering the tail case, the `MAX_SL_PER_DAY` circuit
+  breaker, and the journal — an unstopped loser never closes, never gets an
+  `exit_reason`, and so silently freezes the learning loop that the last two
+  releases were spent building. The ceiling of 12% already sits below the worst
+  observed drawdown-before-target (−11.2%).
+- **Two lines, not one.** The bounds are also stated in the system prompt
+  (`Absolute bounds: ... slPct 2–12`). Changing only the constant would have
+  told Claude it could pick 3% while the code clamped to 8% — reasoning built on
+  a stop that does not exist, the same defect class as the 4H label above. The
+  prompt line now interpolates `TP_BOUNDS`/`SL_BOUNDS`/`TRAIL_BOUNDS` directly so
+  the two cannot drift again.
+- Verified on both paths that set a stop: `suggest_exit_params()` (ATR × 2.5,
+  floored) and the AI answer (an `slPct` of 2.8 now clamps to 8.0).
+- Cost side, stated plainly: max loss per $15 trade moves from ~$0.42 to
+  ~$1.20–1.80, i.e. ~1.1–1.6% of a $110 balance instead of ~0.4%.
+- **Caveat recorded, not buried.** 33 days is one regime; the test excludes the
+  most recent week by construction (it needs a week of forward data per signal,
+  so the live FET position sitting at −10.6% is invisible to it); and every coin
+  sampled is still listed and liquid, which is textbook survivorship. `+2.00%` is
+  an upper bound, not a forecast. The journal records `slPct` per trade, so
+  whether the wider stop earned its keep is answerable in ~30 graded trades
+  rather than by argument.
+
 ## 2026-07-29 — Two coins fell together and the bot called it two opinions
 
 Three trades (FET, POL, ADA) opened on the same setup within one session and all
