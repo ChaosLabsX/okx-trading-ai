@@ -44,9 +44,9 @@ LEARN_TRIGGER_NEW_TRADES = 25
 # handful of trades — the same reason the trade prompt calls <10 trades "anecdote".
 LEARN_MIN_COHORT = 25
 
-# Headroom for adaptive thinking + the structured result. The per-trade advisor's
-# 2000 was already tight; this pass returns more, so give it room.
-LEARN_MAX_TOKENS = 6000
+# Headroom for adaptive thinking + the structured result. This pass returns more
+# than the per-trade advisor (now 8000), so it gets more room again.
+LEARN_MAX_TOKENS = 12000
 
 # OFF by default. The pass writes its distilled block and Telegrams its proposals
 # from day one, but NOTHING is injected into a live trade decision until you flip

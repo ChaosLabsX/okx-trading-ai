@@ -65,10 +65,11 @@ OKX_API_KEY        = os.environ.get('OKX_API_KEY', '')
 OKX_SECRET_KEY     = os.environ.get('OKX_SECRET_KEY', '')
 OKX_PASSPHRASE     = os.environ.get('OKX_PASSPHRASE', '')
 CLAUDE_API_KEY     = os.environ.get('CLAUDE_API_KEY', '')
-# Opus 4.8 with adaptive thinking — top-tier decision quality for trade sizing and
-# TP/SL/trail selection. Costs ~$0.01–0.02 per trade decision (only runs in
-# production, only for qualified STRONG BUY candidates, max 1 per scan).
-CLAUDE_MODEL       = 'claude-opus-4-8'
+# Adaptive thinking — top-tier decision quality for trade sizing and TP/SL/trail
+# selection. Only runs in production, only for qualified STRONG BUY candidates,
+# max 1 per scan, so the cost stays negligible. learn.py imports this value, so
+# both AI calls stay on one model.
+CLAUDE_MODEL       = 'claude-opus-5'
 
 # CryptoCompare News — free read-only key (news/polling scope only; same key ships
 # publicly in config.js). Gives the AI each candidate coin's latest headlines so it
@@ -1087,7 +1088,10 @@ Place this trade?"""
                 'model':      CLAUDE_MODEL,
                 # Adaptive thinking: Opus reasons internally before answering.
                 # Thinking tokens count against max_tokens, so leave headroom.
-                'max_tokens': 2000,
+                # Raised 2000 -> 8000: the answer is one line, but at 2000 the
+                # reasoning could consume the budget and return no text block —
+                # the exact failure the handler below was written for.
+                'max_tokens': 8000,
                 'thinking':   {'type': 'adaptive'},
                 'system':     system,
                 'messages':   [{'role': 'user', 'content': user_msg}],

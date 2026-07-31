@@ -1281,7 +1281,9 @@ async function runAiAnalysis() {
       },
       body: JSON.stringify({
         model: CONFIG.CLAUDE_MODEL,
-        max_tokens: 1800,
+        // 1800 was sized for Sonnet with no thinking. Opus 5 thinks by default and
+        // thinking counts against this budget, so the analysis would truncate.
+        max_tokens: 8000,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
       }),

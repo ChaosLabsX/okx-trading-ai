@@ -43,7 +43,7 @@ Browser alerts are **toasts only** — Telegram for STRONG BUY is handled exclus
 
 ### 4. AI Advisor (`runAiAnalysis()`)
 
-- Calls the Anthropic Messages API **directly from the browser** (`anthropic-dangerous-direct-browser-access` header) with model `CONFIG.CLAUDE_MODEL` (`claude-sonnet-4-6`).
+- Calls the Anthropic Messages API **directly from the browser** (`anthropic-dangerous-direct-browser-access` header) with model `CONFIG.CLAUDE_MODEL` (`claude-opus-5` — set in `config.js`; this is a static page, so that line is the only place it can come from).
 - Before prompting, it fetches the **live** OKX balance and holdings so the AI sees real capital, then builds:
   - `buildSystemPrompt()` — strict trading rules (only recommend BUY with score ≥ 5 and ≥ 2 confirmations, explicit SKIP conditions, confidence levels), risk-profile position sizing (conservative 10% / moderate 20% / aggressive 30% of capital), and the **TRADE tag contract** with Option 3 parameter guidance per volatility tier.
   - `buildPrompt()` — per-coin technical snapshot, derivatives context (funding rate, open interest), portfolio with live P&L, news headlines + sentiment %.
