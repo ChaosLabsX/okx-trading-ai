@@ -2,20 +2,28 @@
 
 - **GitHub repository:** [`ChaosLabsX/okx-trading-ai`](https://github.com/ChaosLabsX/okx-trading-ai) (branch `main`)
 - **Dashboard hosting:** GitHub Pages — the repo root *is* the static site, so every push to `main` deploys the dashboard to <https://chaoslabsx.github.io/okx-trading-ai/>
-- **Worker hosting:** GitHub Actions in the same repo (workflow `.github/workflows/signal-checker.yml`)
+- **Worker hosting:** a **Windows VPS** — `C:\OKXAI`, Task Scheduler task
+  `OKX-SignalChecker`, running continuously. See [`../infra/VPS-SETUP.md`](../infra/VPS-SETUP.md).
+
+  The GitHub Actions workflow `.github/workflows/signal-checker.yml` is
+  **disabled** and kept only as a recovery path. Older text in these docs that
+  describes the worker running on Actions is historical — treat the VPS as
+  authoritative. (GitHub Actions *is* still used for one thing: the
+  auto-generated `pages-build-deployment` run that publishes the dashboard. That
+  is Pages, not the bot, and it is not a file in `.github/workflows`.)
 
 ## System overview
 
 ```
                        ┌──────────────────────────────┐
-                       │         cron-job.org         │  every 5 min
-                       │  POST /repos/…/dispatches    │──────────────┐
+                       │   VPS (C:\OKXAI) — Task      │  relaunched on exit
+                       │   Scheduler: OKX-SignalChecker──────────────┐
                        └──────────────────────────────┘              │
                                                                      ▼
 ┌──────────────────────┐                              ┌──────────────────────────┐
-│   Browser Dashboard  │                              │      GitHub Actions      │
-│  (index.html/app.js) │                              │  signal-checker.yml runs │
-│                      │                              │    signal_checker.py     │
+│   Browser Dashboard  │                              │  wrapper runs, forever,  │
+│  (index.html/app.js) │                              │     signal_checker.py    │
+│                      │                              │  (~4 min, then relaunch) │
 │  • Signal scanner    │                              │                          │
 │  • AI Advisor        │                              │  • scan 38 coins / 60s   │
 │  • Manual Option 3   │                              │  • auto-place Option 3   │
@@ -46,9 +54,9 @@ They coordinate through the Supabase `option3_trades` table: a trade placed from
 
 ## Data flow for one autonomous trade
 
-1. cron-job.org (or GitHub's backup cron) triggers the workflow.
+1. The VPS wrapper launches `signal_checker.py` (and relaunches it the moment it self-exits, roughly every 4 minutes).
 2. `signal_checker.py` scans coins using OKX **public** endpoints (`/api/v5/market/candles`, `/api/v5/market/ticker`).
-3. A STRONG BUY passes filters → Claude Opus 4.8 is consulted (production only) → `place_option3_trade()` posts three orders to OKX **private** endpoints.
+3. A STRONG BUY passes filters → Claude Opus 5 (`claude-opus-5`) is consulted (production only) → `place_option3_trade()` posts three orders to OKX **private** endpoints.
 4. The trade row is inserted into Supabase `option3_trades` with `phase = 1`.
 5. A Telegram message confirms the trade ("Trade Already Placed on OKX ✅").
 6. On every later run, `monitor_option3_trades()` reads all rows with `phase < 3`, checks OKX algo-order history for triggers, advances the phase, and sends exit Telegram messages with exact USDT P&L.
@@ -204,7 +212,7 @@ counts and profit factors are exact aggregations in `_compute_cohorts()`), and O
 only **judges** the pre-computed cohorts — which look like a real parameter problem vs
 noise, and what bounded change follows. It never estimates a statistic.
 
-- Runs once per Actions run, and only after `LEARN_TRIGGER_NEW_TRADES` (25) newly
+- Runs once per worker invocation, and only after `LEARN_TRIGGER_NEW_TRADES` (25) newly
   graded trades since the last pass — so at real volume it fires roughly monthly, on
   evidence, not on a clock. Wrapped in `try/except` so it can never take down the loop.
 - Only cohorts of `LEARN_MIN_COHORT` (25) trades or more are ever shown to the model —
@@ -248,7 +256,14 @@ noise, and what bounded change follows. It never estimates a statistic.
 - OKX signature quirk (worker): the POST body must be the exact compact JSON string used in the HMAC pre-hash — `json.dumps(body, separators=(',', ':'))` — see `_okx_post()`.
 - Assumed taker fee: `OKX_FEE_RATE = 0.001` (0.1%), used for net-P&L math in Telegram messages.
 
-## GitHub Actions workflow (`signal-checker.yml`)
+## GitHub Actions workflow (`signal-checker.yml`) — DISABLED, fallback only
+
+> **This workflow does not run.** It is disabled in the Actions tab and the
+> worker runs on the VPS instead ([`../infra/VPS-SETUP.md`](../infra/VPS-SETUP.md)).
+> The section below documents it so the fallback can be brought back if the VPS
+> fails — re-enable the workflow and the cron-job.org job, and trading resumes
+> with no code changes. A disabled workflow also ignores `repository_dispatch`,
+> so any cron-job.org job still firing is a harmless no-op.
 
 - Triggers: `schedule` (`*/5 * * * *`, backup), `workflow_dispatch` (manual), `repository_dispatch` type `run-signal-checker` (fired by cron-job.org — see [CRON-JOB-ORG.md](CRON-JOB-ORG.md)).
 - `concurrency: signal-checker` with `cancel-in-progress: false` — overlapping triggers queue instead of double-running (prevents duplicate Telegram alerts and duplicate trades).

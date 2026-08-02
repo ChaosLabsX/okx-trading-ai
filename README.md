@@ -5,12 +5,32 @@
 OKX AI is a two-part system:
 
 1. **A browser dashboard** (static PWA — no build step, no framework, no backend server) that scans 38 crypto coins on OKX in real time, computes technical signals, shows news, and lets the user ask Claude AI for trade recommendations that can be executed on OKX with one click.
-2. **A Python background worker** (`signal_checker.py`) that runs 24/7 on GitHub Actions (triggered every ~5 minutes), detects STRONG BUY signals, **automatically places "Option 3" trades on OKX**, monitors those trades through their whole lifecycle, and reports every event to the user via Telegram.
+2. **A Python background worker** (`signal_checker.py`) that runs 24/7 **on a Windows VPS**, detects STRONG BUY signals, **automatically places "Option 3" trades on OKX**, monitors those trades through their whole lifecycle, and reports every event to the user via Telegram.
 
 The two halves share the same signal engine (identical scoring logic implemented twice — JS and Python), the same Supabase project (settings storage + trade tracking), the same OKX account, and the same Telegram bot.
 
-> **⚠️ CURRENT STATE: TEST MODE IS ON.**
-> `TEST_MODE = True` in `signal_checker.py` lowers the STRONG BUY bar (score ≥ 1 instead of ≥ 5), skips the reversal-confirmation gate and the AI advisor, and places fixed **$5 USDT** trades (TP 1.5% / SL 2% / trail 1%), up to 3 concurrent test trades — worst case ≈ $0.11 per test. Setting `TEST_MODE = False` (one line) restores all production behavior. See [docs/SIGNAL-CHECKER.md](docs/SIGNAL-CHECKER.md#test-mode).
+> ## ⚠️ HOW THIS ACTUALLY RUNS — read before assuming anything
+>
+> **The worker runs on the VPS, not on GitHub Actions.** This changed and much
+> of the older documentation has not caught up. If a doc says the worker "runs
+> on GitHub Actions", it is describing how things used to work.
+>
+> | Piece | Where it runs | Status |
+> |---|---|---|
+> | `signal_checker.py` (the bot) | **VPS**, `C:\OKXAI`, Task Scheduler task `OKX-SignalChecker` | ✅ **live** |
+> | `.github/workflows/signal-checker.yml` | GitHub Actions | ⛔ **disabled** — kept only as a fallback |
+> | cron-job.org external trigger | — | ⛔ **not in use** (it only ever triggered the workflow) |
+> | `pages-build-deployment` | GitHub Actions | ✅ live — this publishes the **dashboard**, nothing to do with trading |
+>
+> The workflow file is deliberately retained so trading can be restored in
+> minutes if the VPS fails: re-enable it in the Actions tab and re-enable the
+> cron-job.org job. Nothing about the migration is one-way. See
+> [infra/VPS-SETUP.md](infra/VPS-SETUP.md).
+>
+> **`TEST_MODE = False`. This bot trades real money.** Production sizing, the
+> full score ≥ 5 bar, the reversal gate, and the AI advisor are all active.
+> Setting `TEST_MODE = True` (one line) switches to fixed $5 test trades —
+> see [docs/SIGNAL-CHECKER.md](docs/SIGNAL-CHECKER.md#test-mode).
 
 ## Documentation map
 
@@ -20,7 +40,8 @@ The two halves share the same signal engine (identical scoring logic implemented
 | [docs/DASHBOARD.md](docs/DASHBOARD.md) | The browser app: scanner, signal engine, AI Advisor, trade execution, news, settings/lock screen, PWA |
 | [docs/SIGNAL-CHECKER.md](docs/SIGNAL-CHECKER.md) | The Python worker: scan loop, alert rules, auto-trade decision flow, test mode, Telegram messages |
 | [docs/OPTION3-TRADE-SYSTEM.md](docs/OPTION3-TRADE-SYSTEM.md) | The Option 3 trade strategy in full detail: order placement, phases, exit monitoring, P&L math |
-| [docs/CRON-JOB-ORG.md](docs/CRON-JOB-ORG.md) | How the worker is scheduled: GitHub Actions cron + cron-job.org external trigger |
+| [infra/VPS-SETUP.md](infra/VPS-SETUP.md) | **How the worker actually runs today** — VPS setup, the scheduled task, deploying an update |
+| [docs/CRON-JOB-ORG.md](docs/CRON-JOB-ORG.md) | *Standby only.* The retired GitHub Actions + cron-job.org scheduling, kept as the fallback path |
 | [docs/BACKTESTING.md](docs/BACKTESTING.md) | The backtesting harness: replay production rules over OKX history to tune parameters with evidence |
 | [CHANGELOG.md](CHANGELOG.md) | Every meaningful change with dates and reasons — read this to catch up on recent work |
 
@@ -38,7 +59,8 @@ okx-trading-ai/  (repo root)
 ├── signal_checker.py       # 24/7 background worker (signals + auto-trade + monitor + Telegram)
 ├── backtest.py             # local backtesting harness — replays the worker's rules over history
 ├── .github/workflows/
-│   └── signal-checker.yml  # GitHub Actions workflow (cron + repository_dispatch triggers)
+│   └── signal-checker.yml  # DISABLED fallback runner. The VPS runs the worker.
+│                           # Do not delete: it is the recovery path if the VPS dies.
 ├── docs/                   # ← this documentation
 └── Illustrator/            # Logo source assets (not code)
 ```
@@ -47,22 +69,22 @@ okx-trading-ai/  (repo root)
 
 | Service | Used for | Credentials live in |
 |---|---|---|
-| **OKX** | Market data (public API, no key) + account balance, spot orders, algo orders (private API, HMAC-signed) | Browser: encrypted Supabase settings · Worker: GitHub Secrets |
+| **OKX** | Market data (public API, no key) + account balance, spot orders, algo orders (private API, HMAC-signed) | Browser: encrypted Supabase settings · Worker: `C:\OKXAI\.env` on the VPS (GitHub Secrets only matter if the Actions fallback is re-enabled) |
 | **Supabase** | 1) Encrypted API-key storage for the dashboard, 2) `option3_trades` table that both halves write/read | URL + anon key are public in `config.js`; worker uses `SUPABASE_URL`/`SUPABASE_KEY` secrets |
 | **Telegram** | All trade/exit notifications (sent **only** by the Python worker — the browser never sends Telegram messages) | Bot token + chat ID |
 | **Anthropic (Claude)** | Worker trade advisor (`claude-opus-5` with adaptive thinking — the autonomous decision-maker, model set in `signal_checker.py`) and the browser's manual AI Advisor (same model, set in `config.js`; rarely used since the app is fully automated) | Browser: user's key in settings · Worker: `CLAUDE_API_KEY` secret |
-| **cron-job.org** | External scheduler that triggers the GitHub Actions workflow every 5 minutes (GitHub's own cron is unreliable) | GitHub PAT stored in the cron-job.org job config |
+| **cron-job.org** *(dormant)* | Used to trigger the GitHub Actions workflow every 5 minutes. **Not in use** — the VPS runs the worker continuously instead. Retained as part of the fallback path | GitHub PAT stored in the cron-job.org job config |
 | **CryptoCompare** | News: coin-tagged headlines for the dashboard AND for the worker's AI trade decisions (hack/lawsuit/delisting headlines veto trades) | Free read-only key, news scope only — ships publicly in `config.js` and `signal_checker.py` |
 | **alternative.me** | Crypto Fear & Greed Index (market-wide mood 0–100) — shown in the dashboard summary bar and fed to the worker's AI decisions | Free, no key needed |
 | **CryptoPanic** *(dormant)* | Community-voted news sentiment for the dashboard — code is in place but unused: their API went paid (~$50/week, not worth it). Keyword sentiment is used instead; trading is unaffected (the AI reads raw headlines itself) | `CRYPTOPANIC_API_KEY` in `config.js` left empty on purpose |
 
 ## Quick "how it trades" summary
 
-1. Every ~5 min, GitHub Actions runs `signal_checker.py` (internally re-scans every 60 s for ~4 min).
+1. On the VPS, a wrapper keeps `signal_checker.py` running continuously — the script scans every 60 s, self-exits after ~4 min, and is relaunched immediately, so coverage is gap-free.
 2. Each coin gets a score from RSI(1H), MACD, Bollinger %B, volume ratio, and RSI(4H). Score ≥ 5 → STRONG BUY (≥ 1 in test mode).
 3. A STRONG BUY must also pass a 30-minute-candle reversal confirmation (green candle + rising RSI + volume ≥ average) — skipped in test mode.
 4. Safety rails gate all trading (enforced in production, logged-only in test mode): a **BTC regime filter** blocks dip-buys while BTC is in a 4H downtrend, a **max-3 open trades** cap, and a **circuit breaker** that pauses trading after 3 stop-losses in 24h.
-5. Qualified coins are ranked; only the top 1 per scan goes to Claude Opus 4.8 with rich context — **ATR volatility, support/resistance with suggested exits, funding rate, open interest, order-book imbalance, BTC regime, the coin's latest headlines (hack/lawsuit/delisting news vetoes the trade), and the bot's recent live results** — and it decides TRADE or SKIP and sizes the position (10–30% of balance, cap performance-weighted by the recent profit factor; funding > +0.10% auto-skips).
+5. Qualified coins are ranked; only the top 1 per scan goes to Claude Opus 5 (`claude-opus-5`) with rich context — **ATR volatility, support/resistance with suggested exits, funding rate, open interest, order-book imbalance, BTC regime, the coin's latest headlines (hack/lawsuit/delisting news vetoes the trade), and the bot's recent live results** — and it decides TRADE or SKIP and sizes the position (10–30% of balance, cap performance-weighted by the recent profit factor; funding > +0.10% auto-skips).
 6. An approved trade is placed as an **Option 3 trade**: maker-first limit entry (market fallback after 45 s) → OCO (take-profit + stop-loss on 50%) → conditional stop-loss (other 50%), so the **full position is SL-protected on OKX 24/7**. The trade is saved to Supabase.
 7. Every subsequent run, `monitor_option3_trades()` polls OKX for exits: partial TP hit → the 2nd-half SL is swapped for an active trailing stop (phase 2); SL hit → both halves stop out server-side; the trailing stop exit ends the trade. Every close records its outcome (`exit_reason`, `net_pnl_usdt`, `closed_at`) in Supabase and sends a Telegram message with the **exact USDT profit/loss net of OKX fees**.
 
@@ -71,6 +93,6 @@ okx-trading-ai/  (repo root)
 - There is **no package.json, no bundler, no framework** — the dashboard is plain HTML/CSS/JS served statically. The only Python dependency is `requests` (installed inline in the workflow).
 - The signal engine exists **twice** — `generateSignal()` in `app.js` and `generate_signal()` in `signal_checker.py`. They are intentionally kept in sync; if you change scoring rules, change both.
 - The browser reaches OKX's *private* API through `corsproxy.io` (OKX has no CORS headers). Public market-data endpoints are called directly.
-- `signal_cache.json` (git-ignored) is the worker's alert-deduplication state, persisted between Actions runs via `actions/cache`.
+- `signal_cache.json` (git-ignored) is the worker's alert-deduplication state. On the VPS it simply persists on disk at `C:\OKXAI\signal_cache.json` between the wrapper's relaunches. (On the disabled Actions fallback it had to be carried across runs with `actions/cache`.)
 - All Telegram messages deliberately contain **no timestamp line** — Telegram's own message time is used instead.
 - Money-affecting logic lives in exactly two places: `executeTrade()` in `app.js` (manual, user-confirmed) and `place_option3_trade()` / `monitor_option3_trades()` in `signal_checker.py` (autonomous). Touch these with care and test with `TEST_MODE = True` first.

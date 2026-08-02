@@ -1,4 +1,19 @@
-# Scheduling: GitHub Actions cron + cron-job.org
+# Scheduling: GitHub Actions cron + cron-job.org — RETIRED, standby only
+
+> ## ⚠️ This is not how the worker runs today
+>
+> The worker runs **continuously on the VPS** (`C:\OKXAI`, Task Scheduler task
+> `OKX-SignalChecker`) — see [`../infra/VPS-SETUP.md`](../infra/VPS-SETUP.md).
+> The GitHub Actions workflow is **disabled** and the cron-job.org job is not in
+> use.
+>
+> This document is kept as the **recovery runbook**: if the VPS fails, re-enable
+> the workflow in the Actions tab and re-enable the cron-job.org job, and trading
+> resumes with no code changes. Everything below describes that standby path.
+>
+> Note that a disabled workflow also ignores `repository_dispatch`, so if the
+> cron-job.org job is still firing it is a harmless no-op — it cannot cause a
+> second bot to trade alongside the VPS.
 
 The worker must run roughly every 5 minutes, 24/7. Two triggers cooperate, defined in `.github/workflows/signal-checker.yml`:
 

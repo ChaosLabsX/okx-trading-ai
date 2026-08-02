@@ -1,6 +1,15 @@
 # Background Worker (`signal_checker.py`)
 
-The autonomous half of OKX AI. Runs on GitHub Actions (see [CRON-JOB-ORG.md](CRON-JOB-ORG.md) for scheduling); each invocation loops for ~4 minutes doing one full scan per 60 s (`LOOP_DURATION` / `CHECK_INTERVAL`), then exits so the next trigger starts fresh.
+The autonomous half of OKX AI. Runs **on the VPS** (`C:\OKXAI`, Task Scheduler
+task `OKX-SignalChecker` — see [`../infra/VPS-SETUP.md`](../infra/VPS-SETUP.md));
+each invocation loops for ~4 minutes doing one full scan per 60 s
+(`LOOP_DURATION` / `CHECK_INTERVAL`), then exits and is relaunched immediately by
+the wrapper, so coverage is continuous.
+
+> It used to run on GitHub Actions triggered by cron-job.org. That path is
+> **disabled** and retained only as a fallback ([CRON-JOB-ORG.md](CRON-JOB-ORG.md)).
+> The self-exit-after-4-minutes design is a leftover from it — harmless on the
+> VPS, where the wrapper just starts the script again.
 
 ```
 main()
@@ -64,7 +73,7 @@ One flag flips everything (all production values are preserved in the same file)
 | Maker-first limit entries | active | active — live-tested by the $5 test trades |
 | ATR/S&R exits, news veto, rich context, PF sizing | active (feed the AI decision) | not exercised (AI bypassed) but fully unit-tested |
 
-There is also `TEST_FORCE_SIGNAL` (normally `False`): forces a fake BTC STRONG BUY on the next run to verify the Actions → Telegram → auto-trade pipeline end-to-end (delete the GitHub Actions cache first).
+There is also `TEST_FORCE_SIGNAL` (normally `False`): forces a fake BTC STRONG BUY on the next run to verify the scan → Telegram → auto-trade pipeline end-to-end. Delete the alert-dedup cache first, or the forced signal may be suppressed as already-alerted — on the VPS that is `C:\OKXAI\signal_cache.json` (on the disabled Actions fallback it was the `actions/cache` entry).
 
 ## Telegram messages
 
@@ -79,7 +88,7 @@ There is also `TEST_FORCE_SIGNAL` (normally `False`): forces a fake BTC STRONG B
 | Trailing stop exit | monitor | Exact USDT gain on 2nd half + recovered phase-1 profit + **whole-trade net result** |
 | Break-even exit | monitor | (fallback/legacy trades) 2nd-half result (≈ −fees) + phase-1 profit + whole-trade net result |
 | Auto-trading paused | circuit breaker | 3 stop-losses in 24 h — new trades resume automatically; sent at most once per day |
-| **Daily Report** (heartbeat) | `maybe_send_daily_digest()` | Once per UTC day (first run after 08:00 UTC), deliberately minimal — two lines: `💓 Daily Report — OKX Trading` + `📈 Open trades: N (COIN, COIN…)`. **Dead-man switch: if this message stops arriving, the pipeline is down** (check GitHub Actions + cron-job.org). Dedup state in the cache (`_daily_digest`). Full performance stats live in the dashboard's 📊 Bot Performance panel instead. |
+| **Daily Report** (heartbeat) | `maybe_send_daily_digest()` | Once per UTC day (first run after 08:00 UTC), deliberately minimal — two lines: `💓 Daily Report — OKX Trading` + `📈 Open trades: N (COIN, COIN…)`. **Dead-man switch: if this message stops arriving, the pipeline is down** — on the VPS, check `Get-ScheduledTask -TaskName "OKX-SignalChecker"` and the tail of `C:\OKXAI\logs\okx-signal-checker.log`. Dedup state in the cache (`_daily_digest`). Full performance stats live in the dashboard's 📊 Bot Performance panel instead. |
 | Orders cancelled manually on OKX | monitor | Trade marked closed, fresh signals will re-trade the coin |
 
 P&L math (`_exit_pnl()`): `net = (fill − entry) × size − entry×size×fee − fill×size×fee` with `fee = 0.001`. When OKX won't return an exact fill price even after the fallback lookups, the message shows an **estimate marked with `~`** (computed from the trigger price) rather than omitting the USDT figure.
