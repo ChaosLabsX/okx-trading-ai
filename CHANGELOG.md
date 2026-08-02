@@ -340,7 +340,7 @@ Full audit against **live OKX spot data** (volume ranks, listing status, perp av
 ### Trade structure (Option 3 hardening)
 - **Full-position stop-loss protection**: the 2nd half now gets its own conditional SL at
   placement (instead of a dormant trailing stop) — in a crash both halves stop out server-side
-  on OKX even if GitHub Actions is down. When the TP fills, the monitor swaps that SL for an
+  on OKX even if the worker is down. When the TP fills, the monitor swaps that SL for an
   immediately-active trailing stop (`_swap_sl2_to_trailing`). New Supabase column: `sl2_id`.
 - Whipsaw handling: TP fills then price crashes through the 2nd-half SL within one monitor
   window → detected, closed, reported as `tp_then_sl`.
