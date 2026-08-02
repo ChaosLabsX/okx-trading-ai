@@ -1,7 +1,9 @@
-"""
+r"""
 OKX AI — Background Signal Checker (24/7 mode)
-Runs every 5 minutes on GitHub Actions.
-Each run loops internally for ~4 minutes (one scan every 60 s).
+Runs continuously on the VPS (C:\OKXAI, Task Scheduler task "OKX-SignalChecker",
+launched via infra/run-okx.ps1 — see infra/VPS-SETUP.md).
+Each invocation loops internally for ~4 minutes (one scan every 60 s), then
+self-exits and is relaunched immediately by the wrapper, so coverage is gap-free.
 
 Alert rules:
 - BUY and STRONG BUY are the same zone — oscillating between them produces NO extra alert.
@@ -20,7 +22,7 @@ Auto-trade (Claude Opus 4.8):
 - Safety rails (production only): BTC regime filter (no dip-buying while BTC is in a
   4H downtrend), max concurrent trades cap, and a daily stop-loss circuit breaker.
 - Telegram notification includes "Trade Already Placed on OKX ✅" with full parameters.
-- Requires CLAUDE_API_KEY GitHub secret. Auto-trade silently skips if key is missing.
+- Requires CLAUDE_API_KEY in .env. Auto-trade silently skips if the key is missing.
 """
 
 import base64
@@ -80,7 +82,8 @@ CACHE_FILE         = 'signal_cache.json'
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 
-LOOP_DURATION  = 4 * 60   # seconds per GitHub Actions run
+LOOP_DURATION  = 4 * 60   # seconds of scanning before the process self-exits
+                          # (the wrapper relaunches it straight away)
 CHECK_INTERVAL = 60        # seconds between scans
 
 EMOJI = {'STRONG BUY': '🟢', 'BUY': '🔵', 'SELL': '🟠', 'STRONG SELL': '🔴'}
@@ -94,8 +97,9 @@ OKX_FEE_RATE   = 0.001   # 0.1% taker fee (adjust if your VIP tier is different)
 REZONE_REMINDER = 4 * 60 * 60  # 4 hours
 
 # Set to True to force a STRONG BUY alert for BTC on the next run — bypasses all
-# market logic so you can confirm GitHub Actions → Telegram → auto-trade end-to-end.
-# Delete the cache on GitHub (Actions → Caches) before running, then set back to False.
+# market logic so you can confirm scan → Telegram → auto-trade end-to-end.
+# Delete C:\OKXAI\signal_cache.json first or the forced signal is suppressed as
+# already-alerted, then set this back to False.
 TEST_FORCE_SIGNAL = False
 
 # ── TEST MODE ─────────────────────────────────────────────────────────────────
@@ -954,7 +958,7 @@ def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data
     # Filled through an out-parameter rather than a third return value on purpose —
     # this function has six return points and a scar from the last arity change
     # (see the `no text block` branch below, where a bare `return None` took down a
-    # whole Actions run). Widening all six is the same trap; filling a dict is not.
+    # whole run). Widening all six is the same trap; filling a dict is not.
     if evidence_out is not None:
         evidence_out.update({
             **ev_trades, **ev_skips,
@@ -1105,7 +1109,7 @@ Place this trade?"""
         text   = next((b.get('text', '') for b in blocks if b.get('type') == 'text'), '').strip()
         if not text:
             # Must stay a 2-tuple: the caller does `params, skip_reason = ...`, so a
-            # bare `return None` raised TypeError and killed the whole Actions run
+            # bare `return None` raised TypeError and killed the whole run
             # (before monitor_option3_trades), leaving open trades untracked that
             # cycle. Most likely trigger: adaptive thinking consuming max_tokens and
             # leaving no text block. Treat it as a skip, not a crash.
@@ -1413,7 +1417,7 @@ def _save_option3_trade(trade_data):
     """Persist Option 3 trade to Supabase so the monitor can track it. Returns True on success."""
     if not SUPABASE_URL or not SUPABASE_KEY:
         print('  [Supabase] URL or key not set — trade NOT saved (monitor cannot track it). '
-              'Check SUPABASE_URL / SUPABASE_KEY GitHub Secrets.')
+              'Check SUPABASE_URL / SUPABASE_KEY in .env.')
         return False
     try:
         r = requests.post(
@@ -2658,7 +2662,7 @@ CORRELATION_MIN_DOWN = 20     # ...and this many must be down bars to condition 
 
 def run_scan(cache, warm_up=False):
     """
-    warm_up=True → cache was empty on this GitHub Actions run.
+    warm_up=True → cache was empty on this run (fresh process, no signal_cache.json).
     Populate state without sending alerts or placing any trades.
 
     Trade placement uses a two-pass approach when multiple STRONG BUY signals fire:
@@ -2974,7 +2978,7 @@ def main():
         run_scan(cache, warm_up=(fresh and scan_num == 1))
         monitor_option3_trades()
         if scan_num == 1:
-            grade_journal_followups()   # once per Actions run is plenty — nothing here is urgent
+            grade_journal_followups()   # once per run is plenty — nothing here is urgent
             # Long-horizon learning pass: reads the FULL graded history, not just the
             # recent-30 window the per-trade prompt sees. Trigger-gated (fires only
             # after enough new trades) and wrapped so a hiccup here can never take

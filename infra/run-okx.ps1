@@ -1,10 +1,14 @@
 <#
 Continuous runner for the OKX signal checker on the VPS.
 
-signal_checker.py self-exits after ~4 minutes by design (it was built to be
-relaunched every 5 min by GitHub Actions). This wrapper relaunches it in a
-tight loop instead, for gap-free coverage - the "continuous" mode - with no
-change to the Python code itself.
+THIS SCRIPT IS THE BOT'S LAUNCHER. The OKX-SignalChecker scheduled task runs
+this file, not signal_checker.py directly. Do not delete it - without it the
+worker never starts, and it is also what loads .env into the environment that
+signal_checker.py reads.
+
+signal_checker.py self-exits after ~4 minutes by design. This wrapper relaunches
+it immediately in a loop, giving gap-free coverage with no change to the Python
+code itself.
 
 Fully isolated from the Forex lab: its own repo (C:\OKXAI), its own venv, its
 own .env, its own Task Scheduler task (OKX-SignalChecker), its own logs. It
@@ -33,8 +37,9 @@ if (-not (Test-Path $Script)) { Log "FATAL signal_checker.py missing at $Script"
 if (-not (Test-Path $EnvFile)) { Log "FATAL .env missing at $EnvFile"; throw ".env missing" }
 
 # --- load .env into THIS process's environment; signal_checker.py reads
-#     os.environ directly (it never loaded a .env - GitHub set them). Child
-#     python inherits whatever we set here.
+#     os.environ directly and never parses a .env file itself. The child python
+#     inherits whatever we set here, so this loop IS how the worker gets its
+#     secrets. Skip it and every API key is empty.
 foreach ($line in Get-Content $EnvFile) {
     if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') {
         $name = $matches[1]; $val = $matches[2].Trim()

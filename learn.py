@@ -22,7 +22,7 @@ Two outputs:
   * `proposals` — parameter changes, sent to Telegram for you to approve and
     apply by hand. NEVER auto-applied. NEVER a coin blacklist.
 
-Runs at most once per Actions run, and only after LEARN_TRIGGER_NEW_TRADES newly
+Runs at most once per worker run, and only after LEARN_TRIGGER_NEW_TRADES newly
 graded trades have accumulated since the last pass — so at real trade volume it
 fires roughly monthly, on evidence, not on a clock. Degrades silently if the
 `learned_rules` migration (docs/ARCHITECTURE.md) has not been run.
@@ -50,8 +50,8 @@ LEARN_MAX_TOKENS = 12000
 
 # OFF by default. The pass writes its distilled block and Telegrams its proposals
 # from day one, but NOTHING is injected into a live trade decision until you flip
-# this on — after you've read a couple of runs and trust the statistics. Set the
-# GitHub Actions secret / env var LEARN_INJECT=1 to enable; no code change needed.
+# this on — after you've read a couple of runs and trust the statistics. Add
+# LEARN_INJECT=1 to C:\OKXAI\.env to enable; no code change needed.
 import os
 LEARN_INJECT_INTO_PROMPT = os.environ.get('LEARN_INJECT', '').lower() in ('1', 'true', 'yes')
 
@@ -337,7 +337,7 @@ def _report(result, n):
 # --------------------------------------------------------------------- entry points
 
 def run_learning_pass():
-    """Trigger-gated full-history learning pass. Safe to call every Actions run —
+    """Trigger-gated full-history learning pass. Safe to call on every run —
     it does nothing until enough new trades have accumulated, and never raises into
     the caller (the trade loop must not die because analysis hiccuped)."""
     from signal_checker import (

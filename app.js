@@ -2191,7 +2191,7 @@ function wireEvents() {
   document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.open').forEach(m => closeModal(m.id)); });
 
   // Pause auto-refresh when the tab is hidden — saves API calls and prevents
-  // duplicate Telegram alerts (GitHub Actions already covers background monitoring).
+  // duplicate Telegram alerts (the VPS worker already covers background monitoring).
   // Resume immediately with a fresh fetch when the tab becomes visible again.
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
