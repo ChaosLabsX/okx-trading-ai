@@ -1,19 +1,22 @@
-# Scheduling: GitHub Actions cron + cron-job.org — RETIRED, standby only
+# Scheduling: GitHub Actions cron + cron-job.org — RETIRED
 
-> ## ⚠️ This is not how the worker runs today
+> ## ⚠️ Historical record. None of this is in use.
 >
 > The worker runs **continuously on the VPS** (`C:\OKXAI`, Task Scheduler task
 > `OKX-SignalChecker`) — see [`../infra/VPS-SETUP.md`](../infra/VPS-SETUP.md).
-> The GitHub Actions workflow is **disabled** and the cron-job.org job is not in
-> use.
 >
-> This document is kept as the **recovery runbook**: if the VPS fails, re-enable
-> the workflow in the Actions tab and re-enable the cron-job.org job, and trading
-> resumes with no code changes. Everything below describes that standby path.
+> `.github/workflows/signal-checker.yml` has been **deleted**, so the
+> `repository_dispatch` endpoint this document describes now fires at nothing.
+> This page is kept only to explain why the arrangement existed and what it
+> looked like.
 >
-> Note that a disabled workflow also ignores `repository_dispatch`, so if the
-> cron-job.org job is still firing it is a harmless no-op — it cannot cause a
-> second bot to trade alongside the VPS.
+> **If you still have a cron-job.org job for this repo, delete it.** It cannot
+> start a second bot (there is no workflow left to trigger), but it is a
+> scheduled request hitting GitHub every 5 minutes holding a **GitHub PAT with
+> write access** for no purpose. Revoke that token too.
+>
+> To recover the workflow file:
+> `git show 151be53:.github/workflows/signal-checker.yml`
 
 The worker must run roughly every 5 minutes, 24/7. Two triggers cooperate, defined in `.github/workflows/signal-checker.yml`:
 
