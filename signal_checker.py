@@ -11,8 +11,8 @@ Alert rules:
 - A new alert fires only when the zone CHANGES (entering BUY zone, flipping to SELL, etc.).
 - 2-minute safety cooldown prevents false alerts from rapid back-and-forth oscillation.
 
-Auto-trade (Claude Opus 4.8):
-- When STRONG BUY + reversal confirmed, Claude Opus 4.8 decides whether to trade and sets
+Auto-trade (Claude, model set by CLAUDE_MODEL):
+- When STRONG BUY + reversal confirmed, Claude decides whether to trade and sets
   parameters (USDT amount, TP%, SL%, trailing%) based on coin volatility + signal strength.
 - Claude also sees recent live trade results (from Supabase) so it can skip/downsize
   setups that have been losing.
@@ -71,6 +71,13 @@ CLAUDE_API_KEY     = os.environ.get('CLAUDE_API_KEY', '')
 # selection. Only runs in production, only for qualified STRONG BUY candidates,
 # max 1 per scan, so the cost stays negligible. learn.py imports this value, so
 # both AI calls stay on one model.
+#
+# THIS LINE IS THE ONLY PLACE THE MODEL VERSION IS NAMED. Everything else — the
+# module docstring, the advisor header, learn.py, the docs — says "CLAUDE_MODEL"
+# instead of a version number, because prose that restates a constant goes stale
+# and this repo has already been bitten by exactly that (the system prompt said
+# "slPct 2-12" while the constant said 8; see CHANGELOG 2026-07-29). Change the
+# model here and nothing else needs touching.
 CLAUDE_MODEL       = 'claude-opus-5'
 
 # CryptoCompare News — free read-only key (news/polling scope only; same key ships
@@ -896,11 +903,11 @@ def _fetch_usdt_balance():
     return 0.0
 
 
-# ── Claude Opus 4.8 — AI trade advisor ───────────────────────────────────────
+# ── Claude — AI trade advisor (model: CLAUDE_MODEL) ──────────────────────────
 def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data, bb_data, vol_ratio,
                     extra=None, evidence_out=None):
     """
-    Ask Claude (Opus 4.8, adaptive thinking) whether this STRONG BUY is worth trading
+    Ask Claude (CLAUDE_MODEL, adaptive thinking) whether this STRONG BUY is worth trading
     and what parameters to use. `extra` carries the rich decision context built by
     _build_trade_context(): ATR, support/resistance, suggested exits, funding rate,
     open interest, order-book imbalance, BTC regime, and the coin's latest headlines.
@@ -947,12 +954,26 @@ def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data
     learned_s   = f'\n\nLEARNED FROM FULL HISTORY (auto-distilled statistics):\n{learned}' if learned else ''
 
     # Performance-weighted sizing: shrink the hard cap when the system is cold.
+    #
+    # `pf` is None until 30 closed trades exist. This block used to treat that as
+    # the BEST case and hand out the full 30% cap — so the guard was disabled for
+    # exactly the first 30 trades, the stretch where the bot has least evidence
+    # that it works at all. On 2026-08-02 the live record was 13 trades at PF 0.32
+    # and the cap in force was 30%.
+    #
+    # An unknown profit factor is not a good profit factor. When there is no PF
+    # yet, fall back to the win rate over whatever trades DO exist, and only use
+    # the optimistic default when there is genuinely nothing to go on.
     cap_pct = 0.30
     if pf is not None:
         if pf < 1.0:
             cap_pct = 0.15
         elif pf < 1.5:
             cap_pct = 0.22
+    elif ev_trades.get('journal_n'):
+        # Below 30 trades: an all-loss or mostly-loss record still shrinks the cap.
+        # Deliberately coarse — this is a risk cap, not a tuned parameter.
+        cap_pct = 0.15 if ev_trades.get('journal_win_rate', 1.0) < 0.5 else 0.22
 
     # Provenance of THIS decision: exactly which evidence the model was shown.
     # Filled through an out-parameter rather than a third return value on purpose —
@@ -2122,6 +2143,20 @@ def _trade_history_context(symbol):
         saves     = verdicts.count('good_save')
         fired     = []
 
+        # Every verdict class, not just the three that have a directive attached.
+        # _grade_exit() produces seven, and until 2026-08-02 only three of them
+        # reached the model in aggregate — on the live record that silently dropped
+        # 9 of 13 verdicts, including the single most common one. A verdict that is
+        # computed, stored, and then never counted is work the journal did and threw
+        # away. These are COUNTS ONLY and carry no directive: see the note below on
+        # why partial_recovery is not folded into the shakeout gate.
+        tally = {v: verdicts.count(v) for v in
+                 ('shakeout', 'partial_recovery', 'flat_after_stop', 'good_save',
+                  'left_money', 'well_timed', 'fair_exit') if verdicts.count(v)}
+        if tally:
+            lines.append('Verdict breakdown over ' + str(graded) + ' graded trades: '
+                         + ', '.join(f'{k} {n}' for k, n in tally.items()))
+
         if _pattern_is_real(shakeouts, graded):
             fired.append('shakeout')
             lines.append(f'PATTERN: {shakeouts} of {graded} graded trades were SHAKEOUTS — the stop '
@@ -2130,6 +2165,21 @@ def _trade_history_context(symbol):
         elif shakeouts:
             lines.append(f'{shakeouts} of {graded} graded trades were shakeouts — below the level '
                          f'that separates a real problem from ordinary stop noise. Do not retune on it.')
+
+        # partial_recovery ("price bounced >=2% after our stop but never reached our
+        # target") points the same direction as shakeout, and it is the most common
+        # verdict in the live record. It is deliberately NOT added to the shakeout
+        # count above. The Wilson gate compares against JOURNAL_PATTERN_NULL_RATE =
+        # 0.15, a rate chosen for the narrow shakeout class; widening the class
+        # without re-deriving the null rate would clear the bar by redefinition
+        # rather than by evidence — the exact false positive this gate exists to
+        # stop. It is surfaced as context so the model can see it, and left for
+        # learn.py to judge properly once a cohort is big enough to say anything.
+        pr = verdicts.count('partial_recovery')
+        if pr:
+            lines.append(f'{pr} of {graded} graded stops saw price bounce afterwards without '
+                         f'reaching our target (partial_recovery). Context only — this has not '
+                         f'been tested against a null rate, so do not retune on it.')
 
         if _pattern_is_real(left, graded):
             fired.append('left_money')
@@ -2162,9 +2212,13 @@ def _trade_history_context(symbol):
             'journal_n':   len(rows),
             'journal_graded': graded,
             'journal_pf':  round(pf, 2) if pf is not None else None,
+            # Win rate over whatever history exists. Feeds the sizing cap before
+            # 30 trades make a profit factor available (see ai_trade_params).
+            'journal_win_rate': round(wins / len(rows), 3),
             'shakeouts':   shakeouts,
             'left_money':  left,
             'good_saves':  saves,
+            'verdicts':    tally,
             'patterns':    fired,
         }
         return '\n'.join(lines), pf, evidence

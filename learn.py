@@ -13,8 +13,9 @@ Division of labour, on purpose:
     per-trade journal already follows (patterns computed in code, not inferred).
   * The MODEL only judges the pre-computed cohorts: which look like a real,
     actionable parameter problem versus ordinary noise, and what bounded change
-    follows. That judgement is a small single-turn task — squarely Opus 4.8's
-    job, not a reason to reach for a bigger, pricier model.
+    follows. That judgement is a small single-turn task, so it runs on the same
+    CLAUDE_MODEL as the per-trade advisor rather than reaching for anything
+    bigger or pricier.
 
 Two outputs:
   * `learned_block` — statistics-only facts, stored and (once you opt in via
@@ -183,9 +184,18 @@ def _compute_cohorts(trades):
             'pf': round(_pf(pnls), 2),
             'avg_pnl': round(sum(pnls) / len(pnls), 2),
             'total_pnl': round(sum(pnls), 2),
+            # All seven verdict classes _grade_exit() can produce. Only three were
+            # counted until 2026-08-02, which dropped 9 of the 13 verdicts in the
+            # live record — including partial_recovery, the most common one. A pass
+            # that exists to find conditional patterns cannot do it on a third of
+            # its own data.
             'shakeouts': verdicts.count('shakeout'),
+            'partial_recoveries': verdicts.count('partial_recovery'),
+            'flat_after_stop': verdicts.count('flat_after_stop'),
             'good_saves': verdicts.count('good_save'),
             'left_money': verdicts.count('left_money'),
+            'well_timed': verdicts.count('well_timed'),
+            'fair_exits': verdicts.count('fair_exit'),
         })
 
     summarize('Overall', 'overall', rows)
@@ -273,10 +283,25 @@ Tunable parameters (with current values and bounds):
 - SL_BOUNDS = {params['SL_BOUNDS']}, TP_BOUNDS = {params['TP_BOUNDS']}, TRAIL_BOUNDS = {params['TRAIL_BOUNDS']}  (hard % clamps)
 - FUNDING_HARD_SKIP_PCT = {params['FUNDING_HARD_SKIP_PCT']}   (auto-skip above this 8h funding rate)
 
-Verdict fields in the cohort data:
-- shakeouts  = stop-losses where price then reached our original target -> the stop was too tight.
-- good_saves = stop-losses where price kept falling -> the stop earned its keep.
-- left_money = winners where price ran well past our exit -> the trail was too tight."""
+Verdict fields in the cohort data (every class the grader produces — a cohort's
+stop-loss verdicts are shakeouts + partial_recoveries + flat_after_stop + good_saves):
+- shakeouts          = stop-losses where price then reached our original target -> stop too tight.
+- partial_recoveries = stop-losses where price bounced >=2% afterwards but never reached our
+                       target -> weaker evidence in the same direction as a shakeout. Treat a
+                       cohort as having a stop-width problem only when shakeouts alone are
+                       substantial; partial_recoveries can corroborate that, never establish it
+                       on their own (a 2% bounce after a stop is common noise).
+- flat_after_stop    = price went nowhere after the stop -> the stop was neither a mistake nor
+                       a save; it is the neutral baseline for how often stops simply fire.
+- good_saves         = stop-losses where price kept falling -> the stop earned its keep.
+- left_money         = winners where price ran well past our exit -> the trail was too tight.
+- well_timed         = winners where price dropped after we exited -> the exit was correct.
+- fair_exits         = winners where price drifted after our exit -> neutral.
+
+Note the asymmetry to watch for: if a cohort's winners are mostly fair_exits and well_timed
+while its losers are mostly good_saves, the exits are working and any problem is upstream in
+the ENTRY rule — which is NOT in your list of tunable parameters. Say so in the summary rather
+than proposing an exit change that cannot fix it."""
 
     user = ('Computed cohorts (each already meets the minimum sample size):\n'
             + json.dumps(cohorts, indent=2)

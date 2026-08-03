@@ -3,6 +3,64 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-08-02 — The sizing guard was off during the only 30 trades it was for
+
+Triggered by reviewing the ADA shakeout of 07-27. The trade itself was graded
+correctly; the review found four defects around it, none of them in the trade
+logic.
+
+**The record this was found against:** 13 closed trades, 4 wins, net −$2.35,
+**PF 0.32**. All 13 graded.
+
+- **`cap_pct` treated "no profit factor yet" as "good profit factor".**
+  `_trade_history_context()` returns `pf = None` until 30 closed trades exist,
+  and the cap block only shrank the cap when `pf is not None` — so the full 30%
+  cap applied for exactly the first 30 trades, the stretch with the least
+  evidence the bot works at all. On the live record the cap in force was **30%
+  while the real PF was 0.32**. An unknown profit factor is not a good one. Below
+  30 trades the cap now falls back to the win rate over whatever history exists
+  (< 50% → 15%, otherwise 22%); with genuinely no history the old 30% default
+  stands. On the current record this moves the cap **30% → 15%**. Verified by
+  exercising the real function against the real 13 rows plus a case table.
+- **9 of 13 graded verdicts were computed, stored, then never counted.**
+  `_grade_exit()` produces seven verdict classes; `_trade_history_context()` and
+  `learn.py._compute_cohorts()` both aggregated only three (`shakeout`,
+  `good_save`, `left_money`). The most common verdict in the live record —
+  `partial_recovery`, 4 of 13 — reached no aggregate anywhere. Both now count all
+  seven, and the prompt carries a full verdict breakdown line.
+- **`partial_recovery` is deliberately NOT folded into the shakeout count.** It
+  points the same direction, and combining them would take the observed rate from
+  1-of-13 to 5-of-13 and clear the Wilson gate. That would be clearing the bar by
+  redefining the class, not by evidence: `JOURNAL_PATTERN_NULL_RATE = 0.15` was
+  chosen for the narrow shakeout class, and a ≥2% bounce after a stop is common
+  noise. It ships as context with an explicit "not tested against a null rate"
+  label. Same reasoning as the 2026-07-27 gate; the fix there was to stop acting
+  on thin evidence, not to find a wider class that looks thicker.
+- **`learn.py` can only tune exits, and the exits are not the binding problem.**
+  Replaying all 13 trades on real 15m candles reproduced the recorded exit reason
+  **13/13**, then varied only the exits: every configuration still loses (wider
+  stop −$3.31 to −$3.70, wider trail −$2.42 to −$2.82, wider TP −$2.08 to −$2.73,
+  as-traded −$2.25). Entry diagnostics: median best-case gain before exit 1.77%,
+  5 of 13 never gained 1%, price above entry 4h after entry on 5 of 13. The
+  learning pass's tunable list is `ATR_*_MULT` + bounds + funding — all exits, no
+  entry rule — so it is searching a space that does not contain the problem. Its
+  system prompt now names that asymmetry and tells it to say so rather than
+  propose an exit change that cannot fix an entry problem.
+- **Model version is named in exactly one place now.** `CLAUDE_MODEL` is
+  `claude-opus-5`; the module docstring, advisor header, `learn.py` and four docs
+  said "Opus 4.8". They now say `CLAUDE_MODEL` instead of a version number —
+  prose that restates a constant goes stale, which is the same defect class as
+  the prompt saying `slPct 2–12` while the constant said 8 (2026-07-29). Historic
+  CHANGELOG entries keep their original wording on purpose; they are a record of
+  what was true then.
+- **Stale docs corrected:** `OPTION3-TRADE-SYSTEM.md` said test mode was
+  "currently active" (it is off, and has been since 2026-07-13) and "one live
+  trade at a time" (`TEST_MAX_CONCURRENT = 3` since 2026-07-08);
+  `SIGNAL-CHECKER.md` showed `TEST_MODE = True` and described the cache as
+  persisted via `actions/cache`.
+- **`LEARN_INJECT` added to `infra/.env.example`**, which claims to be "the
+  canonical list of everything the worker needs" and was missing it.
+
 ## 2026-07-29 — The stop floor was widened, measured properly, and put back
 
 `SL_BOUNDS` went 2.0 → 8.0 and back to 2.0 the same day. Net code change is a

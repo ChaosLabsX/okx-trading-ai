@@ -227,9 +227,9 @@ noise, and what bounded change follows. It never estimates a statistic.
   **Telegram for you to approve and apply by hand** — never auto-applied.
 - **Injection is OFF by default.** The pass reports and stores from day one, but nothing
   reaches a live decision until you set the `LEARN_INJECT=1` env var / Actions secret —
-  after you've read a couple of runs and trust the statistics. It reuses `CLAUDE_MODEL`
-  (Opus 4.8): this is a bounded single-turn judgement, not the long-horizon work a pricier
-  model would earn its cost on.
+  after you've read a couple of runs and trust the statistics. It reuses `CLAUDE_MODEL`:
+  this is a bounded single-turn judgement, not the long-horizon work a pricier model
+  would earn its cost on.
 - Requires the `learned_rules` table (migration above); degrades silently without it.
 
 > Note: because `partial_tp_id` and `sl_id` share one OCO order ID in phase 1, the monitor distinguishes "TP fired" from "SL fired" by comparing the actual fill price to `entry_price` (fill above entry = TP side, otherwise SL side).
@@ -249,7 +249,7 @@ noise, and what bounded change follows. It never estimates a statistic.
 |---|---|
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Telegram notifications |
 | `OKX_API_KEY`, `OKX_SECRET_KEY`, `OKX_PASSPHRASE` | OKX private API (needs **Read + Trade**, never Withdraw) |
-| `CLAUDE_API_KEY` | Claude Opus 4.8 trade advisor (auto-trade silently skips if unset) |
+| `CLAUDE_API_KEY` | Claude trade advisor, model `CLAUDE_MODEL` in `signal_checker.py` (auto-trade silently skips if unset) |
 | `SUPABASE_URL`, `SUPABASE_KEY` | Trade persistence — without these, trades still get placed but the monitor can't track them (the trade-confirmation Telegram message warns loudly about this) |
 
 ## OKX API usage

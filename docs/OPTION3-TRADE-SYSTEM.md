@@ -33,8 +33,8 @@ Quantity math: the worker computes `sz_coin` from **actual fills** — the limit
 
 ### Parameter selection
 
-- **Production:** Claude Opus 4.8 picks the amount (10–30% of live balance by signal score, hard cap **performance-weighted** in code: 30% / 22% / 15% by the last-30-trades profit factor) and starts TP/SL/trail from a **volatility-adaptive baseline**: TP = 2×ATR(14), SL = 2.5×ATR, trail = 1×ATR, with TP pulled 0.5% below the nearest resistance and SL pushed 0.75% below the nearest support (`suggest_exit_params()`). Code-enforced clamps regardless of the AI's answer: TP 1.5–10%, SL 2–12%, trail 1–5% and always below TP (preserves the break-even guarantee). Funding rate, open interest, and order-book imbalance feed the decision; funding > +0.10% auto-skips the trade.
-- **Test mode (currently active):** fixed $5 / TP 1.5% / SL 2% / trail 1%, one live trade at a time (worst-case cost ≈ $0.11 per test).
+- **Production (currently active — `TEST_MODE = False`):** Claude (`CLAUDE_MODEL`) picks the amount (10–30% of live balance by signal score, hard cap **performance-weighted** in code: 30% / 22% / 15% by the last-30-trades profit factor) and starts TP/SL/trail from a **volatility-adaptive baseline**: TP = 2×ATR(14), SL = 2.5×ATR, trail = 1×ATR, with TP pulled 0.5% below the nearest resistance and SL pushed 0.75% below the nearest support (`suggest_exit_params()`). Code-enforced clamps regardless of the AI's answer: TP 1.5–10%, SL 2–12%, trail 1–5% and always below TP (preserves the break-even guarantee). Funding rate, open interest, and order-book imbalance feed the decision; funding > +0.10% auto-skips the trade.
+- **Test mode (`TEST_MODE = True` — currently OFF):** fixed $5 / TP 1.5% / SL 2% / trail 1%, up to `TEST_MAX_CONCURRENT` (3) test trades at once (worst-case cost ≈ $0.11 per test).
 - **Manual (dashboard):** the AI's suggested values pre-fill the confirmation modal and every number is user-editable before placing.
 
 ## Exit monitoring (`monitor_option3_trades()`)

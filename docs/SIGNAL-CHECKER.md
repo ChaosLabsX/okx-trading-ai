@@ -50,12 +50,15 @@ Labels collapse into **zones**: BUY + STRONG BUY = `up`, SELL + STRONG SELL = `d
 - A genuine zone flip within `FLIP_COOLDOWN` (2 min production / 30 s test) is suppressed as noise.
 - Staying in the same zone longer than `REZONE_REMINDER` (4 h production / 10 min test) re-arms one reminder alert.
 
-State lives in `signal_cache.json` — `{symbol: {label, zone, alerted_zone, alerted_at}}` — persisted across runs via `actions/cache`. `load_cache()` migrates an older string-only format. When the cache is empty (first run / cache evicted), the first scan is a **warm-up**: it records state but sends no alerts and places no trades, preventing an alert storm after every cache loss.
+State lives in `signal_cache.json` — `{symbol: {label, zone, alerted_zone, alerted_at}}` — persisted on the VPS at `C:\OKXAI\signal_cache.json` between the wrapper's relaunches (the retired Actions fallback carried it with `actions/cache`). `load_cache()` migrates an older string-only format. When the cache is empty (first run / cache evicted), the first scan is a **warm-up**: it records state but sends no alerts and places no trades, preventing an alert storm after every cache loss.
 
 ## Test mode
 
+**Currently `TEST_MODE = False` — the bot is in production mode and trades real money.**
+The flag is the one line that switches everything:
+
 ```python
-TEST_MODE = True   # ►►► set to False to restore full production behavior ◄◄◄
+TEST_MODE = False   # ►►► set to True for $5 test trades ◄◄◄
 ```
 
 One flag flips everything (all production values are preserved in the same file):
@@ -64,7 +67,7 @@ One flag flips everything (all production values are preserved in the same file)
 |---|---|---|
 | STRONG BUY threshold | score ≥ 5.0 | score ≥ 1.0 (fires on common conditions, e.g. bullish MACD + price near lower BB) |
 | 30m reversal confirmation | required | skipped |
-| Claude Opus 4.8 advisor | decides trade + sizing | bypassed |
+| Claude advisor (`CLAUDE_MODEL`) | decides trade + sizing | bypassed |
 | Trade size | AI-chosen, 10–30% of balance | fixed $5 USDT (worst-case SL test ≈ $0.11 incl. fees) |
 | TP / SL / trail | AI-chosen by volatility tier | fixed 1.5% / 2% / 1% (tight → fast full-lifecycle tests) |
 | Max trades per scan | 1 | 1 |
