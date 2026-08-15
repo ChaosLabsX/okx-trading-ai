@@ -3,6 +3,109 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-08-15 — The STRONG BUY bar goes 5.0 → 4.5, and nothing else moves
+
+The bot was placing too few trades to learn from. A full review of the entry gate
+found the frequency problem is real, found that **none of the obvious fixes
+survive testing**, and found exactly one that does.
+
+**Method matters here, because it changed the answer.** The first pass compared
+30-, 60- and 90-day windows — all ending today, each containing the last. That is
+one window counted three times, and it agreed with itself. Re-run over **four
+non-overlapping 84-day windows** of the past year (candles pulled for all 38 coins
+back to 2025-08-14), several conclusions reversed.
+
+- **`STRONG_BUY_SCORE` 5.0 → 4.5.** Across the four independent windows with both
+  safety gates on: 5.0 → 39 trades / −9.18 net, 4.5 → **88 trades / −10.15 net**,
+  2 of 4 windows profitable either way. Per trade that is −$0.24 → −$0.12. It
+  roughly doubles the sample rate at a P&L difference well inside noise. It does
+  **not** make the bot profitable and is not claimed to.
+- **5.0 was really 5.5.** `generate_signal()` awards only whole and half points, so
+  the scale is a staircase. Of 81,610 scored coin-hours, **26 landed on 5.0** and
+  938 on 5.5+. There was never a 4.7 or 4.8 to try; 4.5 is the next real step and
+  admits exactly one new bucket (1,221 bars vs 964), which is why the change is a
+  ~2.3× step and cannot be made gentler.
+- **The new bucket sizes itself down, for free.** The advisor's sizing table already
+  carried a `Score 4.5–4.9 → 15–20% of capital` tier that was unreachable under a
+  5.0 bar. It now activates, so the weaker setups this admits are sized ~25% lighter
+  than today's. The table's dead `4.0–4.4` row was removed (a rule the model can
+  never apply is noise) and the remaining bands interpolate `STRONG_BUY_SCORE`
+  rather than restating it.
+- **`STRONG_SELL_SCORE` deliberately NOT mirrored to −4.5.** This worker is long-only
+  spot; `direction_zone()` maps SELL and STRONG SELL to the same `down` zone, so the
+  sell label never places, closes or blocks anything. Moving it would change
+  dashboard text and nothing else. The asymmetry is now commented at both sites.
+- **`config.js` gains `STRONG_BUY_SCORE`,** and `app.js` reads it instead of a
+  hard-coded `5`. A dashboard printing "BUY" for a coin the worker just bought is
+  the confusing half of a drifted pair. The **manual** AI Advisor keeps its stricter
+  ≥ 5.0 bar on purpose — it has no automatic size reduction — and now says so in the
+  prompt instead of claiming 5.0 is where the STRONG BUY zone starts.
+- **Found while verifying that: the two `generateSignal()` implementations had never
+  actually agreed.** Matching the threshold is necessary but not sufficient if the
+  two sides compute different scores to compare against it — and they did. `app.js`
+  awarded its volume point from `volRatio ≥ 1.5` where the worker requires `≥ 2.0`,
+  gated it on an existing `score >= 2` where the worker does not gate at all, ran a
+  `−1` "selling pressure" branch the worker has never had, and applied the whole
+  block **after** the 4H term instead of before. That last one is not cosmetic: the
+  4H term keys off the sign and size of the running score, so position changes the
+  result. Over a 720-case grid the two disagreed on **257 scores and 80 labels
+  (11%)**, in both directions — the dashboard could show STRONG BUY for a coin the
+  worker scored a full point lower and would never trade. `app.js` was aligned to
+  the worker (source of truth: it places the orders) and re-verified over an
+  8,400-case grid: **0 mismatches on score, label and reason strings**. The reason
+  strings matter too — Python pastes them into the advisor prompt verbatim as
+  `Confirmed by: …`, the same coupling that made the 2026-07-29 4H mislabelling a
+  trading bug rather than a cosmetic one.
+- **`docs/DASHBOARD.md` had documented this as a "minor asymmetry … same intent,
+  slightly different code paths".** It was neither minor nor the same intent. The
+  note now states what actually differed, and the scoring table lists the components
+  in evaluation order with an explicit warning that the order is load-bearing.
+- **New: `parity_check.py`.** A duplicated function with no test drifts silently, and
+  this one drifted into showing a trade signal the bot did not have — for long enough
+  that the divergence got written down as intentional. The script lifts
+  `generateSignal` out of `app.js` by source slice (so the shipped file is what runs,
+  not a third copy) and compares it against `generate_signal()` over 11,200 cases
+  straddling every branch boundary in both files. It was verified to actually fail:
+  reintroducing just the 1.5×-vs-2.0× volume difference produces 2,800 score and
+  **948 label** mismatches and exit 1. Run it after touching either implementation.
+- **`backtest.py --score` now defaults to the live constant.** It said `5.0`, so
+  after this change an unflagged run would have quietly measured a threshold the bot
+  no longer uses and reported it as the baseline — the same defect class as a prompt
+  naming a bound the code doesn't have (2026-07-29).
+
+**Tested and rejected — deliberately not shipped:**
+
+| Change | Result across the 4 independent windows |
+|---|---|
+| Relax `btc_regime_ok()` | 174 trades, **−77.26** (0 of 4 windows profitable) |
+| Relax `reversal_confirmed()` | 159 trades, **−51.00** (0 of 4) |
+| Relax both | 538 trades, **−290.12** (0 of 4) |
+| `ATR_SL_MULT` 2.5 → 1.0/1.5 | wins **only** in the newest window; wide stop wins 2 of 4 |
+
+The two gates are carrying the strategy — they are not costing opportunity, they
+are the reason the loss is small. The tighter stop is the cautionary one: it turned
+the last 90 days from −$19.17 (PF 0.72) to +$10.21 (PF 1.20) and improved
+monotonically across the *nested* windows, which is exactly what a setting fitted to
+one market looks like. Not shipped.
+
+**Where the frequency actually goes** (90-day replay, production rules): 940 STRONG
+BUY signals → 815 killed by the BTC regime filter (87%) → 114 killed by the 30m
+reversal gate (91% of the remainder) → **11 trades**. The regime filter is bearish
+44% of clock time but removes 87% of signals, because this engine buys oversold dips
+and dips cluster when BTC is weak. `MAX_OPEN_TRADES` and `MAX_TRADES_PER_SCAN` never
+bound once in 90 days at the old bar, so raising them is a no-op.
+
+**The finding that outranks this change:** the payoff geometry is upside-down. Option
+3 takes profit on *half* the position and stops *the whole* position, so TP must beat
+SL — and in **16 of 18 live trades the stop was wider than the target**. Live record
+to date: 9W/9L, average win +2.38%, average loss −3.08%, reward-to-risk 0.77, which
+needs a 56% win rate against the 50% the entry delivers. Net is +$1.11, but −$0.96
+excluding the single largest position. Also measured, from the `entry_context`
+snapshots: the AI spends its ±30% latitude widening **both** exit legs (median TP
++20%, SL +25%, same direction in 14 of 15 trades), never closing the gap. No stop
+setting tested fixes this reliably, which points at the entry — the same place the
+2026-08-02 review landed from the other direction.
+
 ## 2026-08-02 — The sizing guard was off during the only 30 trades it was for
 
 Triggered by reviewing the ADA shakeout of 07-27. The trade itself was graded

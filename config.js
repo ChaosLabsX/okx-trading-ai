@@ -35,6 +35,21 @@ const CONFIG = {
   SUPABASE_URL: 'https://trbfhtopkcupzeqmrnom.supabase.co',
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRyYmZodG9wa2N1cHplcW1ybm9tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExNDI1NDYsImV4cCI6MjA5NjcxODU0Nn0.6XKKIJIotc4lRVL_akt7P63woJiB8NyOVaUotQmmpHQ',
 
+  // Score at which a coin is labelled STRONG BUY in the scanner. MUST match
+  // STRONG_BUY_SCORE in signal_checker.py — that constant is what actually decides
+  // whether the worker trades, and a dashboard showing "BUY" for a coin the bot
+  // just bought (or "STRONG BUY" for one it ignored) is the confusing half of a
+  // drifted pair. Lowered 5.0 → 4.5 on 2026-08-15 alongside the worker; the
+  // reasoning lives in signal_checker.py next to that constant.
+  //
+  // Matching this bar is necessary but not sufficient — the two generateSignal
+  // implementations must also agree on the SCORE compared against it. They did not
+  // until 2026-08-15 (app.js scored the volume term differently and in the wrong
+  // position, so 80 of 720 grid cases got a different LABEL). Both sides were
+  // aligned to the worker's rules and verified across 8,400 cases: 0 mismatches on
+  // score, label and reason strings. Change one side, change the other.
+  STRONG_BUY_SCORE: 4.5,
+
   // Refresh timing
   AUTO_REFRESH_INTERVAL: 60_000,       // 1 minute (crypto moves fast)
   NEWS_REFRESH_INTERVAL: 10 * 60_000,  // 10 minutes

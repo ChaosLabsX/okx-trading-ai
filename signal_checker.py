@@ -112,10 +112,10 @@ TEST_FORCE_SIGNAL = False
 # ── TEST MODE ─────────────────────────────────────────────────────────────────
 # Makes Option 3 trades trigger EASILY with a tiny fixed size — purely to test the
 # trade → monitor → Telegram pipeline end to end. When True it:
-#   • lowers the STRONG BUY bar from score ≥ 5 to score ≥ 1
+#   • lowers the STRONG BUY bar from score ≥ 4.5 to score ≥ 1
 #   • skips the 30-min reversal confirmation gate
 #   • skips the Claude AI advisor and uses a fixed size + fixed TP/SL/trail
-#   • only ever keeps ONE test trade alive at a time (waits for it to close)
+#   • keeps up to TEST_MAX_CONCURRENT (3) test trades alive at once
 #
 # ►►►  TO RESTORE NORMAL (PRODUCTION) BEHAVIOUR: set TEST_MODE = False  ◄◄◄
 #      That one line reverts everything — all production values are preserved below.
@@ -123,7 +123,35 @@ TEST_MODE = False
 
 # Test bar of 1.0 fires on very common conditions (e.g. bullish MACD trend +0.5
 # plus price near the lower Bollinger Band +1) so test trades start quickly.
-STRONG_BUY_SCORE  =  1.0 if TEST_MODE else  5.0   # score needed to label STRONG BUY
+#
+# PRODUCTION BAR: 5.0 → 4.5 on 2026-08-15, to raise trade frequency. Measured, not
+# guessed — see the CHANGELOG entry of that date. Three things make 4.5 the right
+# step and 5.0 a worse one than it looks:
+#
+#   1. THE SCALE IS A STAIRCASE, NOT A DIAL. generate_signal() only awards whole
+#      and half points, so scores land on half-point values. Over 81,610 scored
+#      coin-hours (38 coins × 90 days), exactly 26 landed on 5.0 and 938 on 5.5+.
+#      A 5.0 bar therefore behaves as a 5.5 bar. There is no 4.7 or 4.8 to try;
+#      4.5 is the next real step, and it admits exactly one new bucket.
+#   2. IT ROUGHLY DOUBLES THE TRADES AT INDISTINGUISHABLE P&L. Replaying the real
+#      rules over four NON-overlapping 84-day windows of the past year, with both
+#      safety gates on: score 5.0 → 39 trades / −9.18 net, score 4.5 → 88 trades /
+#      −10.15 net (2 of 4 windows profitable either way). Per trade that is −$0.24
+#      vs −$0.12. Both are still losses; this buys evidence at roughly twice the
+#      rate, it does not buy an edge.
+#   3. THE NEW BUCKET SIZES ITSELF SMALLER. The advisor's sizing table already
+#      carried an unreachable "Score 4.5–4.9 → 15–20% of capital" tier below the
+#      "5.0+ → 20–30%" one. Lowering the bar activates it, so the weaker setups
+#      this admits are automatically sized ~25% lighter than the ones traded today.
+#
+# What was tested and rejected: loosening btc_regime_ok() or reversal_confirmed()
+# (both lose money in every window — they are carrying the strategy), and a tighter
+# ATR_SL_MULT (wins only in the most recent window; fitted, not real).
+STRONG_BUY_SCORE  =  1.0 if TEST_MODE else  4.5   # score needed to label STRONG BUY
+# Deliberately NOT mirrored to -4.5. This worker is long-only spot: STRONG SELL
+# never places, closes or blocks a trade — direction_zone() maps both SELL and
+# STRONG SELL to the same 'down' zone, so the label is display text only. Moving it
+# would change what the dashboard prints and nothing else.
 STRONG_SELL_SCORE = -1.0 if TEST_MODE else -5.0   # score needed to label STRONG SELL
 MIN_TRADE_USDT    = 10.0                           # balance gate: no trading below this USDT balance (test & prod)
 # Tight, cheap test parameters: trades resolve within minutes-to-hours instead of
@@ -1024,9 +1052,11 @@ A STRONG BUY signal has been confirmed with reversal on 30-minute candle. Decide
 
 CAPITAL & POSITION SIZING:
 Available USDT: ${usdt_balance:.2f}
-- Score 4.0–4.4, 2 confirmations → 10–15% of capital
-- Score 4.5–4.9, 2–3 confirmations → 15–20% of capital
+- Score {STRONG_BUY_SCORE:g}–4.9, 2–3 confirmations → 15–20% of capital
 - Score 5.0+, 3+ confirmations → 20–30% of capital
+({STRONG_BUY_SCORE:g} is the lowest score that reaches you — anything weaker is filtered out
+before this prompt, so treat a {STRONG_BUY_SCORE:g} as the WEAKEST setup you will ever see,
+not as a middling one, and size it at the bottom of its band.)
 PERFORMANCE-WEIGHTED CAP: the hard cap for THIS trade is {cap_pct * 100:.0f}% of capital
 (30% when the bot's recent profit factor is ≥ 1.5 or unknown, 22% when 1.0–1.5,
 15% when < 1.0 — losing streaks get smaller bets). Never exceed it. Minimum $10 USDT.
@@ -1851,7 +1881,7 @@ def _rank_candidate(sig, rsi_1h, rsi_4h, vol_ratio):
     Used when multiple signals fire in the same scan to pick the best one.
 
     Components (higher = better opportunity):
-      sig.score  (4–9) : aggregate RSI/MACD/BB/4H/vol indicator checks — dominant factor
+      sig.score  (4.5–9): aggregate RSI/MACD/BB/4H/vol indicator checks — dominant factor
       RSI depth (+0–1) : how far 1H RSI is below 30 (RSI 15 beats RSI 29)
       4H depth  (+0–0.5): higher-timeframe alignment depth (multi-TF conviction)
       Volume    (+0–0.5): relative volume surge above average (confirms buying pressure)

@@ -796,6 +796,25 @@ function generateSignal(rsi, macd, bb, rsi4h = null, volRatio = null) {
     else if (bb.pctB >= 0.80) { score -= 1; reasons.push('Price near upper BB'); }
   }
 
+  // ── Volume (max +1) ──
+  // Mirrors signal_checker.py:generate_signal exactly, INCLUDING its position in
+  // the sequence. Until 2026-08-15 this block sat after the 4H term and ran its own
+  // rules: +1 from 1.5× (the worker requires 2.0×), gated on score >= 2 (the worker
+  // does not gate), plus a -1 "selling pressure" branch the worker has never had.
+  //
+  // Ordering is not cosmetic here — the 4H term below keys off the SIGN and SIZE of
+  // the running score, so moving volume across it changes the result. Over a
+  // 720-case grid the two implementations disagreed on 257 scores and 80 labels
+  // (11%), in both directions: the dashboard could print STRONG BUY for a coin the
+  // worker scored a full point lower and would never trade.
+  //
+  // signal_checker.py is the source of truth — it is what places orders. Do not
+  // "improve" one side alone; change both or neither.
+  if (volRatio !== null) {
+    if (volRatio >= 2.0) { score += 1; reasons.push(`Volume ${volRatio.toFixed(1)}× avg — strong buying interest`); }
+    else if (volRatio >= 1.5) reasons.push(`Volume ${volRatio.toFixed(1)}× avg — elevated`);
+  }
+
   // ── 4H RSI confirmation (max ±1) ──
   // Labels kept in step with signal_checker.py:generate_signal — rsi4h <= 40 is
   // the 4H being weak, not an uptrend, and rsi4h >= 55 is it being strong, not a
@@ -807,15 +826,12 @@ function generateSignal(rsi, macd, bb, rsi4h = null, volRatio = null) {
     else if (score < 0 && rsi4h <= 30) { score += 0.5; reasons.push(`4H RSI ${rsi4h.toFixed(0)} — caution: oversold on 4H`); }
   }
 
-  // ── Volume spike confirmation (max ±1) ──
-  if (volRatio !== null && volRatio >= 1.5) {
-    if (score >= 2) { score += 1; reasons.push(`Volume ${volRatio.toFixed(1)}× avg — strong buying interest`); }
-    else if (score <= -2) { score -= 1; reasons.push(`Volume ${volRatio.toFixed(1)}× avg — strong selling pressure`); }
-    else if (volRatio >= 2) reasons.push(`Volume spike ${volRatio.toFixed(1)}× avg (no strong signal yet)`);
-  }
-
   let label, cls;
-  if (score >= 5) { label = 'STRONG BUY'; cls = 'sig-sbuy'; }
+  // The BUY bar comes from CONFIG so it can be kept in step with the worker's
+  // STRONG_BUY_SCORE, which is the constant that actually decides trades. The SELL
+  // bar stays hard-coded at -5: this app is long-only, so no sell label has ever
+  // gated anything, and the two sides are deliberately not mirrored.
+  if (score >= CONFIG.STRONG_BUY_SCORE) { label = 'STRONG BUY'; cls = 'sig-sbuy'; }
   else if (score >= 2) { label = 'BUY'; cls = 'sig-buy'; }
   else if (score > -2) { label = 'HOLD'; cls = 'sig-hold'; }
   else if (score > -5) { label = 'SELL'; cls = 'sig-sell'; }
@@ -1328,7 +1344,10 @@ CONTEXT:
 
 ANALYSIS RULES — apply these strictly:
 1. Only recommend BUY when ALL of the following are true:
-   • Signal score ≥ 5.0 (STRONG BUY zone)
+   • Signal score ≥ 5.0 — deliberately STRICTER than the ${CONFIG.STRONG_BUY_SCORE} bar the scanner uses to
+     label STRONG BUY, because that bar sizes a weak setup down automatically and this
+     manual path has no such sizing rule. A ${CONFIG.STRONG_BUY_SCORE}–4.9 coin is a SKIP here even though
+     the scanner labels it STRONG BUY.
    • At least 2 of these confirm: RSI oversold, MACD bullish crossover, BB lower band touch, volume spike
    • 4H RSI < 55 (not overbought on the higher timeframe)
    • Funding rate is not extreme (avoid buying when funding > 0.05% — longs are overheated)

@@ -317,7 +317,12 @@ def main():
     ap = argparse.ArgumentParser(description='Replay TradingAI production rules over OKX history.')
     ap.add_argument('--days', type=int, default=90)
     ap.add_argument('--coins', default='')
-    ap.add_argument('--score', type=float, default=5.0, help='STRONG BUY threshold (production 5.0)')
+    # Default tracks the live constant instead of restating it. When production
+    # moved 5.0 → 4.5 this argument still said 5.0, so an unflagged run would have
+    # quietly measured a threshold the bot no longer uses — and reported it as the
+    # baseline. Same defect class as a prompt naming a bound the code doesn't have.
+    ap.add_argument('--score', type=float, default=sc.STRONG_BUY_SCORE,
+                    help=f'STRONG BUY threshold (production {sc.STRONG_BUY_SCORE:g})')
     ap.add_argument('--atr-tp', type=float, default=None)
     ap.add_argument('--atr-sl', type=float, default=None)
     ap.add_argument('--atr-trail', type=float, default=None)

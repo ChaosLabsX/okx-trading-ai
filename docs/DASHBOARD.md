@@ -30,12 +30,25 @@ Score components (identical to the Python worker — keep in sync!):
 | RSI 1H | ≤20: **+3** · ≤30: **+2** · ≤40: 0 (reason only) · ≥60: **−1** · ≥70: **−2** · ≥80: **−3** |
 | MACD | bullish cross: **+2** · bearish cross: **−2** · trend only: **±0.5** |
 | Bollinger %B | ≤0.05: **+2** · ≤0.20: **+1** · ≥0.80: **−1** · ≥0.95: **−2** |
+| Volume ratio | ≥2.0×: **+1** · ≥1.5×: 0 (reason only) |
 | RSI 4H (confirmation) | score>0 & ≤40: **+1** · score<0 & ≥55: **−1** · caution counters: **∓0.5** |
-| Volume ratio | ≥1.5× amplifies an existing ±2 signal by **±1** |
 
-Labels: score ≥ 5 → **STRONG BUY**, ≥ 2 → BUY, > −2 → HOLD, > −5 → SELL, else **STRONG SELL**.
+**Order matters.** Volume is applied *before* the 4H term, because the 4H term keys off
+the sign and size of the running score. Both implementations now evaluate RSI → MACD →
+Bollinger → volume → 4H, in that order.
 
-> Minor asymmetry vs the worker: the browser gives the volume point only when the score is already ±2, while the worker gives +1 at ≥ 2.0× volume unconditionally. Same intent, slightly different code paths.
+Labels: score ≥ `CONFIG.STRONG_BUY_SCORE` (4.5) → **STRONG BUY**, ≥ 2 → BUY, > −2 → HOLD, > −5 → SELL, else **STRONG SELL**. The BUY bar is a config value so it stays in step with `STRONG_BUY_SCORE` in `signal_checker.py`, which is what actually decides trades; the SELL bar stays hard-coded at −5 because this app is long-only and no sell label gates anything.
+
+> **The two implementations are now byte-identical in behaviour, and there is a test for it.**
+> Until 2026-08-15 the browser applied volume *after* the 4H term, awarded its point from
+> 1.5× rather than 2.0×, gated it on an existing ±2 score, and carried a −1 "selling
+> pressure" branch the worker never had. This was documented here as a "minor asymmetry";
+> it was not. Across an 8,400-case grid the two disagreed on 257 scores and 80 labels —
+> the dashboard could show **STRONG BUY for a coin the worker scored a full point lower
+> and would never trade**. `signal_checker.py` is the source of truth; it places the
+> orders. If you change one side, change the other and run `python parity_check.py`
+> from the repo root — it lifts `generateSignal` straight out of `app.js`, runs it against
+> `generate_signal()` over 11,200 cases, and compares scores, labels **and** reason strings.
 
 ### 3. Alerts (`checkSignalAlerts()`)
 
@@ -45,7 +58,7 @@ Browser alerts are **toasts only** — Telegram for STRONG BUY is handled exclus
 
 - Calls the Anthropic Messages API **directly from the browser** (`anthropic-dangerous-direct-browser-access` header) with model `CONFIG.CLAUDE_MODEL` (`claude-opus-5` — set in `config.js`; this is a static page, so that line is the only place it can come from).
 - Before prompting, it fetches the **live** OKX balance and holdings so the AI sees real capital, then builds:
-  - `buildSystemPrompt()` — strict trading rules (only recommend BUY with score ≥ 5 and ≥ 2 confirmations, explicit SKIP conditions, confidence levels), risk-profile position sizing (conservative 10% / moderate 20% / aggressive 30% of capital), and the **TRADE tag contract** with Option 3 parameter guidance per volatility tier.
+  - `buildSystemPrompt()` — strict trading rules (only recommend BUY with score ≥ 5.0 — deliberately stricter than the 4.5 STRONG BUY label, since this manual path has no automatic size reduction — and ≥ 2 confirmations, explicit SKIP conditions, confidence levels), risk-profile position sizing (conservative 10% / moderate 20% / aggressive 30% of capital), and the **TRADE tag contract** with Option 3 parameter guidance per volatility tier.
   - `buildPrompt()` — per-coin technical snapshot, derivatives context (funding rate, open interest), portfolio with live P&L, news headlines + sentiment %.
 - The response is rendered as markdown; any `[TRADE:{...}]` tags are parsed (`parseTradeActions`) into **action buttons** ("⚡ Option 3 Trade · 🟢 BUY AVAX · TP50% +5% · Trail 3% · SL −8%").
 
