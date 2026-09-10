@@ -41,7 +41,8 @@
       <span class="logo">▲ OKX AI</span>
     </div>
     <div class="header-right">
-      <button class="btn-icon" id="perfBtn" title="Bot performance — profit / loss by period">
+      <!-- Starts active because the panel below ships open; togglePerfPanel keeps them in step. -->
+      <button class="btn-icon active" id="perfBtn" title="Bot performance — profit / loss by period">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="6" y1="20" x2="6" y2="14" />
           <line x1="12" y1="20" x2="12" y2="8" />
@@ -85,9 +86,13 @@
     </div>
   </div>
 
-  <!-- ─────────── BOT PERFORMANCE (hidden until the header 📊 button; lazy-loaded) ─────────── -->
+  <!-- ─────────── BOT PERFORMANCE (open on load; the header 📊 button collapses it) ───────────
+       Open in the markup rather than by script after DOMContentLoaded: `.open` is the
+       transition's end state, so the panel paints in place on the first frame with no
+       fade-in and no reflow once the scanner arrives. The header button still toggles it,
+       and app.js fetches the history at load time to match. -->
   <div class="perf-wrap">
-    <section class="card perf-card" id="perfSection" style="display:none;">
+    <section class="card perf-card open" id="perfSection">
       <div class="card-header">
         <h2 class="card-title">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

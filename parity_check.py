@@ -94,6 +94,15 @@ fs.writeFileSync(outPath, JSON.stringify(vm.runInContext(cfg + '\n' + fn + '\n' 
 
 
 def main():
+    # The mismatch report prints those same em dashes. A cp1252 console would raise
+    # UnicodeEncodeError mid-report, or silently print replacement characters that
+    # look exactly like a real mismatch - so force UTF-8 and degrade gracefully.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except (AttributeError, ValueError):
+            pass
+
     node = shutil.which('node')
     if not node:
         print('SKIP: node not on PATH - cannot exercise app.js')
@@ -105,7 +114,7 @@ def main():
 
     tmp = tempfile.mkdtemp(prefix='parity_')
     grid_fp, out_fp = os.path.join(tmp, 'grid.json'), os.path.join(tmp, 'out.json')
-    with open(grid_fp, 'w') as f:
+    with open(grid_fp, 'w', encoding='utf-8') as f:
         json.dump([[rsi, MACD[mk][0], pctb, r4, vr] for rsi, mk, pctb, r4, vr in cases], f)
 
     driver_fp = os.path.join(tmp, 'driver.js')
@@ -118,7 +127,13 @@ def main():
         print('FAIL: could not run app.js generateSignal')
         print(r.stderr.strip())
         return 2
-    js = json.load(open(out_fp))
+    # encoding='utf-8' is load-bearing, not tidiness. Node's JSON.stringify emits
+    # non-ASCII raw, and every reason string carries an em dash ("RSI 15 - extremely
+    # oversold" uses U+2014). A bare open() decodes with the locale encoding, which
+    # is cp1252 on this machine, turning every em dash into 'a EUR "' - 10,792 of
+    # 11,200 cases reported as reason mismatches with scores and labels perfectly
+    # clean. The check failed loudly and pointed at app.js, which was innocent.
+    js = json.load(open(out_fp, encoding='utf-8'))
 
     bad_score = bad_label = bad_reasons = 0
     examples = []

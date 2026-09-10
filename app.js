@@ -2065,6 +2065,9 @@ function renderPerf() {
     </div>`;
 }
 
+// The panel starts open (see index.html), so the first click of the header button
+// closes it. `sec.style.display` is '' on a fresh load and only ever becomes 'none'
+// through this function, which keeps that first read honest.
 function togglePerfPanel() {
   const sec = el('perfSection');
   const opening = sec.style.display === 'none';
@@ -2357,6 +2360,13 @@ async function loadAppData() {
   // Restore last known USDT balance immediately (before first network call)
   const lastBal = LS.get('lastUsdtBalance', 0);
   if (lastBal > 0) showUsdtBalance(lastBal);
+
+  // The performance panel ships open, so its history is fetched here instead of on
+  // the first click of the header button. Deliberately NOT awaited: it is one
+  // Supabase call against a different host from the scanner's, and the two should
+  // race rather than queue. Called from loadAppData (not init) so a locked app
+  // still fetches nothing until the password lands.
+  loadPerfData().then(ok => { if (ok) { perfSnapToData(); renderPerf(); } });
 
   renderScanner();
   await fetchAllData();

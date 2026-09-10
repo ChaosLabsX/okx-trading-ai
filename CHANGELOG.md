@@ -3,6 +3,40 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-09-11 — Performance panel opens with the page
+
+The panel had to be summoned with the header 📊 button on every load. It is the
+first thing the owner looks at, so a click and a 250ms slide stood between opening
+the app and reading the month's result. It now ships open.
+
+- **Open in the markup, not by script.** `index.html` carries `class="card perf-card
+  open"` with no inline `display:none`. `.open` is the end state of the fade
+  transition, so the panel paints in place on the first frame — adding the class
+  from JS after `DOMContentLoaded` would have replayed the slide-in on every load,
+  which is the opposite of the point. The header button starts `active` to match.
+- **History is fetched from `loadAppData()`, deliberately not awaited.** It is one
+  Supabase query, and it should race the scanner's OKX calls rather than queue
+  behind them. Placed in `loadAppData()` and not `init()` on purpose: a
+  password-locked app still fetches nothing until the password lands.
+- **The toggle is unchanged and still correct.** `togglePerfPanel()` reads
+  `sec.style.display === 'none'` to decide direction; that is `''` on a fresh load
+  and only ever becomes `'none'` through this function, so the first click now
+  closes rather than opening a panel that is already open.
+- **Error path still recovers.** If the load-time fetch fails, `state.perfRows`
+  stays null, so reopening the panel retries exactly as the first click used to.
+- Verified in the browser at both desktop and 375px: open on load with no fade,
+  September 2026 anchored, `›` disabled at the newest edge, and a close/reopen
+  round trip returning to opacity 1.
+- **Fixed, found by running it here: `parity_check.py` was failing on itself.** It
+  read Node's output with a bare `open()`, which decodes with the locale encoding
+  — cp1252 on this machine. Node writes non-ASCII raw, and every reason string
+  contains an em dash, so 10,792 of 11,200 cases came back as reason mismatches
+  while scores and labels were spotless. The report then told you to go fix
+  `app.js`, which was correct all along. Now pinned to UTF-8 on both the read and
+  the console, and passing 0/0/0. Second time this check has been broken by
+  Windows text handling rather than by a real drift; both failures were noisy
+  rather than silent, which is the right direction for a guard to fail in.
+
 ## 2026-09-03 (later still) — Performance panel navigates by calendar period
 
 The 7D / 30D / 90D buttons were unused; the owner reads results per month, per
