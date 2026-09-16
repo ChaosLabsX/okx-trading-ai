@@ -111,14 +111,22 @@ async function fetchOKXTicker(instId) {
   };
 }
 
+// Finished candles only, matching fetch_candles() in signal_checker.py (2026-09-16).
+// OKX's newest row is the candle still forming (c[8] === '0'); the worker no longer
+// decides on it, so the dashboard must not either, or it would show STRONG BUY on
+// a candle the worker is waiting to see close. One extra row is requested so the
+// indicators still get CANDLE_LIMIT candles. Prices on the cards come from the
+// ticker, so they stay live.
 async function fetchOKXCandles(instId, bar = CONFIG.CANDLE_BAR) {
-  const url = `${CONFIG.OKX_BASE}/api/v5/market/candles?instId=${encodeURIComponent(instId)}&bar=${bar}&limit=${CONFIG.CANDLE_LIMIT}`;
+  const url = `${CONFIG.OKX_BASE}/api/v5/market/candles?instId=${encodeURIComponent(instId)}&bar=${bar}&limit=${CONFIG.CANDLE_LIMIT + 1}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const d = await res.json();
   if (d.code !== '0' || !d.data?.length) throw new Error('No candles');
+  const finished = d.data.filter(c => c.length < 9 || c[8] !== '0').slice(0, CONFIG.CANDLE_LIMIT);
+  if (!finished.length) throw new Error('No finished candles');
   // OKX returns newest-first — reverse to chronological order
-  return d.data.reverse().map(c => ({
+  return finished.reverse().map(c => ({
     ts:    parseInt(c[0], 10),
     open:  parseFloat(c[1]),
     high:  parseFloat(c[2]),
@@ -742,7 +750,11 @@ function computeIndicators(candles1H, candles4H = [], candles30m = []) {
   // Walk back through 1H candle history to find when the current signal label started.
   // Uses only 1H indicators for speed (4H/volume omitted in lookback — minor effect on label).
   // signalStartTs is derived from OKX candle timestamps — identical on every device.
-  let signalStartTs = candles1H.at(-1)?.ts ?? Date.now();
+  // The candles are finished ones, so a label read from candle k only exists from
+  // that candle's CLOSE (ts + 1h). Using the open would age every signal an hour
+  // early the moment it appeared.
+  const HOUR_MS = 3600000;
+  let signalStartTs = candles1H.length ? candles1H.at(-1).ts + HOUR_MS : Date.now();
   if (signal.label !== 'HOLD') {
     for (let i = 1; i <= 10 && candles1H.length - i >= 15; i++) {
       const n = candles1H.length - i;
@@ -755,7 +767,7 @@ function computeIndicators(candles1H, candles4H = [], candles30m = []) {
         rsi4h
       );
       if (hist.label !== signal.label) break;
-      signalStartTs = candles1H[n - 1].ts;
+      signalStartTs = candles1H[n - 1].ts + HOUR_MS;
     }
   }
 

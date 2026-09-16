@@ -43,6 +43,9 @@ First run downloads candles (~3–5 min for all 38 coins) into `backtest_cache/`
 ## Simulation model (honest fine print)
 
 - Signal at candle close → entry at the **next candle's open** (no look-ahead).
+  Production has decided on finished candles too since 2026-09-16. Before that the
+  worker scored the candle still forming, so live trades were not the ones this
+  replay measured — see CHANGELOG 2026-09-16.
 - Exits per candle: SL assumed **first** when TP and SL fall in the same candle
   (conservative); gap-throughs fill at the open (worse for SL, better for TP);
   after the partial TP, the trailing stop tracks candle highs and exits on a

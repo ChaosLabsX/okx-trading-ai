@@ -16,8 +16,9 @@ A single-page vanilla-JS app, installable as a PWA. No build step — `index.htm
 
 - Watches the 38 symbols in `CONFIG.DEFAULT_SCANNER` (user-editable, persisted as `scanner` in localStorage).
 - `fetchAllData()` pulls, per symbol: ticker + 1H + 4H + 30m candles — batched 2 symbols at a time with 250 ms gaps to avoid OKX 429s. Funding rate + open interest fetched separately in a non-blocking loop.
-- `computeIndicators()` produces: RSI(14) 1H + previous, RSI 4H, MACD (12/26/9), Bollinger %B (20, 2σ), volume ratio (last candle vs 20-bar avg), 30m reversal inputs, and the **signal**.
-- **Signal age**: `computeIndicators` walks back up to 10 1H candles re-running the signal to find when the current label began (`signalStartTs`) — so "In Signal" ages are derived from OKX candle timestamps and identical on every device. A 1 s ticker (`startAgeTicker`) keeps the age cells live.
+- **Finished candles only** (since 2026-09-16): `fetchOKXCandles()` asks for `CANDLE_LIMIT + 1` rows and drops the one OKX marks as still forming, matching `fetch_candles()` in the worker. Indicators and signals therefore change when a candle closes, not tick by tick — the dashboard shows what the worker decides on. Prices come from the ticker and stay live.
+- `computeIndicators()` produces: RSI(14) 1H + previous, RSI 4H, MACD (12/26/9), Bollinger %B (20, 2σ), volume ratio (last finished candle vs 20-bar avg), 30m reversal inputs, and the **signal**.
+- **Signal age**: `computeIndicators` walks back up to 10 1H candles re-running the signal to find when the current label began (`signalStartTs`) — so "In Signal" ages are derived from OKX candle timestamps and identical on every device. A label read from a finished candle exists from that candle's **close** (`ts + 1h`), so that is the timestamp used. A 1 s ticker (`startAgeTicker`) keeps the age cells live.
 - Table shows: price, 24h %, RSI 1H, RSI 4H, MACD state, BB%, volume ratio, signal badge with score, signal age. Hover filter chips (Buy/Sell), sort dropdown, "Top Pick" banner for the highest score ≥ 2.
 - If OKX is unreachable a deterministic **Demo** dataset renders instead (`mockTicker`); demo rows are excluded from alerts and the scanner display.
 

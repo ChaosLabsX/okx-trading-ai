@@ -343,14 +343,51 @@ def direction_zone(label):
 
 
 # ── OKX public data ───────────────────────────────────────────────────────────
+# FINISHED CANDLES ONLY, since 2026-09-16. /market/candles returns the candle that
+# is still forming as its newest row (confirm flag c[8] = '0'), and every caller of
+# this function is an entry decision: the scan's 1H/30m/4H reads and the BTC regime.
+# Scoring that row every ~85s meant the rules were judged on a candle that might be
+# minutes into its life — "green 30m candle with volume above average" can be true
+# twelve minutes into a candle that closes red, which is a bounce in the middle of a
+# fall, precisely what reversal_confirmed() exists to refuse. It also meant the live
+# bot was not running the rule that was measured: backtest.py, and every threshold
+# chosen from it (4.5, the 2x volume gate), work on finished candles.
+#
+# Measured with a minute-by-minute replay of this pipeline (the real functions, all
+# gates, 4h suppression, correlation guard, 1 trade per scan; AI not modelled; $100
+# per trade), 36 coins on Binance 1m data, four 82-day windows. The replay was
+# checked against reality first: in live mode it fires LINK at 10:39 and ARB at
+# 16:44 on 2026-09-09, against real entries at 10:41 and 16:46.
+#
+#   window           forming candle (old)    finished candles (this)
+#   Sep-Dec 2025      16 trades   -10.45        29 trades   -10.85
+#   Dec-Mar           25          -11.76        33          -25.23
+#   Mar-Jun 2026      25          -16.67        34           -0.49
+#   Jun-Sep           44          -23.67        53          -15.89
+#   total            110          -62.54       149          -52.45
+#
+# More trades in every window (+35% overall), smaller total loss, better per trade
+# in 3 of 4 windows. The frequency gain is structural; the per-trade gain is inside
+# noise, so read it as "not worse", not as an edge. LINK on 2026-09-09 (-$7.24 live)
+# does not qualify on finished candles. Full write-up: CHANGELOG 2026-09-16.
+#
+# One candle extra is requested so callers still receive `limit` finished candles;
+# OKX allows up to 300 per request. Rows without a confirm field are kept. The ATR
+# and support/resistance behind the suggested exits come from these candles too, but
+# trade monitoring, stops and trailing never call this, so open trades are unaffected.
+# app.js drops the forming candle the same way, so the dashboard shows what the
+# worker decides on.
 def fetch_candles(symbol, bar='1H', limit=100):
-    url = f'{OKX_BASE}/api/v5/market/candles?instId={symbol}&bar={bar}&limit={limit}'
+    url = f'{OKX_BASE}/api/v5/market/candles?instId={symbol}&bar={bar}&limit={limit + 1}'
     r   = requests.get(url, timeout=15)
     r.raise_for_status()
     d   = r.json()
     if d['code'] != '0' or not d.get('data'):
         return None
-    rows = list(reversed(d['data']))
+    finished = [c for c in d['data'] if len(c) < 9 or c[8] != '0'][:limit]   # newest-first
+    if not finished:
+        return None
+    rows = list(reversed(finished))
     return {
         'opens':   [float(c[1]) for c in rows],
         'highs':   [float(c[2]) for c in rows],

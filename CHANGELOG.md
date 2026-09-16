@@ -3,6 +3,102 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-09-16 — Entry decisions use finished candles, not the one still forming
+
+Asked after a week with no trades: is there a way to get more trades without taking
+more risk? One change survived measurement. It is this one, and it is not the one
+the quiet week points at.
+
+**Why the week was quiet — not a fault.** After ARB on 2026-09-09 the pipeline found
+14 more setups that passed score, reversal and volume. All 14 were blocked by
+`btc_regime_ok()`, which was bearish 74% of the week and still is on 09-16 (BTC
+75,974 below its 4H EMA-50 of 77,415, 4H RSI 39). Gaps of 7.7–9.7 days have happened
+four times before. The replay predicts no trade for that stretch, so silence is
+what a healthy worker would have produced; liveness after 09-11 (the last journal
+follow-up written) was not checkable from here and is left to the VPS log.
+
+**The defect.** `/market/candles` returns the candle still forming as its newest row
+(`confirm = '0'`), and the worker scored it on every scan, about every 85 s. So
+"green 30m candle, volume ≥ average" could be true a few minutes into a candle that
+then closed red — buying a bounce in the middle of a fall, which is the exact case
+`reversal_confirmed()` is there to refuse. The 2× volume gate had the mirror problem:
+2× average part-way through an hour is a far bigger burst than 2× over a whole
+hour. And `backtest.py`, which every threshold here was chosen from, has always
+worked on finished candles, so the live bot was not trading the rule that was
+measured. The dashboard had the same behaviour.
+
+**How it was measured.** A minute-by-minute replay of the entry pipeline using the
+real functions: `generate_signal`, `reversal_confirmed`, the volume gate, the 4h
+per-coin suppression (applied to every candidate, traded or not, as `run_scan`
+does), BTC regime, max 3 open, the SL breaker, the downside-correlation guard, 1
+trade per scan, ATR+structure exits stepped on 1m candles. The AI step is not
+modelled; stake is a fixed $100. Data is Binance 1m, because OKX is DNS-blocked
+on the development network; MON and HYPE are not on Binance, so 36 coins. The
+replay was checked against reality before being trusted: on 2026-09-09 its live mode
+fires LINK at 10:39 and ARB at 16:44, against real entries at 10:41 and 16:46. The
+script lives outside the repo.
+
+| window (82 days) | forming candle (old) | finished candles (new) |
+|---|---|---|
+| Sep–Dec 2025 | 16 trades, −10.45 | 29 trades, −10.85 |
+| Dec–Mar | 25, −11.76 | 33, −25.23 |
+| Mar–Jun 2026 | 25, −16.67 | 34, −0.49 |
+| Jun–Sep | 44, −23.67 | 53, −15.89 |
+| **total** | **110, −62.54** (−0.57/trade) | **149, −52.45** (−0.35/trade) |
+
+- **More trades in every window**, +35% overall. That part is structural and is the
+  reason for the change.
+- **Per trade: better in 3 of 4 windows, worse in Dec–Mar.** The gap is inside noise.
+  Read it as "not worse", not as an edge found.
+- **Every cell is negative.** This harness is harsher than `backtest.py` in absolute
+  terms (different data source, 30m rather than 1H reversal, suppression on blocked
+  candidates, 1m exit stepping), so only the side-by-side comparison is used from it.
+  It agrees with `backtest.py` on the standing caveat: the rules lose before the AI.
+- **LINK on 2026-09-09 (−$7.24 live) does not qualify on finished candles.**
+- **It would not have produced a trade last week.** On finished candles the same
+  week has 31 setups, all regime-blocked.
+
+**The BTC regime filter, measured again and kept.** Without it the replay takes
+283 trades (forming) / 291 (finished) instead of 110 / 149, and loses more in total
+either way: −83.58 vs −62.54, and −141.28 vs −52.45. Per window, on finished candles
+— the rule now running — it loses more in 3 of 4. On forming candles only 2 of 4:
+Sep–Dec 2025 went to +29.66 without it, and Jun–Sep was a near tie (−22.71 vs
+−23.67). 2026-08-15 found 0 of 4 profitable with it relaxed. In hindsight it did
+cost money last week (the 14 blocked setups would have made
+about +$7 at $100 each), which is what a filter that is right over a year looks like
+in its bad weeks.
+
+**What changed.**
+- `fetch_candles()` requests `limit + 1`, drops rows with `confirm = '0'`, and keeps
+  the newest `limit`, so callers still get full 100/50-candle windows. Its callers are
+  the scan's 1H/30m/4H reads and `btc_regime_ok()` — nothing else. Trade monitoring,
+  stops and trailing never read these candles; the ATR and support/resistance behind
+  the suggested exits now come from finished candles.
+- `app.js` `fetchOKXCandles()` does the same, so the dashboard shows what the worker
+  decides on. Visible effect: indicators and signal badges now change when a candle
+  closes rather than tick by tick; prices still come from the live ticker. Signal age
+  starts at the candle's **close** (`ts + 1h`), because that is when a label read from
+  a finished candle first exists — keeping the open would have aged every new signal
+  an hour at birth.
+- Verified with mocked OKX payloads in both languages: forming row dropped, boundary
+  with no forming row, missing `confirm` field kept, only-forming → `None` / throw
+  (the dashboard then keeps stale data), short listing history, full windows at
+  limit 50 and 100, and the signal-age walk-back. `parity_check.py` 0/0/0,
+  `node --check` clean. Not run against live OKX from here (blocked); the first VPS
+  scans are that check.
+
+**Live record, for context.** 27 closed trades, 15W, net −$5.55, average −0.01% per
+position — break-even. The two trades since the 45–60% sizing ($212 and $117) lost
+−$15.47, more than the previous 25 made (+$9.91). More trades multiply whatever
+the per-trade expectancy turns out to be; they do not change its sign.
+
+**Side note — CryptoCompare quota.** The shared news key had used 42 of its 100
+monthly calls by 09-16 (8 of them this investigation). If it runs dry, the AI simply
+sees no headlines, which the prompt treats as neutral.
+
+To revert: `git revert` this commit. There is no constant for it on purpose — a
+switch back to scoring an unfinished candle is not a tuning knob.
+
 ## 2026-09-11 — Performance panel opens with the page
 
 The panel had to be summoned with the header 📊 button on every load. It is the
