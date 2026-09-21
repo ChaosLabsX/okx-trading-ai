@@ -1388,9 +1388,9 @@ TRADE TAGS — for every actionable BUY, append this tag on its own line (valid 
 
 OPTION 3 PARAMETERS — base on coin volatility AND signal strength:
 
-Extreme volatility (PEPE, BONK, DOGE, MON, HYPE): partialTpPct 6-8, trailingCallbackPct 3-4, slPct 8-10
-High volatility (AVAX, SOL, SUI, INJ, TIA, ZEC, TAO, WLD): partialTpPct 4-6, trailingCallbackPct 2.5-3, slPct 7-8
-Medium-high (NEAR, APT, FET, LINK, SEI, UNI, AAVE, LTC): partialTpPct 3-5, trailingCallbackPct 2-2.5, slPct 6-7
+Extreme volatility (PEPE, BONK, SHIB, PENGU, DOGE, MON, HYPE): partialTpPct 6-8, trailingCallbackPct 3-4, slPct 8-10
+High volatility (AVAX, SOL, SUI, INJ, TIA, ZEC, TAO, WLD, RENDER, ORDI, ETHFI, EIGEN): partialTpPct 4-6, trailingCallbackPct 2.5-3, slPct 7-8
+Medium-high (NEAR, APT, FET, LINK, SEI, UNI, AAVE, LTC, ETC, FIL, ICP, CRV): partialTpPct 3-5, trailingCallbackPct 2-2.5, slPct 6-7
 
 Adjust partialTpPct upward for stronger signals:
   • Score ≥ 4.5: +1–2% (strong conviction — let winners run)

@@ -38,27 +38,71 @@ from datetime import datetime, timezone, timedelta
 import requests
 
 # ── Config ────────────────────────────────────────────────────────────────────
-# Coin universe — audited 2026-07-07 against live OKX data (see CHANGELOG).
-# Keep in sync with DEFAULT_SCANNER in config.js.
+# Coin universe — audited 2026-07-07 against live OKX data, widened 2026-09-21
+# (see CHANGELOG for both). Keep in sync with DEFAULT_SCANNER in config.js.
 # Criteria: OKX spot live + globally liquid + legitimate project + volatility
 # suitable for swing TA. Removed: RUNE/TON (delisted from OKX), FLOKI/WIF
 # (meme liquidity collapsed), STRK (unlock dilution), ATOM (structural decline).
+#
+# WIDENED 38 -> 67 on 2026-09-21, to raise trade frequency without changing what
+# a trade is. Every other frequency lever tested that day either added losing
+# trades or was indistinguishable from noise; this is the one that changes only
+# how many coins the same rule looks at. Replay of the live rule (finished
+# candles, every gate, AI not modelled, $100/trade), four 82-day windows:
+#
+#   universe           trades   net      per trade   worst drawdown
+#   38 (36 replayed)     150   -51.21    -0.34        64.3
+#   +29 new coins        204   -43.40    -0.21        58.2
+#
+# More trades in every window, per trade better in 3 of 4. Inside the combined
+# run the new coins trade no better than the old ones (-0.24 vs -0.22 per trade);
+# the point is breadth, not better coins. It does NOT end long droughts: the
+# longest gap per window stays 11-23 days either way, because those are the
+# stretches the BTC regime filter blocks everything, and that filter is what
+# keeps the loss small.
+#
+# Added from the pool the July audit set aside, with one exception kept out:
+# TRUMP (event-driven, manipulation-prone — a risk criterion, not a performance
+# one). SHIB/ORDI/ETC/ICP/PYTH were rejected in July on judgment ("fading
+# sector", "cohort covered"); the replay shows no sign they trade worse. The
+# measurable part of that audit — OKX liquidity — is now enforced live by
+# MIN_OKX_VOL_24H_USDT below instead of by hand, so a pair that goes thin on OKX
+# drops out of the scan by itself.
 SYMBOLS = [
     # Majors
     'BTC-USDT',  'ETH-USDT',  'BNB-USDT',  'SOL-USDT',  'XRP-USDT',
     'ADA-USDT',  'DOGE-USDT', 'TRX-USDT',  'LTC-USDT',  'BCH-USDT',
-    'XLM-USDT',
+    'XLM-USDT',  'ETC-USDT',
     # L1 / L2 / infrastructure
     'AVAX-USDT', 'SUI-USDT',  'NEAR-USDT', 'APT-USDT',  'TIA-USDT',
     'SEI-USDT',  'OP-USDT',   'ARB-USDT',  'DOT-USDT',  'HBAR-USDT',
-    'POL-USDT',  'MON-USDT',  'HYPE-USDT', 'ZEC-USDT',
-    # DeFi / AI
+    'POL-USDT',  'MON-USDT',  'HYPE-USDT', 'ZEC-USDT',  'ICP-USDT',
+    'FIL-USDT',  'ALGO-USDT', 'EGLD-USDT', 'STX-USDT',  'IMX-USDT',
+    'AR-USDT',   'CFX-USDT',  'THETA-USDT', 'ORDI-USDT',
+    # DeFi / AI / data
     'LINK-USDT', 'UNI-USDT',  'AAVE-USDT', 'LDO-USDT',  'ENA-USDT',
     'ONDO-USDT', 'JUP-USDT',  'INJ-USDT',  'FET-USDT',  'TAO-USDT',
-    'WLD-USDT',
+    'WLD-USDT',  'RENDER-USDT', 'GRT-USDT', 'CRV-USDT', 'PYTH-USDT',
+    'JTO-USDT',  'ETHFI-USDT', 'EIGEN-USDT', 'DYDX-USDT', 'ENS-USDT',
+    'COMP-USDT',
+    # Gaming / metaverse
+    'SAND-USDT', 'AXS-USDT',  'GALA-USDT', 'MANA-USDT', 'APE-USDT',
+    'CHZ-USDT',
     # Memes (high volume + volatility)
-    'PEPE-USDT', 'BONK-USDT',
+    'PEPE-USDT', 'BONK-USDT', 'SHIB-USDT', 'PENGU-USDT',
 ]
+
+# Liquidity floor, checked live against OKX each run (one /market/tickers call for
+# every spot pair). A symbol whose 24h OKX volume is below this — or that OKX does
+# not list at all — is not scanned, so it can never be traded. Coins with an open
+# trade are always scanned regardless, because the correlation guard needs their
+# candles. $1M/24h is the line the July audit drew by hand: it removed FLOKI
+# ($0.1M), WIF and ATOM ($0.4M) and STRK ($0.8M). Thin books print noisy,
+# manipulation-prone candles, and the replay behind the widening ran on Binance,
+# where these pairs are deeper than on OKX — this is what keeps that gap from
+# mattering. Fails open (scans everything) if OKX tickers cannot be fetched, like
+# the BTC regime check.
+MIN_OKX_VOL_24H_USDT = 1_000_000
 
 OKX_BASE           = 'https://www.okx.com'
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
@@ -426,6 +470,24 @@ def fetch_candles_window(symbol, start_ms, hours=24, bar='15m'):
         }
     except Exception as e:
         print(f'  [Journal] {symbol}: follow-up candle fetch failed: {e}')
+        return None
+
+
+def fetch_spot_volumes():
+    """
+    instId -> 24h volume in quote currency (USDT for every pair here) for all OKX
+    spot pairs, from one /market/tickers call. None if OKX cannot be reached, which
+    the caller treats as "scan everything" (fail open).
+    """
+    try:
+        r = requests.get(f'{OKX_BASE}/api/v5/market/tickers?instType=SPOT', timeout=15)
+        r.raise_for_status()
+        d = r.json()
+        if d.get('code') != '0' or not d.get('data'):
+            raise ValueError(f"code {d.get('code')}")
+        return {t['instId']: float(t.get('volCcy24h') or 0) for t in d['data']}
+    except Exception as e:
+        print(f'  [Liquidity] OKX tickers unavailable ({e}) — scanning every symbol this run')
         return None
 
 
@@ -2881,7 +2943,21 @@ def run_scan(cache, warm_up=False):
     # the ones that get filtered out of `candidates` further down.
     closes_by_symbol = {}
 
-    for symbol in SYMBOLS:
+    # Liquidity floor (see MIN_OKX_VOL_24H_USDT). Coins with an open trade are kept
+    # so the correlation guard still has their candles.
+    vols  = fetch_spot_volumes()
+    scan  = SYMBOLS
+    if vols is not None:
+        scan = [s for s in SYMBOLS if s in active_symbols or vols.get(s, 0) >= MIN_OKX_VOL_24H_USDT]
+        thin = [s for s in SYMBOLS if s not in scan]
+        if thin:
+            print(f'  [Liquidity] {len(thin)} of {len(SYMBOLS)} skipped, under '
+                  f'${MIN_OKX_VOL_24H_USDT / 1e6:g}M/24h on OKX: ' +
+                  ', '.join(f'{s.replace("-USDT", "")} '
+                            f'({"not listed" if s not in vols else f"${vols[s] / 1e6:.2f}M"})'
+                            for s in thin))
+
+    for symbol in scan:
         try:
             candle_data = fetch_candles(symbol)
             ticker      = fetch_ticker(symbol)

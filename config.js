@@ -62,21 +62,32 @@ const CONFIG = {
 
   // Default coins to watch on OKX — audited 2026-07-07 against live OKX data.
   // Keep in sync with SYMBOLS in signal_checker.py (the worker's trade universe).
+  // Same 67 as SYMBOLS in signal_checker.py (widened 38 -> 67 on 2026-09-21).
+  // The worker also skips any pair under $1M/24h on OKX at scan time; the
+  // dashboard still shows those, so a thin coin can read STRONG BUY here and
+  // never be traded — the same "labelled, not traded" pattern as the gates.
   DEFAULT_SCANNER: [
     // Majors
     'BTC-USDT',  'ETH-USDT',  'BNB-USDT',  'SOL-USDT',  'XRP-USDT',
     'ADA-USDT',  'DOGE-USDT', 'TRX-USDT',  'LTC-USDT',  'BCH-USDT',
-    'XLM-USDT',
+    'XLM-USDT',  'ETC-USDT',
     // L1 / L2 / infrastructure
     'AVAX-USDT', 'SUI-USDT',  'NEAR-USDT', 'APT-USDT',  'TIA-USDT',
     'SEI-USDT',  'OP-USDT',   'ARB-USDT',  'DOT-USDT',  'HBAR-USDT',
-    'POL-USDT',  'MON-USDT',  'HYPE-USDT', 'ZEC-USDT',
-    // DeFi / AI
+    'POL-USDT',  'MON-USDT',  'HYPE-USDT', 'ZEC-USDT',  'ICP-USDT',
+    'FIL-USDT',  'ALGO-USDT', 'EGLD-USDT', 'STX-USDT',  'IMX-USDT',
+    'AR-USDT',   'CFX-USDT',  'THETA-USDT', 'ORDI-USDT',
+    // DeFi / AI / data
     'LINK-USDT', 'UNI-USDT',  'AAVE-USDT', 'LDO-USDT',  'ENA-USDT',
     'ONDO-USDT', 'JUP-USDT',  'INJ-USDT',  'FET-USDT',  'TAO-USDT',
-    'WLD-USDT',
+    'WLD-USDT',  'RENDER-USDT', 'GRT-USDT', 'CRV-USDT', 'PYTH-USDT',
+    'JTO-USDT',  'ETHFI-USDT', 'EIGEN-USDT', 'DYDX-USDT', 'ENS-USDT',
+    'COMP-USDT',
+    // Gaming / metaverse
+    'SAND-USDT', 'AXS-USDT',  'GALA-USDT', 'MANA-USDT', 'APE-USDT',
+    'CHZ-USDT',
     // Memes (high volume + volatility)
-    'PEPE-USDT', 'BONK-USDT',
+    'PEPE-USDT', 'BONK-USDT', 'SHIB-USDT', 'PENGU-USDT',
   ],
 
   // Fixed values — intentionally removed from the Settings UI (single-user app):

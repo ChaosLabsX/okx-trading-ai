@@ -29,7 +29,7 @@
 │  (index.html/app.js) │                              │     signal_checker.py    │
 │                      │                              │  (~4 min, then relaunch) │
 │  • Signal scanner    │                              │                          │
-│  • AI Advisor        │                              │  • scan 38 coins / 60s   │
+│  • AI Advisor        │                              │  • scan 67 coins / 60s   │
 │  • Manual Option 3   │                              │  • auto-place Option 3   │
 │    trade execution   │                              │  • monitor open trades   │
 │  • News + sentiment  │                              │  • Telegram alerts       │

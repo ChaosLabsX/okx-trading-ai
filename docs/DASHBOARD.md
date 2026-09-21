@@ -14,7 +14,7 @@ A single-page vanilla-JS app, installable as a PWA. No build step — `index.htm
 
 ### 1. Signal Scanner (primary panel)
 
-- Watches the 38 symbols in `CONFIG.DEFAULT_SCANNER` (user-editable, persisted as `scanner` in localStorage).
+- Watches the 67 symbols in `CONFIG.DEFAULT_SCANNER` (user-editable, persisted as `scanner` in localStorage). The worker additionally skips pairs under $1M/24h on OKX at scan time, so a thin coin can show a signal here that is never traded.
 - `fetchAllData()` pulls, per symbol: ticker + 1H + 4H + 30m candles — batched 2 symbols at a time with 250 ms gaps to avoid OKX 429s. Funding rate + open interest fetched separately in a non-blocking loop.
 - **Finished candles only** (since 2026-09-16): `fetchOKXCandles()` asks for `CANDLE_LIMIT + 1` rows and drops the one OKX marks as still forming, matching `fetch_candles()` in the worker. Indicators and signals therefore change when a candle closes, not tick by tick — the dashboard shows what the worker decides on. Prices come from the ticker and stay live.
 - `computeIndicators()` produces: RSI(14) 1H + previous, RSI 4H, MACD (12/26/9), Bollinger %B (20, 2σ), volume ratio (last finished candle vs 20-bar avg), 30m reversal inputs, and the **signal**.

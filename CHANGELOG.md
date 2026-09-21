@@ -3,6 +3,85 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-09-21 (later) — 38 → 67 coins, and a live OKX liquidity floor
+
+Asked after 12 days without a trade: more trades, without giving up the quality of
+the entries. Seventeen changes were measured; one survived.
+
+**Why 12 days.** Replaying the live rule (finished candles) from Sep 9: the week to
+Sep 16 produced 33 setups, **all blocked by the BTC regime filter**. From ~Sep 17
+BTC rallied (81,425 vs a 4H EMA-50 of 79,037, RSI 69 on 09-21) and a rally has few
+oversold dips, so almost nothing qualified. The replay's one trade in that stretch
+is SOL on 09-20 03:30 UTC (score 4.5, +$1.24); the live bot did not take it, and
+whether that was an AI skip or an OKX-vs-Binance difference needs the VPS log. The
+worker was also down from 09-20 13:15 for ~9 hours (the sign-out bug fixed earlier
+today).
+
+**How it was measured.** The same minute-level replay as 2026-09-16, now of the rule
+actually running: finished candles, every gate, 4h suppression, correlation guard,
+1 trade/scan, ATR+structure exits; AI not modelled; $100/trade; Binance 1m data;
+four 82-day windows Sep 2025 – Sep 2026 (the newest extended to 09-21). Baseline:
+**150 trades, −51.21, −0.34/trade, PF 0.78.**
+
+| change | trades | net | verdict |
+|---|---|---|---|
+| **+29 coins** (below) | **204** | **−43.40** | **adopted** — more trades in 4/4 windows, per trade better in 3/4, drawdown 64.3 → 58.2 |
+| no BTC regime filter | 293 | −136.74 | rejected — the filter is what keeps the loss small |
+| regime RSI cut 45 → 40 / 35 | 204 / 242 | −64.45 / −74.03 | rejected |
+| in a bear regime, allow score ≥ 5.5 / ≥ 6.5 | 265 / 197 | −144.89 / −127.68 | rejected — deeper oversold in a falling market is a falling knife |
+| in a bear regime, allow vol ≥ 3× | 256 | −62.17 | rejected — sign flips window to window |
+| in a bear regime, allow when BTC 1H > EMA20 / RSI rising | 157 / 212 | −52.87 / −58.08 | rejected — no real change / noise |
+| 4h cooldown only after a trade | 153 | −51.68 | no effect |
+| correlation cap 0.50 → 0.70 / off | 175 / 182 | −70.44 / −69.37 | rejected — the guard is doing its job |
+| 2 trades per scan (second one correlation-checked) | 155 | −48.51 | too small to matter |
+| score ≥ 4.0 | 169 | −41.40 | rejected — better total, but worse in 2 of 4 windows |
+| volume gate 2.0× → 1.75× / 1.5× | 158 / 162 | −62.82 / −71.85 | rejected — the gate holds on finished candles too |
+| pullback-in-uptrend second setup (1H RSI ≤ X, 4H uptrend) | 160–352 | −31.52 … −87.95 | rejected — see below |
+
+The pullback setup is the idea that *should* work — a second entry for the rallies
+where the dip engine goes quiet — and at RSI ≤ 40 it looked good (312 trades,
+−39.77). The neighbourhood killed it (combined with the dip engine): ≤ 30 −49,
+≤ 33 −32, ≤ 35 −49, ≤ 38 −80, ≤ 40 −40, ≤ 42 −88. A real effect does not invert
+across two RSI points; that is the same
+signature as the RSI ≤ 25 / ≤ 28 result rejected on 2026-09-03. Not shipped.
+
+**What changed.**
+- **`SYMBOLS` 38 → 67** (and `DEFAULT_SCANNER` in `config.js`, identical list and
+  order): ETC, ICP, FIL, ALGO, EGLD, STX, IMX, AR, CFX, THETA, ORDI, RENDER, GRT, CRV,
+  PYTH, JTO, ETHFI, EIGEN, DYDX, ENS, COMP, SAND, AXS, GALA, MANA, APE, CHZ, SHIB,
+  PENGU. The pool was chosen for liquidity and listing before any result was seen,
+  not picked by P&L. Inside the combined run (measured with TRUMP still in), the new
+  coins trade no better than the old ones (−0.24 vs −0.22 per trade); 12 of the 27
+  that traded are net positive, and the best, ORDI, is +18 on its own — so no
+  coin-level result here is signal. The gain is breadth, not better coins.
+- **TRUMP kept out**, per the July audit: event-driven and manipulation-prone, a risk
+  criterion. The July audit also rejected SHIB (cohort covered) and ORDI/ETC/ICP/PYTH
+  ("fading sectors"). Those were judgment calls, and the replay shows no sign they
+  trade worse, so they are in — with the audit's *measurable* criterion now enforced
+  by code instead:
+- **`MIN_OKX_VOL_24H_USDT = 1_000_000`.** One `/market/tickers` call per run; any
+  symbol under $1M of 24h OKX volume, or not listed on OKX, is not scanned, so it
+  cannot be traded. That is the line the July audit drew by hand (it removed FLOKI
+  $0.1M, WIF/ATOM $0.4M, STRK $0.8M). It matters more now because the replay ran on
+  Binance, where these pairs are deeper than on OKX. Coins with an open trade are
+  always scanned (the correlation guard needs them). Fails open if the call fails.
+  Every scan logs what it skipped and why.
+- Dashboard: the saved scanner list merges the 29 new coins in for returning users
+  (verified: custom order kept, removed coins dropped). It does not apply the
+  liquidity floor, so a thin coin can show a signal there that the worker never
+  trades. Manual-advisor volatility tiers name a few of the new coins.
+
+**What it does not do.** It does not end droughts. The longest gap per window stays
+11–23 days (vs 12–23 before) because those stretches are the BTC filter blocking
+everything, and the table above is the evidence for keeping that filter. The median
+gap between trades falls from 1.0 to 0.7 days. And every row above is negative
+before the AI: more trades multiply the per-trade expectancy, they do not change
+its sign. The live record, with the AI, is 27 trades at −0.01% per position.
+
+**Cost.** Scans go from ~152 to ~270 OKX requests; a scan now takes about a minute,
+so each coin is looked at every ~2 minutes instead of ~1.5. Decisions only change at
+30-minute candle closes, so this costs seconds of entry timing, not setups.
+
 ## 2026-09-21 — The worker no longer dies when you sign out of the VPS
 
 The watchdog reported `OKX STILL SILENT · no log for 550m · task=Ready · py=0`:
