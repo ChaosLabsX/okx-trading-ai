@@ -36,15 +36,30 @@ Write-Host "  venv ready ($((& $Py --version)))" -ForegroundColor Green
 # 3. logs dir
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "logs") | Out-Null
 
-# 4. Scheduled task: launch the continuous wrapper at logon (the VPS auto-logs
-#    in, same mechanism the Forex engine relies on), restart it if it ever dies,
-#    and never time it out - the wrapper is meant to run forever.
+# 4. Scheduled task: run the continuous wrapper whether or not anyone is logged
+#    on, start it at boot, restart it if it ever dies, and never time it out -
+#    the wrapper is meant to run forever.
+#
+#    LogonType S4U, NOT Interactive. This was Interactive + AtLogOn until
+#    2026-09-21, which put the worker INSIDE the RDP session: signing out tore
+#    the session down and took the runner with it, and with logon as the only
+#    trigger it stayed dead until someone signed back in. That happened twice -
+#    ~5 hours in early September, then 550+ minutes on 2026-09-21, both caught
+#    only by watchdog-okx.ps1 ("task=Ready - py=0"). S4U runs the same account
+#    in its own non-interactive session (session 0) with no stored password;
+#    outbound HTTPS to OKX / Telegram / Supabase is unaffected. The cost is that
+#    there is no console window any more - the log file is the only view.
+#
+#    AtStartup brings it back after a reboot without anyone signing in. AtLogOn
+#    stays as a second chance; MultipleInstances IgnoreNew makes it a no-op while
+#    the task is already running, so a logon can never start a second runner
+#    (two runners = duplicate trades).
 $runner   = Join-Path $Root "infra\run-okx.ps1"
 $action   = New-ScheduledTaskAction -Execute "powershell.exe" `
               -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runner`""
-$trigger  = New-ScheduledTaskTrigger -AtLogOn
+$trigger  = @((New-ScheduledTaskTrigger -AtStartup), (New-ScheduledTaskTrigger -AtLogOn))
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
-              -LogonType Interactive -RunLevel Highest
+              -LogonType S4U -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet `
               -MultipleInstances IgnoreNew `
               -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
@@ -52,7 +67,7 @@ $settings = New-ScheduledTaskSettingsSet `
               -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName "OKX-SignalChecker" -Action $action -Trigger $trigger `
     -Principal $principal -Settings $settings -Force | Out-Null
-Write-Host "  task 'OKX-SignalChecker' registered" -ForegroundColor Green
+Write-Host "  task 'OKX-SignalChecker' registered (runs logged on or not, starts at boot)" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "Done. Start it now with:" -ForegroundColor Cyan

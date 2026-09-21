@@ -3,6 +3,36 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-09-21 — The worker no longer dies when you sign out of the VPS
+
+The watchdog reported `OKX STILL SILENT · no log for 550m · task=Ready · py=0`:
+task idle, no worker process, log frozen for over nine hours. Second time. The
+first was ~5 hours in early September, with the same signature, and the fix was
+identified then and left unapplied.
+
+**Cause.** `bootstrap-okx.ps1` registered `OKX-SignalChecker` as `LogonType
+Interactive` with a single `AtLogOn` trigger. Interactive means the runner lives
+inside the RDP login session: signing out destroys the session and the runner
+with it, and with logon as the only trigger nothing starts it again until
+someone signs back in. A reboot without auto-logon ends the same way. The
+task's restart-on-failure setting cannot help, because a killed session is not
+a task failure.
+
+**Fix.** `LogonType S4U` ("run whether user is logged on or not", no stored
+password), plus an `AtStartup` trigger so a reboot brings it back unattended.
+`AtLogOn` stays as a second chance; `MultipleInstances IgnoreNew` makes it a no-op
+while the task is running, so a logon cannot start a second runner. An existing
+task is converted in place with `Set-ScheduledTask` (commands in
+`infra/VPS-SETUP.md`) or by re-running the bootstrap.
+
+- **Visible difference:** there is no console window any more. The worker runs
+  in session 0; the log is the only view. `VPS-SETUP.md` now says how to confirm
+  it is alive (task `Running` / `S4U`, python in session 0).
+- **Nothing was at risk during the outage.** No trades were open, and stop-losses
+  sit on OKX server-side anyway. It cost only missed scans.
+- **Not in the repo, still:** `watchdog-okx.ps1` (the thing that caught this, both
+  times) and the VPS's locally modified `run-okx.ps1` exist only on that disk.
+
 ## 2026-09-16 — Entry decisions use finished candles, not the one still forming
 
 Asked after a week with no trades: is there a way to get more trades without taking

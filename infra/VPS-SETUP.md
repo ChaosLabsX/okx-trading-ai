@@ -41,6 +41,18 @@ Get-Content C:\OKXAI\logs\okx-signal-checker.log -Tail 25 -Wait
 You want to see scans running and, within a few minutes, a Telegram message
 from the OKX bot. (Ctrl+C stops the `-Wait` tail; it does not stop the worker.)
 
+**There is no window to look for.** The task runs as `S4U` ("run whether user is
+logged on or not"), in its own session, so nothing appears on the desktop and
+signing out of RDP does not stop it. The log is the only view. To check it is
+alive:
+```powershell
+Get-ScheduledTask -TaskName "OKX-SignalChecker" | Select-Object State, @{n='RunsAs';e={$_.Principal.LogonType}}
+Get-Process python -EA SilentlyContinue | ? Path -like 'C:\OKXAI\*' | Select-Object Id, SessionId
+```
+`Running` / `S4U`, and a python process in **session 0**, means it is detached from
+your login. A non-zero session id means it is living inside an RDP session and
+will die when that session signs out.
+
 **5. Nothing to retire.** The old triggers are already gone: the workflow file
 has been deleted from the repo. If a **cron-job.org** job still exists in your
 account, delete it and revoke its GitHub PAT - it fires at nothing now, but it
@@ -72,6 +84,27 @@ code, not just that `git pull` printed something:
 ```powershell
 Get-Content C:\OKXAI\logs\okx-signal-checker.log -Tail 40
 ```
+
+## "OKX STILL SILENT · task=Ready · py=0"
+
+That is `watchdog-okx.ps1` reporting that the log has stopped growing, the task is
+idle and no worker process exists. Before 2026-09-21 the task was registered
+`Interactive` + at-logon only, so signing out of RDP (or a reboot without
+auto-logon) killed the worker and nothing restarted it. It happened twice.
+
+A task registered by an older `bootstrap-okx.ps1` still has that setup. Convert it
+in place (elevated PowerShell, one time), then start it:
+```powershell
+Stop-ScheduledTask -TaskName "OKX-SignalChecker"
+Get-Process python -EA SilentlyContinue | ? Path -like 'C:\OKXAI\*' | Stop-Process -Force
+$p = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType S4U -RunLevel Highest
+$t = @((New-ScheduledTaskTrigger -AtStartup), (New-ScheduledTaskTrigger -AtLogOn))
+Set-ScheduledTask -TaskName "OKX-SignalChecker" -Principal $p -Trigger $t
+Start-ScheduledTask -TaskName "OKX-SignalChecker"
+```
+Re-running `bootstrap-okx.ps1` does the same thing. The stop-and-kill first
+matters: a logon may already have started a runner under the old setup, and two
+runners at once means duplicate trades.
 
 **Going back to GitHub Actions** is no longer a toggle - the workflow file was
 deleted. Recover it with
