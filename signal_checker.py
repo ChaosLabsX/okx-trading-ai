@@ -122,7 +122,19 @@ CLAUDE_API_KEY     = os.environ.get('CLAUDE_API_KEY', '')
 # and this repo has already been bitten by exactly that (the system prompt said
 # "slPct 2-12" while the constant said 8; see CHANGELOG 2026-07-29). Change the
 # model here and nothing else needs touching.
-CLAUDE_MODEL       = 'claude-opus-5'
+#
+# Opus 5 -> Opus 5.5 on 2026-09-28: the successor in the same line, at 20% lower
+# prices per token. Every call goes through claude_request() below, so this line
+# and CLAUDE_EFFORT are the whole switch; ai_check.py tests both against the live
+# API with the bot's own key and exact request shape.
+CLAUDE_MODEL       = 'claude-opus-5-5'
+# How hard the model thinks. PINNED, not left to the API default, because the
+# default is per model: 'high' on Opus 5, 'medium' on Opus 5.5. A model swap would
+# otherwise change the depth of every trade decision without a line of code saying
+# so. 'high' on 5.5 thinks at least as much as Opus 5 did at 'high' (by Anthropic's
+# testing, more per turn), which is the right side to err on for a decision that
+# spends up to 60% of the balance and happens a few times a week.
+CLAUDE_EFFORT      = 'high'
 
 # CryptoCompare News — free read-only key (news/polling scope only; same key ships
 # publicly in config.js). Gives the AI each candidate coin's latest headlines so it
@@ -1070,6 +1082,73 @@ def _fetch_usdt_balance():
 
 
 # ── Claude — AI trade advisor (model: CLAUDE_MODEL) ──────────────────────────
+# Beta header for server-side refusal fallback (`fallbacks: "default"`). Opus 5.5
+# runs a wider set of safety classifiers than Opus 5 did. A false positive on a
+# trading prompt is unlikely, but without this it would come back as an empty
+# answer, i.e. a silent skip; with it, the API re-runs the same request on the
+# model Anthropic recommends for that refusal category and returns that answer.
+CLAUDE_FALLBACK_BETA = 'server-side-fallback-2026-07-01'
+
+
+def claude_request(system, user_msg, max_tokens, timeout, output_format=None):
+    """
+    One Messages API call with the settings every AI call in this worker shares:
+    CLAUDE_MODEL, adaptive thinking at CLAUDE_EFFORT, server-side refusal fallback.
+    ai_trade_params, learn.py and ai_check.py all go through here, so the check
+    tests exactly the request production sends.
+
+    Returns (text, info). `text` is the answer ('' when there is none). `info` has
+    stop_reason, the model that actually answered (differs from CLAUDE_MODEL only
+    after a fallback) and the refusal category when the whole chain declined, so
+    a caller can say WHY it got nothing instead of guessing. Raises on HTTP or
+    network errors, exactly as the inline calls it replaced did.
+    """
+    output_config = {'effort': CLAUDE_EFFORT}
+    if output_format:
+        output_config['format'] = output_format
+    r = requests.post(
+        'https://api.anthropic.com/v1/messages',
+        headers={
+            'x-api-key':         CLAUDE_API_KEY,
+            'anthropic-version': '2023-06-01',
+            'anthropic-beta':    CLAUDE_FALLBACK_BETA,
+            'content-type':      'application/json',
+        },
+        json={
+            'model':         CLAUDE_MODEL,
+            'max_tokens':    max_tokens,
+            'thinking':      {'type': 'adaptive'},
+            'output_config': output_config,
+            'fallbacks':     'default',
+            'system':        system,
+            'messages':      [{'role': 'user', 'content': user_msg}],
+        },
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    d = r.json()
+    stop  = d.get('stop_reason')
+    usage = d.get('usage') or {}
+    info = {'stop_reason': stop, 'model': d.get('model') or CLAUDE_MODEL, 'refusal': None,
+            'usage': usage,
+            # The documented served-by signal. Comparing model names instead would
+            # false-alarm on any naming variant, and sticky-routed fallback turns
+            # carry no `fallback` content block to look for.
+            'fallback': any(it.get('type') == 'fallback_message'
+                            for it in usage.get('iterations') or [])}
+    if stop == 'refusal':
+        # Checked BEFORE reading content: after a refusal, content is empty or a
+        # partial answer that must not be acted on.
+        info['refusal'] = (d.get('stop_details') or {}).get('category') or 'unspecified'
+        return '', info
+    # Read by block type, never by position: thinking blocks come first (empty text
+    # by default), and after a fallback a `fallback` marker precedes the answer.
+    # Non-streaming fallbacks drop the declined partial, so the first text block is
+    # the served answer.
+    text = next((b.get('text', '') for b in d.get('content') or [] if b.get('type') == 'text'), '')
+    return text.strip(), info
+
+
 def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data, bb_data, vol_ratio,
                     extra=None, evidence_out=None):
     """
@@ -1299,40 +1378,31 @@ USDT available: ${usdt_balance:.2f}{struct_s}{news_s}{history_s}{skips_s}{learne
 Place this trade?"""
 
     try:
-        r = requests.post(
-            'https://api.anthropic.com/v1/messages',
-            headers={
-                'x-api-key':         CLAUDE_API_KEY,
-                'anthropic-version': '2023-06-01',
-                'content-type':      'application/json',
-            },
-            json={
-                'model':      CLAUDE_MODEL,
-                # Adaptive thinking: Opus reasons internally before answering.
-                # Thinking tokens count against max_tokens, so leave headroom.
-                # Raised 2000 -> 8000: the answer is one line, but at 2000 the
-                # reasoning could consume the budget and return no text block —
-                # the exact failure the handler below was written for.
-                'max_tokens': 8000,
-                'thinking':   {'type': 'adaptive'},
-                'system':     system,
-                'messages':   [{'role': 'user', 'content': user_msg}],
-            },
-            timeout=60,
-        )
-        r.raise_for_status()
-        # With thinking enabled the first content block can be a thinking block —
-        # pick the text block explicitly instead of assuming content[0].
-        blocks = r.json().get('content', [])
-        text   = next((b.get('text', '') for b in blocks if b.get('type') == 'text'), '').strip()
+        # Thinking counts against max_tokens, and the answer is one line, so nearly
+        # all of this is thinking headroom. 2000 -> 8000 once already, when the
+        # reasoning used the whole budget and left no answer; 8000 -> 16000 with
+        # Opus 5.5, which thinks more per turn than Opus 5 at the same effort.
+        # The timeout doubles for the same reason. Nothing here is latency-bound:
+        # a few seconds on a 30-minute-candle entry costs nothing.
+        text, info = claude_request(system, user_msg, max_tokens=16000, timeout=120)
+        if evidence_out is not None:
+            # Which model actually decided — a fallback would otherwise be recorded
+            # as CLAUDE_MODEL — and at what effort, stored with the trade or skip.
+            evidence_out.update({'model': info['model'], 'effort': CLAUDE_EFFORT})
+        if info['fallback']:
+            print(f'  [Claude] {coin}: {CLAUDE_MODEL} declined, answered by fallback {info["model"]}')
+        if info['refusal']:
+            print(f'  [Claude] {coin}: declined by safety classifier ({info["refusal"]}), '
+                  f'fallback too — skipping')
+            return None, f'AI declined the request (refusal: {info["refusal"]})'
         if not text:
             # Must stay a 2-tuple: the caller does `params, skip_reason = ...`, so a
             # bare `return None` raised TypeError and killed the whole run
             # (before monitor_option3_trades), leaving open trades untracked that
-            # cycle. Most likely trigger: adaptive thinking consuming max_tokens and
-            # leaving no text block. Treat it as a skip, not a crash.
-            print(f'  [Claude] {coin}: no text block in response — skipping')
-            return None, 'no text block in AI response (thinking may have consumed max_tokens)'
+            # cycle. Most likely trigger: thinking consuming max_tokens and leaving
+            # no text block (stop_reason 'max_tokens'). Treat it as a skip, not a crash.
+            print(f'  [Claude] {coin}: no text block (stop_reason {info["stop_reason"]}) — skipping')
+            return None, f'no text block in AI response (stop_reason {info["stop_reason"]})'
         print(f'  [Claude] {coin}: {text[:150]}')
 
         # Parse TRADE tag
@@ -1343,7 +1413,7 @@ Place this trade?"""
             if amount < 10:
                 print(f'  [Claude] Amount too small (${amount:.2f}) — skipping')
                 return None, f'AI sized it at ${amount:.2f}, below the $10 minimum'
-            # Safety cap: performance-weighted (30% / 22% / 15% by profit factor)
+            # Safety cap: performance-weighted (the CAP_PF_* ladder, 45-60%)
             cap = usdt_balance * cap_pct
             if amount > cap:
                 print(f'  [Claude] Amount ${amount:.2f} exceeds {cap_pct * 100:.0f}% cap — capped at ${cap:.2f}')

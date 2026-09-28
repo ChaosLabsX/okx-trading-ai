@@ -47,8 +47,11 @@ LEARN_TRIGGER_NEW_TRADES = 25
 LEARN_MIN_COHORT = 25
 
 # Headroom for adaptive thinking + the structured result. This pass returns more
-# than the per-trade advisor (now 8000), so it gets more room again.
-LEARN_MAX_TOKENS = 12000
+# than the per-trade advisor (16000), so it gets more room again. 12000 -> 24000
+# with Opus 5.5, which thinks more per turn than Opus 5 at the same effort; running
+# out here does not crash anything, but it throws the analysis away ("recording
+# stats only") and the trigger still advances, so the next try is 25 trades later.
+LEARN_MAX_TOKENS = 24000
 
 # Where the learning pass sends its findings.
 #
@@ -243,7 +246,7 @@ def _ask_opus(cohorts, params):
     """Hand the pre-computed cohorts to Opus for judgement only. Returns
     {summary, learned_block, proposals} or None on any failure (the caller then
     still records the run so the trigger advances)."""
-    from signal_checker import CLAUDE_API_KEY, CLAUDE_MODEL
+    from signal_checker import CLAUDE_API_KEY, claude_request
     if not CLAUDE_API_KEY:
         print('  [Learn] CLAUDE_API_KEY not set — recording stats without analysis')
         return None
@@ -327,30 +330,17 @@ than proposing an exit change that cannot fix it."""
             + '\n\nAnalyze and return your structured result.')
 
     try:
-        r = requests.post(
-            'https://api.anthropic.com/v1/messages',
-            headers={
-                'x-api-key': CLAUDE_API_KEY,
-                'anthropic-version': '2023-06-01',
-                'content-type': 'application/json',
-            },
-            json={
-                'model': CLAUDE_MODEL,
-                'max_tokens': LEARN_MAX_TOKENS,
-                'thinking': {'type': 'adaptive'},
-                'system': system,
-                'messages': [{'role': 'user', 'content': user}],
-                'output_config': {'format': {'type': 'json_schema', 'schema': schema}},
-            },
-            timeout=120,
-        )
-        r.raise_for_status()
-        blocks = r.json().get('content', [])
-        # With thinking enabled the first block may be a thinking block — take the
-        # text block explicitly, and never assume it is present.
-        text = next((b.get('text', '') for b in blocks if b.get('type') == 'text'), '').strip()
+        # Same model, effort and refusal fallback as the trade advisor, via the
+        # shared helper. The timeout grows with the token budget; this pass runs
+        # at most once a run and roughly monthly, so a long call only ends that
+        # worker run a little early (the runner relaunches it at once).
+        text, info = claude_request(system, user, max_tokens=LEARN_MAX_TOKENS, timeout=300,
+                                    output_format={'type': 'json_schema', 'schema': schema})
+        if info['refusal']:
+            print(f"  [Learn] analysis declined (refusal: {info['refusal']}) — recording stats only")
+            return None
         if not text:
-            print('  [Learn] no text block from Claude (thinking may have consumed max_tokens) — recording stats only')
+            print(f"  [Learn] no text block from Claude (stop_reason {info['stop_reason']}) — recording stats only")
             return None
         return json.loads(text)
     except Exception as e:

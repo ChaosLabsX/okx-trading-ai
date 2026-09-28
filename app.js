@@ -1312,9 +1312,11 @@ async function runAiAnalysis() {
       },
       body: JSON.stringify({
         model: CONFIG.CLAUDE_MODEL,
-        // 1800 was sized for Sonnet with no thinking. Opus 5 thinks by default and
-        // thinking counts against this budget, so the analysis would truncate.
-        max_tokens: 8000,
+        // 1800 was sized for Sonnet with no thinking. Opus 5.5 always thinks and
+        // thinking counts against this budget, so the analysis would truncate; it
+        // also thinks more per turn than Opus 5 did, hence 8000 -> 16000.
+        max_tokens: 16000,
+        output_config: { effort: CONFIG.CLAUDE_EFFORT },
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
       }),
@@ -1326,7 +1328,17 @@ async function runAiAnalysis() {
     }
 
     const data = await res.json();
-    renderAiResponse(data.content?.[0]?.text ?? '(No response)');
+    // A classifier decline is an HTTP 200 with stop_reason 'refusal', so it has to be
+    // caught here or it would render as an empty answer. No server-side fallback on
+    // this path (unlike the worker): it is a manual click, and saying so is enough.
+    if (data.stop_reason === 'refusal') {
+      throw new Error(`the model declined this request (${data.stop_details?.category || 'refusal'}) — try again`);
+    }
+    // Read text blocks by type. The first block is the model's thinking, whose
+    // text is empty by default, so the old `content[0].text` rendered
+    // "(No response)" on every thinking model, Opus 5 included.
+    const answer = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n\n').trim();
+    renderAiResponse(answer || `(No response — stop_reason ${data.stop_reason || 'unknown'})`);
   } catch (err) {
     // Ensure state is always restored even if Claude call fails
     state.usdtBalance = prevUsdtBal;

@@ -3,6 +3,68 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-09-28 — Claude Opus 5 → Opus 5.5, effort pinned, refusals handled
+
+Owner's decision. Opus 5.5 is the successor to Opus 5 in the same line, at 20% lower
+prices per token ($4 / $20 per million, against $5 / $25). At a few decisions a week
+the saving is a few dollars a year; the reason is staying on the current model, not
+cost. Whether it *decides* better cannot be shown on this bot: 27 closed trades is far
+too few to tell two models of this class apart, and the mechanical rules decide most
+of the outcome anyway.
+
+**Effort is now pinned (`CLAUDE_EFFORT = 'high'`).** The API default is per model:
+`high` on Opus 5, `medium` on Opus 5.5. Nothing in the code set it, so a model swap
+alone would have changed how hard every trade decision is thought through without a
+line saying so. A correction to how this was pitched beforehand: the owner was told
+the unpinned default would be "a quiet downgrade". Anthropic's own testing says Opus
+5.5 at `medium` already matches or beats Opus 5 at `high` on analysis work, so
+`medium` probably was not a downgrade. `high` is kept anyway, as the side to err on for
+a decision that commits up to 60% of the balance a few times a week. It thinks more
+per turn than Opus 5 did, so it costs a little more per call and takes a little
+longer — cents and seconds.
+
+**What changed.**
+- **One shared request.** `claude_request()` in `signal_checker.py` now builds every
+  worker AI call: model, adaptive thinking, effort, refusal fallback, headers. The
+  trade advisor and `learn.py` both use it, so the two can no longer drift apart,
+  and the new check script tests exactly what production sends.
+- **Headroom for the extra thinking.** Thinking counts against `max_tokens`, and
+  running out returns no answer (a skip, or a lost learning pass). Trade advisor
+  8000 → 16000 tokens and 60 → 120 s; learning pass 12000 → 24000 and 120 → 300 s;
+  dashboard advisor 8000 → 16000.
+- **Refusals handled.** Opus 5.5 runs a wider set of safety classifiers than Opus 5
+  (biology and reasoning-extraction join cyber). A decline is an HTTP 200 with
+  `stop_reason: "refusal"` and no answer, which the old code would have logged as
+  "thinking may have consumed max_tokens". Now: the worker opts into server-side
+  fallback (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`), so a
+  false positive is re-run on the model Anthropic recommends for that category; if
+  the whole chain declines, the skip is logged as a refusal with its category. The
+  model that actually answered and the effort are stored in each trade's and skip's
+  `evidence`, so a fallback decision is not recorded as an Opus 5.5 one. A trading
+  prompt tripping these is unlikely; this is so it can never be silent.
+- **`ai_check.py` (new).** Run on the VPS after changing the model or effort. Two short
+  real calls (~1 cent) with the key from `.env`, through `claude_request()`: the trade
+  advisor shape, read by the same SKIP parser, and the learning pass's structured-JSON
+  shape. Prints PASS/FAIL with the API's own error text. It exists because a failing AI
+  call does not crash the worker — it turns every trade into a logged skip, which
+  looks exactly like a quiet market.
+
+**Fixed, found by this work: the dashboard's AI Advisor showed "(No response)".** It
+read `content[0].text`. On every thinking model, Opus 5 included, the first content
+block is the thinking block (empty text by default), so any answer the model thought
+about first rendered as "(No response)". It now reads all `text` blocks by type,
+shows a refusal as a clear error, and says why when an answer is empty. The manual
+advisor has no server-side fallback (it is a click, and the error says try again).
+
+**Verified.** With simulated API responses: request shape (model, adaptive thinking,
+effort, fallbacks, beta header), thinking block first, structured output merged with
+effort, refusal with partial content discarded, fallback-served answer read past the
+marker and attributed, `max_tokens` exhaustion, HTTP 404 — every failure a logged skip,
+never a crash; the learning pass through the same helper; `ai_check.py` pass,
+rejection and missing-key paths; the dashboard advisor in Node against the same cases.
+`parity_check.py` 0/0/0. **Not run against the live API from here** (no key on this
+machine); `ai_check.py` on the VPS is that test.
+
 ## 2026-09-21 (later) — 38 → 67 coins, and a live OKX liquidity floor
 
 Asked after 12 days without a trade: more trades, without giving up the quality of

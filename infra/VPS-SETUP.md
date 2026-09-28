@@ -77,6 +77,12 @@ Stop-ScheduledTask -TaskName "OKX-SignalChecker"
 Get-Process python -EA SilentlyContinue | ? Path -like 'C:\OKXAI\*' | Stop-Process -Force
 cd C:\OKXAI; git pull
 Start-ScheduledTask -TaskName "OKX-SignalChecker"
+
+# after changing CLAUDE_MODEL or CLAUDE_EFFORT: prove the AI calls work with this
+# box's key (two short real calls, ~1 cent). A failing AI call does not crash the
+# worker, it turns every trade into a logged skip, so without this a broken model
+# switch looks exactly like a quiet market.
+cd C:\OKXAI; .venv\Scripts\python.exe ai_check.py
 ```
 
 Verify a deploy actually landed by checking the log for behaviour from the new

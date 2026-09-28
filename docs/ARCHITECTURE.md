@@ -60,7 +60,7 @@ They coordinate through the Supabase `option3_trades` table: a trade placed from
 
 1. The VPS wrapper launches `signal_checker.py` (and relaunches it the moment it self-exits, roughly every 4 minutes).
 2. `signal_checker.py` scans coins using OKX **public** endpoints (`/api/v5/market/candles`, `/api/v5/market/ticker`).
-3. A STRONG BUY passes filters → Claude Opus 5 (`claude-opus-5`) is consulted (production only) → `place_option3_trade()` posts three orders to OKX **private** endpoints.
+3. A STRONG BUY passes filters → Claude Opus 5.5 (`claude-opus-5-5`) is consulted (production only) → `place_option3_trade()` posts three orders to OKX **private** endpoints.
 4. The trade row is inserted into Supabase `option3_trades` with `phase = 1`.
 5. A Telegram message confirms the trade ("Trade Already Placed on OKX ✅").
 6. On every later run, `monitor_option3_trades()` reads all rows with `phase < 3`, checks OKX algo-order history for triggers, advances the phase, and sends exit Telegram messages with exact USDT P&L.

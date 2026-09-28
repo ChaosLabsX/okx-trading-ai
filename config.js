@@ -1,11 +1,13 @@
 const CONFIG = {
   // Claude AI (required for AI Advisor)
   CLAUDE_API_KEY: '',
-  // Same Opus as signal_checker.py — one model everywhere. Static page, so there
-  // are no env vars: this line IS the config, and changing it needs a commit + push
-  // to reach the live site. Note Opus 5 thinks by default, so a click here takes
-  // noticeably longer than it did on Sonnet (see max_tokens in runAiAnalysis).
-  CLAUDE_MODEL: 'claude-opus-5',
+  // Same Opus and effort as signal_checker.py — one model everywhere. Static page,
+  // so there are no env vars: these lines ARE the config, and changing them needs a
+  // commit + push to reach the live site. Opus 5.5 always thinks, so a click here
+  // takes a while (see max_tokens in runAiAnalysis). Effort is pinned because its
+  // API default differs by model ('high' on Opus 5, 'medium' on Opus 5.5).
+  CLAUDE_MODEL: 'claude-opus-5-5',
+  CLAUDE_EFFORT: 'high',
   CLAUDE_API_URL: 'https://api.anthropic.com/v1/messages',
 
   // OKX Public Market API — no key needed
