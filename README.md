@@ -31,7 +31,7 @@ The two halves share the same signal engine (identical scoring logic implemented
 > The VPS is the only thing that trades. See [infra/VPS-SETUP.md](infra/VPS-SETUP.md).
 >
 > **`TEST_MODE = False`. This bot trades real money.** Production sizing, the
-> full score ≥ 4.5 bar, the reversal gate, and the AI advisor are all active.
+> full score ≥ 4.0 bar, the reversal gate, and the AI advisor are all active.
 > Setting `TEST_MODE = True` (one line) switches to fixed $5 test trades —
 > see [docs/SIGNAL-CHECKER.md](docs/SIGNAL-CHECKER.md#test-mode).
 
@@ -87,11 +87,11 @@ okx-trading-ai/  (repo root)
 ## Quick "how it trades" summary
 
 1. On the VPS, a wrapper keeps `signal_checker.py` running continuously — the script scans every 60 s, self-exits after ~4 min, and is relaunched immediately, so coverage is gap-free.
-2. Each coin gets a score from RSI(1H), MACD, Bollinger %B, volume ratio, and RSI(4H), all read from **finished** candles (the one still forming is ignored). Score ≥ 4.5 → STRONG BUY (≥ 1 in test mode). Scores land on half-points, so 4.5 is one whole step below 5.0, not a fractional nudge.
+2. Each coin gets a score from RSI(1H), MACD, Bollinger %B, volume ratio, and RSI(4H), all read from **finished** candles (the one still forming is ignored). Score ≥ 4.0 → STRONG BUY (≥ 1 in test mode). Scores land on half-points, so each half-point is a whole step on the scale, not a fractional nudge.
 3. A STRONG BUY must also pass a 30-minute-candle reversal confirmation (green candle + rising RSI + volume ≥ average) — skipped in test mode.
 4. Safety rails gate all trading (enforced in production, logged-only in test mode): a **BTC regime filter** blocks dip-buys while BTC is in a 4H downtrend, a **max-3 open trades** cap, and a **circuit breaker** that pauses trading after 3 stop-losses in 24h.
 5. Qualified coins are ranked; only the top 1 per scan goes to Claude Opus 5.5 (`claude-opus-5-5`) with rich context — **ATR volatility, support/resistance with suggested exits, funding rate, open interest, order-book imbalance, BTC regime, the coin's latest headlines (hack/lawsuit/delisting news vetoes the trade), and the bot's recent live results** — and it decides TRADE or SKIP and sizes the position (45–60% of available balance, cap performance-weighted by the recent profit factor; funding > +0.10% auto-skips).
-6. An approved trade is placed as an **Option 3 trade**: maker-first limit entry (market fallback after 45 s) → OCO (take-profit + stop-loss on 50%) → conditional stop-loss (other 50%), so the **full position is SL-protected on OKX 24/7**. The trade is saved to Supabase.
+6. An approved trade is placed as an **Option 3 trade** (once price gets 70% of the way to the take-profit, both stops move up to the entry price): maker-first limit entry (market fallback after 45 s) → OCO (take-profit + stop-loss on 50%) → conditional stop-loss (other 50%), so the **full position is SL-protected on OKX 24/7**. The trade is saved to Supabase.
 7. Every subsequent run, `monitor_option3_trades()` polls OKX for exits: partial TP hit → the 2nd-half SL is swapped for an active trailing stop (phase 2); SL hit → both halves stop out server-side; the trailing stop exit ends the trade. Every close records its outcome (`exit_reason`, `net_pnl_usdt`, `closed_at`) in Supabase and sends a Telegram message with the **exact USDT profit/loss net of OKX fees**.
 
 ## Development notes for the next AI/developer

@@ -13,7 +13,7 @@ touches no keys.
 
 ```bash
 python backtest.py                                   # 90 days, all 67 coins, production settings
-python backtest.py --days 60 --score 4.5             # test a looser STRONG BUY bar
+python backtest.py --days 60 --score 4.5             # test a stricter STRONG BUY bar
 python backtest.py --no-regime                       # measure the BTC filter's effect
 python backtest.py --no-reversal                     # measure the reversal gate's effect
 python backtest.py --atr-sl 3.0                      # test wider stops
@@ -27,7 +27,7 @@ First run downloads candles (~6–9 min for all 67 coins) into `backtest_cache/`
 | Flag | Default | Meaning |
 |---|---|---|
 | `--days` | 90 | History window |
-| `--score` | `STRONG_BUY_SCORE` (4.5) | STRONG BUY threshold; the default reads the live constant rather than restating it |
+| `--score` | `STRONG_BUY_SCORE` (4.0) | STRONG BUY threshold; the default reads the live constant rather than restating it |
 | `--atr-tp / --atr-sl / --atr-trail` | 2.0 / 2.5 / 1.0 | ATR exit multipliers |
 | `--stake` | 100 | USD per simulated trade (no compounding) |
 | `--max-open / --per-scan` | 3 / 1 | Concurrency caps (production values) |
@@ -55,6 +55,11 @@ First run downloads candles (~6–9 min for all 67 coins) into `backtest_cache/`
 - The AI layer is **not** simulated — exits use the deterministic ATR+structure
   baseline the AI starts from; no funding/news/order-book history exists.
 - Per-coin 4h re-entry cooldown approximates the production zone dedup.
+- **Not modelled: the phase-1 break-even stop** (live since 2026-10-09), so this
+  harness reports the exits as they were before it. Hourly candles cannot tell
+  whether price touched the break-even line before or after the stop in the same
+  hour. `research/replay.py` steps exits on 1-minute candles and does model it —
+  use that for anything exit-related.
 
 ## First real findings (2026-07-07, 6 majors × 45 days, production settings)
 

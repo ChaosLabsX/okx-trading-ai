@@ -168,7 +168,7 @@ TEST_FORCE_SIGNAL = False
 # ── TEST MODE ─────────────────────────────────────────────────────────────────
 # Makes Option 3 trades trigger EASILY with a tiny fixed size — purely to test the
 # trade → monitor → Telegram pipeline end to end. When True it:
-#   • lowers the STRONG BUY bar from score ≥ 4.5 to score ≥ 1
+#   • lowers the STRONG BUY bar from score ≥ 4.0 to score ≥ 1
 #   • skips the 30-min reversal confirmation gate
 #   • skips the Claude AI advisor and uses a fixed size + fixed TP/SL/trail
 #   • keeps up to TEST_MAX_CONCURRENT (3) test trades alive at once
@@ -203,7 +203,29 @@ TEST_MODE = False
 # What was tested and rejected: loosening btc_regime_ok() or reversal_confirmed()
 # (both lose money in every window — they are carrying the strategy), and a tighter
 # ATR_SL_MULT (wins only in the most recent window; fitted, not real).
-STRONG_BUY_SCORE  =  1.0 if TEST_MODE else  4.5   # score needed to label STRONG BUY
+#
+# 4.5 → 4.0 on 2026-10-09, again for frequency, and this time the bucket it admits
+# is not a weaker one. Minute-level replay of the live rules (finished candles, BTC
+# filter, every gate; research/replay.py), 54 coins, four 82-day windows:
+#
+#   bar    trades    net (at $100)   per window
+#   3.5      226       -47.95        worse than 4.5 in 2 of 4
+#   4.0      184       -12.00        better than 4.5 in 4 of 4
+#   4.5      163       -38.06        (the bar until today)
+#   5.0      108       -21.46
+#
+# The portfolio totals zigzag, so they are not the reason. The reason is the
+# setups themselves: every setup traded alone, BTC filter on, one per coin per 4h,
+# the score-4.0 bucket averaged +0.87% per trade (75 setups) against -0.28% for
+# everything scoring 4.5 and up. That is the same direction as the 2026-09-03
+# finding that the deepest oversold conditions (lower band, 4H RSI <= 35) do
+# worse: the scoring pays most for the steepest falls. An earlier run on other
+# windows (2026-09-21) also favoured 4.0 in total, but only 2 of 4 windows, so
+# this is "more trades, not worse", not a proven edge. 3.5 admits more again and
+# is clearly worse, so 4.0 is the floor. The advisor still sizes the lowest score
+# it sees at the bottom of its band, which is a sensible hedge until the live
+# journal has its own 4.0 sample.
+STRONG_BUY_SCORE  =  1.0 if TEST_MODE else  4.0   # score needed to label STRONG BUY
 # Deliberately NOT mirrored to -4.5. This worker is long-only spot: STRONG SELL
 # never places, closes or blocks a trade — direction_zone() maps both SELL and
 # STRONG SELL to the same 'down' zone, so the label is display text only. Moving it
@@ -312,6 +334,38 @@ TP_BOUNDS      = (1.5, 10.0)    # absolute % clamps whatever ATR/AI says
 # unproven and keep sizes small.
 SL_BOUNDS      = (2.0, 12.0)
 TRAIL_BOUNDS   = (1.0, 5.0)
+
+# Break-even stop, added 2026-10-09. Once price has covered this fraction of the
+# distance from entry to the partial take-profit, the monitor moves the stop on
+# BOTH halves up to the entry price (_maybe_move_to_breakeven). A trade that then
+# turns back exits at about -0.2% (fees) instead of the full stop.
+#
+# Why: the live book's problem is the payoff shape, not the win rate. Over 38
+# closed trades: 55% winners, average win +2.85%, average loss -3.52%, and the stop
+# was further away than the target in 36 of 38. That nets ~0% per trade. A trade
+# that has already gone most of the way to its target and then falls all the way
+# to the stop is the most expensive pattern in that book; this removes it.
+#
+# Measured (research/replay.py: live rules, 54 coins, four 82-day windows, $100
+# per trade, exits stepped on 1-minute candles):
+#
+#   trigger (way to TP)   net     worst losing streak   trades
+#   off (until today)    -38.06          51.3             163
+#   40%                  -30.88          45.2             199
+#   50%                  -22.98          40.9             194
+#   60%                  -17.06          35.0             191
+#   70%                  -25.00          37.4             184
+#   80%                  -15.67          29.3             170
+#   90%                  -30.40          44.5             165
+#
+# Every setting beat "off" on total and on drawdown, and so did all six ATR-based
+# triggers tried beside them (+0.75 to +2.0 ATR). That breadth is the evidence;
+# the bumps between neighbours are noise, which is why 0.7 is the middle of the
+# range rather than its best point. Expect roughly +$0.10 per $100 trade, a
+# smaller worst streak, and 10-20% more trades because stalled trades free their
+# slot sooner. Cost: more exits at about -0.2%, so the win rate SHOWN drops
+# (~53% -> ~41% in the replay) while the money improves. Set 0 to turn it off.
+BREAKEVEN_TRIGGER_FRAC = 0.7
 SR_TP_GAP_PCT  = 0.5            # sell this far below the nearest resistance
 SR_SL_GAP_PCT  = 0.75           # stop this far below the nearest support
 
@@ -1345,6 +1399,10 @@ conditions it was ENTERED on and what price did AFTER the exit. Use it:
   anyway → widen slPct on setups like that one (this is a losing trade worth learning from)
 - GOOD_SAVE verdict = the stop correctly avoided a deeper fall → keep that stop distance
 - LEFT_MONEY verdict = price ran well past our exit → widen trailingCallbackPct
+- Exit reasons: sl = full stop-loss; tp_trail = take-profit then trailing exit; be_stop = the
+  trade got {BREAKEVEN_TRIGGER_FRAC:.0%} of the way to its target, the code moved both stops to the
+  entry price, and price came back — a scratch (about −0.2% in fees), NOT a stop-loss and NOT
+  evidence the slPct was wrong; break_even = first half took profit, second exited at entry.
 - This coin repeatedly stopping out on similar conditions → require a stronger setup or SKIP
 - Overall results negative → size toward the LOWER end of the capital range
 - YOUR PAST SKIPS: MISSED_WIN means you were too cautious in those conditions;
@@ -1593,7 +1651,11 @@ def _grade_exit(exit_reason, exit_px, tp_px, c):
             v, note = 'good_save', 'price kept falling — the stop did its job'
         else:
             v, note = 'flat_after_stop', 'price went nowhere after the stop'
-    elif exit_reason in ('tp_trail', 'break_even'):
+    elif exit_reason in ('tp_trail', 'break_even', 'be_stop'):
+        # be_stop is graded as an exit, not as a stop: its stop sat at entry by
+        # design, so "price recovered afterwards" says the break-even move came
+        # early (left_money), never that the AI's stop distance was too tight —
+        # which is the lesson a stop-loss shakeout would teach the advisor.
         if up >= 3.0:
             v, note = 'left_money', 'price ran well past our exit — trail was too tight'
         elif down <= -3.0:
@@ -2165,6 +2227,201 @@ def _update_sl_to_breakeven(trade):
         return None
 
 
+# ── Break-even stop in phase 1 (see BREAKEVEN_TRIGGER_FRAC) ──────────────────
+def _be_active(trade):
+    """
+    True once _maybe_move_to_breakeven has moved this trade's stops to entry.
+    Recorded as sl_pct = 0 on the row — literally "the stop is now 0% below
+    entry" — so no schema change is needed. The stop the AI originally chose is
+    kept in entry_context.chosen.sl_pct, which is what the journal reads.
+    """
+    v = trade.get('sl_pct')
+    try:
+        return v is not None and float(v) == 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _update_trade(trade_id, updates, attempts=3):
+    """PATCH a trade row without changing its phase, retrying. True on success."""
+    for i in range(attempts):
+        try:
+            r = requests.patch(
+                f'{SUPABASE_URL}/rest/v1/option3_trades?id=eq.{trade_id}',
+                headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}',
+                         'Content-Type': 'application/json'},
+                json=updates, timeout=10,
+            )
+            if r.status_code in (200, 204):
+                return True
+            print(f'  [Option3] trade {trade_id}: update failed (HTTP {r.status_code})')
+        except Exception as e:
+            print(f'  [Option3] trade {trade_id}: update error: {e}')
+        time.sleep(1 + i)
+    return False
+
+
+def _place_algo(body):
+    """Place one algo order and return its algoId, or raise."""
+    resp = _okx_post('/api/v5/trade/order-algo', body)
+    aid = resp.get('data', [{}])[0].get('algoId', '')
+    if not aid:
+        raise Exception(f'no algoId in OKX response: {resp}')
+    return aid
+
+
+def _replace_algo(symbol, old_id, ord_types, new_body, restore_body):
+    """
+    Swap one protective sell order for another. OKX freezes the coins behind a
+    sell algo, so the replacement can only be placed AFTER the old one is
+    cancelled — there is no way to overlap them. Returns (state, algo_id):
+      ('moved',    new_id)  replaced
+      ('kept',     old_id)  cancel refused (already triggered, or OKX down): untouched
+      ('restored', new_id)  replacement rejected, the original put back under a new id
+      ('naked',    '')      replacement AND restore rejected: this half is unprotected
+    """
+    try:
+        _okx_post('/api/v5/trade/cancel-algos', [{'algoId': old_id, 'instId': symbol}])
+    except Exception as e:
+        # A timeout can hide a cancel that did go through. Ask OKX before deciding
+        # the order is still there — believing a cancelled stop still protects
+        # the coins is the one mistake this function must not make.
+        if not any(o.get('state') == 'canceled' for o in _algo_history(old_id, ord_types)):
+            print(f'  [BE] {symbol}: cancel of {old_id} refused ({e}) — left in place')
+            return 'kept', old_id
+    try:
+        return 'moved', _place_algo(new_body)
+    except Exception as e:
+        print(f'  [BE] {symbol}: break-even order rejected ({e}) — restoring the original')
+    try:
+        return 'restored', _place_algo(restore_body)
+    except Exception as e:
+        print(f'  [BE] {symbol}: restoring the original ALSO failed ({e})')
+        return 'naked', ''
+
+
+def _breakeven_unwind(trade, live_ids, reason):
+    """
+    A half could not be protected during the break-even swap. Same rule as at
+    entry (_abort_unprotected): never leave coins unprotected silently. Cancel the
+    protective orders that remain, sell the whole position at market — it is in
+    profit at this moment, since price was most of the way to the target — and
+    close the record so the monitor stops tracking orders that no longer exist.
+    """
+    symbol = trade['symbol']
+    coin   = symbol.replace('-USDT', '')
+    sz     = 2 * float(trade.get('sz_half') or 0)
+    for aid in [a for a in live_ids if a]:
+        _cancel_algo(symbol, aid)
+    sold = False
+    try:
+        _okx_post('/api/v5/trade/order', {'instId': symbol, 'tdMode': 'cash', 'side': 'sell',
+                                          'ordType': 'market', 'sz': f'{sz:.8f}'})
+        sold = True
+    except Exception as e:
+        print(f'  [BE] {symbol}: EMERGENCY — market sell failed: {e}')
+    _mark_trade_closed(trade['id'], 'error')
+    if sold:
+        send_telegram(f"🚨 <b>Trade Closed Early — {coin}</b>\n"
+                      f"⚠️ While moving the stop to break-even, OKX rejected the new stop "
+                      f"and the original — so the position was sold at market, in profit.\n"
+                      f"📋 {reason}")
+    else:
+        send_telegram(f"🚨 <b>URGENT — Unprotected {coin} Position</b>\n"
+                      f"⚠️ OKX rejected the break-even stop, the original stop, AND the "
+                      f"market sell.\n👉 You hold ~{sz:.8f} {coin} with NO stop loss — "
+                      f"close it manually on OKX now.\n📋 {reason}")
+
+
+def _maybe_move_to_breakeven(trade):
+    """
+    Phase 1: once price has covered BREAKEVEN_TRIGGER_FRAC of the way from entry to
+    the partial take-profit, move the stop on BOTH halves to the entry price.
+    New-format trades only (an OCO on half 1 plus a separate stop on half 2).
+    Returns True when it touched any order, False when nothing was due or done.
+
+    Safe to repeat: a pass that is interrupted part-way leaves every half either
+    at its original stop or at entry, records the real order ids, and the next
+    pass finishes the job.
+    """
+    if BREAKEVEN_TRIGGER_FRAC <= 0 or _be_active(trade):
+        return False
+    symbol = trade['symbol']
+    oco_id, sl2_id = trade.get('partial_tp_id') or '', trade.get('sl2_id') or ''
+    if not oco_id or oco_id != trade.get('sl_id') or not sl2_id:
+        return False
+    entry_px = float(trade.get('entry_price') or 0)
+    tp_pct   = float(trade.get('partial_tp_pct') or 0)
+    sl_pct   = float(trade.get('sl_pct') or 0)
+    sz_half  = float(trade.get('sz_half') or 0)
+    if entry_px <= 0 or tp_pct <= 0 or sl_pct <= 0 or sz_half <= 0:
+        return False
+    trigger = entry_px * (1 + BREAKEVEN_TRIGGER_FRAC * tp_pct / 100)
+
+    # The monitor runs about every two minutes. A touch between passes still
+    # counts, as it does in the replay that measured this: take the highest of
+    # the ticker and the last three finished 1-minute candles.
+    t    = fetch_ticker(symbol)
+    seen = t['price'] if t else 0.0
+    try:
+        c = fetch_candles(symbol, bar='1m', limit=3)
+        if c:
+            seen = max([seen] + c['highs'])
+    except Exception as e:
+        print(f'  [BE] {symbol}: 1m candles unavailable ({e}) — using the ticker only')
+    if seen < trigger:
+        return False
+
+    coin = symbol.replace('-USDT', '')
+    base = {'instId': symbol, 'tdMode': 'cash', 'side': 'sell', 'sz': f'{sz_half:.8f}'}
+    at_entry, at_sl = f'{entry_px:.8f}', f'{entry_px * (1 - sl_pct / 100):.8f}'
+    stop = lambda px: {**base, 'ordType': 'conditional',
+                       'slTriggerPx': px, 'slOrdPx': '-1', 'slTriggerPxType': 'last'}
+    oco  = lambda px: {**base, 'ordType': OCO_ORD_TYPE,
+                       'tpTriggerPx': f'{entry_px * (1 + tp_pct / 100):.8f}', 'tpOrdPx': '-1',
+                       'tpTriggerPxType': 'last',
+                       'slTriggerPx': px, 'slOrdPx': '-1', 'slTriggerPxType': 'last'}
+    print(f'  [BE] {symbol}: {fmt_price(seen)} is {BREAKEVEN_TRIGGER_FRAC:.0%}+ of the way to TP '
+          f'— moving both stops to entry {fmt_price(entry_px)}')
+
+    # Second half first: a plain stop, the simpler swap. If it does not move, the
+    # OCO is not touched this pass.
+    st2, new_sl2 = _replace_algo(symbol, sl2_id, 'conditional', stop(at_entry), stop(at_sl))
+    if st2 == 'naked':
+        _breakeven_unwind(trade, [oco_id], 'second-half stop could not be re-placed')
+        return True
+    if st2 != 'moved':
+        if st2 == 'restored' and not _update_trade(trade['id'], {'sl2_id': new_sl2}):
+            send_telegram(f"⚠️ <b>{coin}: tracking update failed</b>\nThe 2nd-half stop was re-placed "
+                          f"as {new_sl2} but the database still has {sl2_id}. Check OKX.")
+        return st2 == 'restored'
+
+    st1, new_oco = _replace_algo(symbol, oco_id, OCO_ORD_TYPES, oco(at_entry), oco(at_sl))
+    if st1 == 'naked':
+        _breakeven_unwind(trade, [new_sl2], 'first-half OCO could not be re-placed')
+        return True
+    updates = {'sl2_id': new_sl2}
+    if st1 != 'kept':
+        updates.update({'partial_tp_id': new_oco, 'sl_id': new_oco})
+    if st1 == 'moved':
+        updates['sl_pct'] = 0          # both halves at entry: see _be_active
+    # 'kept' means the OCO could not be cancelled, normally because its take-profit
+    # just filled. The next pass sees the TP and swaps the (now break-even) second
+    # stop for the trailing stop as usual.
+    if not _update_trade(trade['id'], updates):
+        send_telegram(f"🚨 <b>{coin}: break-even stops placed but NOT recorded</b>\n"
+                      f"New order ids: OCO {updates.get('partial_tp_id', oco_id)}, "
+                      f"2nd-half stop {new_sl2}. The monitor still has the old ids and may "
+                      f"report the trade as cancelled — the position itself is protected.")
+    if st1 == 'moved':
+        send_telegram(f"🛡️ <b>Stop Moved to Break-Even — {coin}</b>\n"
+                      f"📈 Price reached {fmt_price(seen)}, {BREAKEVEN_TRIGGER_FRAC:.0%} of the way "
+                      f"to the +{tp_pct}% target\n"
+                      f"🔒 If it turns back, both halves now exit at entry {fmt_price(entry_px)} "
+                      f"(about −0.2% in fees) instead of −{sl_pct}%")
+    return True
+
+
 def _mark_phase2(trade_id, updates):
     """Update Supabase: set phase=2 plus the phase-2 protection order IDs
     (e.g. {'trailing_id': ..., 'sl_id': ...})."""
@@ -2581,6 +2838,10 @@ def _close_full_position_at_sl(trade, sl_fill_px):
     sz_half  = float(trade.get('sz_half', '0') or 0)
     sl_pct   = float(trade.get('sl_pct', 0) or 0)
     sl2_id   = trade.get('sl2_id') or ''
+    # Stops already moved to entry: this is a scratch, not a stop-loss. Recorded
+    # as 'be_stop' so it is kept out of the 3-stop-losses circuit breaker (which
+    # counts 'sl' only) and is not graded as a stop that sat too tight.
+    be       = _be_active(trade)
 
     trailing_id = trade.get('trailing_id')
     if trailing_id:
@@ -2618,8 +2879,8 @@ def _close_full_position_at_sl(trade, sl_fill_px):
             half2_px = _get_order_fill_price(symbol, half2_ord_id)
 
     estimated = False
-    if not sl_fill_px and entry_px > 0 and sl_pct > 0:
-        sl_fill_px = entry_px * (1 - sl_pct / 100)   # SL trigger price
+    if not sl_fill_px and entry_px > 0 and (sl_pct > 0 or be):
+        sl_fill_px = entry_px * (1 - sl_pct / 100)   # SL trigger price (= entry at break-even)
         estimated  = True
     if half2_px is None:
         half2_px = sl_fill_px
@@ -2652,10 +2913,19 @@ def _close_full_position_at_sl(trade, sl_fill_px):
         result_str = f'−{sl_pct}% on full position'
         detail      = f"📍 Entry: {fmt_price(entry_px)}"
 
-    _mark_trade_closed(trade['id'], 'sl', avg_exit, net_total)
+    _mark_trade_closed(trade['id'], 'be_stop' if be else 'sl', avg_exit, net_total)
     extra = '' if second_half_sold else '\n⚠️ Could not auto-sell remaining 50% — check OKX'
-    icon         = '🟢' if is_profit else '🔴'
     result_label = 'Total profit' if is_profit else 'Total loss'
+    if be:
+        send_telegram(
+            f"⚪ <b>Break-Even Stop — {coin}</b>\n"
+            f"🛡️ Price turned back after the stop had been moved to entry\n"
+            f"💸 Result: {result_str}\n"
+            f"{detail}\n"
+            f"✅ Full position closed (both halves){extra}"
+        )
+        return
+    icon = '🟢' if is_profit else '🔴'
     send_telegram(
         f"{icon} <b>Stop Loss Hit — {coin}</b>\n"
         f"💸 {result_label}: {result_str}\n"
@@ -2730,7 +3000,12 @@ def monitor_option3_trades():
 
                 if _is_algo_triggered(tp_id, tp_types):
                     fill_px  = _get_fill_price(tp_id, tp_types, symbol)
-                    tp_fired = (not is_oco) or (fill_px is not None and fill_px > entry_px)
+                    # Which leg of the OCO fired. "Above entry" used to be enough,
+                    # but a break-even stop sits AT entry and can fill a hair above
+                    # it, so the line is now halfway between entry and the target:
+                    # a TP fill is far above it, either kind of stop far below.
+                    tp_line  = entry_px * (1 + ptp_pct / 200) if ptp_pct > 0 else entry_px
+                    tp_fired = (not is_oco) or (fill_px is not None and fill_px > tp_line)
 
                     if tp_fired:
                         # ── Partial TP filled ──────────────────────────────────
@@ -2757,21 +3032,26 @@ def monitor_option3_trades():
                             print(f'  [Option3] {symbol}: 2nd-half SL also fired (whipsaw) — closing...')
                             half2_px = _get_fill_price(sl2_id, 'conditional', symbol)
                             sl_pct_v = float(trade.get('sl_pct', 0) or 0)
+                            # After a break-even move the 2nd half's stop is AT entry:
+                            # first half took profit, second exited at entry. That is
+                            # exactly what 'break_even' already means in phase 2.
+                            be       = _be_active(trade)
                             est2 = estimated
-                            if not half2_px and entry_px > 0 and sl_pct_v > 0:
+                            if not half2_px and entry_px > 0 and (sl_pct_v > 0 or be):
                                 half2_px, est2 = entry_px * (1 - sl_pct_v / 100), True
                             msg = [f"🔄 <b>Fast Reversal — {coin}</b>",
                                    f"✅ TP hit on first 50%: {profit_line}"]
+                            what  = 'exited at entry (break-even stop)' if be else 'stopped out'
                             whole = None
                             if half2_px and entry_px > 0 and tp_pnl is not None:
                                 pnl2, _, _, _ = _exit_pnl(entry_px, half2_px, sz_half)
                                 a2 = '~' if est2 else ''
                                 whole = tp_pnl + pnl2
-                                msg.append(f"🔴 Price reversed — 2nd half stopped out: {a2}{fmt_usdt(pnl2)} USDT")
+                                msg.append(f"🔴 Price reversed — 2nd half {what}: {a2}{fmt_usdt(pnl2)} USDT")
                                 msg.append(f"📊 Whole trade net result: {a2}{fmt_usdt(whole)} USDT")
                             else:
-                                msg.append(f"🔴 Price reversed — 2nd half stopped out")
-                            _mark_trade_closed(trade['id'], 'tp_then_sl', half2_px, whole)
+                                msg.append(f"🔴 Price reversed — 2nd half {what}")
+                            _mark_trade_closed(trade['id'], 'break_even' if be else 'tp_then_sl', half2_px, whole)
                             send_telegram('\n'.join(msg))
                         else:
                             # ── Normal TP: protect the 2nd half for phase 2 ────────
@@ -2840,8 +3120,9 @@ def monitor_option3_trades():
                         f"🔄 Remaining protective orders also cancelled\n"
                         f"📌 Trade marked closed — new {coin} signals will trigger fresh trades"
                     )
-                else:
-                    print(f'  [Option3] {symbol}: phase 1 — waiting for TP or SL')
+                elif not _maybe_move_to_breakeven(trade):
+                    print(f'  [Option3] {symbol}: phase 1 — waiting for TP or SL'
+                          f"{' (stop at break-even)' if _be_active(trade) else ''}")
 
             elif phase == 2:
                 trailing_id = trade.get('trailing_id')

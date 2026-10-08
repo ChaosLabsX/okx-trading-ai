@@ -41,8 +41,9 @@ const CONFIG = {
   // STRONG_BUY_SCORE in signal_checker.py — that constant is what actually decides
   // whether the worker trades, and a dashboard showing "BUY" for a coin the bot
   // just bought (or "STRONG BUY" for one it ignored) is the confusing half of a
-  // drifted pair. Lowered 5.0 → 4.5 on 2026-08-15 alongside the worker; the
-  // reasoning lives in signal_checker.py next to that constant.
+  // drifted pair. Lowered 5.0 → 4.5 on 2026-08-15 and 4.5 → 4.0 on 2026-10-09,
+  // both times alongside the worker; the reasoning lives in signal_checker.py next
+  // to that constant.
   //
   // Matching this bar is necessary but not sufficient — the two generateSignal
   // implementations must also agree on the SCORE compared against it. They did not
@@ -50,7 +51,7 @@ const CONFIG = {
   // position, so 80 of 720 grid cases got a different LABEL). Both sides were
   // aligned to the worker's rules and verified across 8,400 cases: 0 mismatches on
   // score, label and reason strings. Change one side, change the other.
-  STRONG_BUY_SCORE: 4.5,
+  STRONG_BUY_SCORE: 4.0,
 
   // Refresh timing
   AUTO_REFRESH_INTERVAL: 60_000,       // 1 minute (crypto moves fast)

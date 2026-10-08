@@ -1,0 +1,19 @@
+chk_bucket.py, 2026-10-09. Every setup traded alone (no portfolio slots), BTC regime
+filter on, one setup per coin per 4h, exits = suggested ATR+structure exits stepped on
+1-minute candles. Average % per trade (n). 54 coins, windows as in replay.WINDOWS.
+
+no BE — every setup alone, BTC filter on, one per coin per 4h; avg % per trade (n)
+score                  w4               w3               w2            w_now        all
+4.0         +0.873% ( 20)    +1.521% ( 18)    +1.407% ( 16)    -0.097% ( 21)   +0.871% (75)
+4.5         +1.162% (104)    -1.527% (110)    -0.810% ( 76)    -0.018% (128)   -0.266% (418)
+5.0         +0.000% (  0)    +3.204% (  6)    +0.000% (  0)    +0.000% (  0)   +3.204% (6)
+5.5         -0.960% ( 42)    -0.344% ( 49)    -0.784% ( 36)    -0.063% ( 89)   -0.421% (216)
+6.0+        -1.733% ( 23)    +1.672% ( 17)    -0.291% (  6)    +0.258% ( 12)   -0.174% (58)
+
+BE at 70% to TP — every setup alone, BTC filter on, one per coin per 4h; avg % per trade (n)
+score                  w4               w3               w2            w_now        all
+4.0         +0.782% ( 20)    +1.521% ( 18)    +1.725% ( 16)    +0.055% ( 21)   +0.957% (75)
+4.5         +0.860% (104)    -1.482% (110)    -0.723% ( 76)    -0.163% (128)   -0.357% (418)
+5.0         +0.000% (  0)    +3.204% (  6)    +0.000% (  0)    +0.000% (  0)   +3.204% (6)
+5.5         -0.836% ( 42)    -0.169% ( 49)    -0.407% ( 36)    -0.079% ( 89)   -0.301% (216)
+6.0+        -1.646% ( 23)    +1.626% ( 17)    -1.020% (  6)    -0.060% ( 12)   -0.294% (58)

@@ -38,7 +38,7 @@ Score components (identical to the Python worker — keep in sync!):
 the sign and size of the running score. Both implementations now evaluate RSI → MACD →
 Bollinger → volume → 4H, in that order.
 
-Labels: score ≥ `CONFIG.STRONG_BUY_SCORE` (4.5) → **STRONG BUY**, ≥ 2 → BUY, > −2 → HOLD, > −5 → SELL, else **STRONG SELL**. The BUY bar is a config value so it stays in step with `STRONG_BUY_SCORE` in `signal_checker.py`, which is what actually decides trades; the SELL bar stays hard-coded at −5 because this app is long-only and no sell label gates anything.
+Labels: score ≥ `CONFIG.STRONG_BUY_SCORE` (4.0) → **STRONG BUY**, ≥ 2 → BUY, > −2 → HOLD, > −5 → SELL, else **STRONG SELL**. The BUY bar is a config value so it stays in step with `STRONG_BUY_SCORE` in `signal_checker.py`, which is what actually decides trades; the SELL bar stays hard-coded at −5 because this app is long-only and no sell label gates anything.
 
 > **The two implementations are now byte-identical in behaviour, and there is a test for it.**
 > Until 2026-08-15 the browser applied volume *after* the 4H term, awarded its point from
@@ -59,7 +59,7 @@ Browser alerts are **toasts only** — Telegram for STRONG BUY is handled exclus
 
 - Calls the Anthropic Messages API **directly from the browser** (`anthropic-dangerous-direct-browser-access` header) with model `CONFIG.CLAUDE_MODEL` (`claude-opus-5-5`) at effort `CONFIG.CLAUDE_EFFORT` (`high`) — both set in `config.js`; this is a static page, so those lines are the only place they can come from. The answer is read from the response's `text` blocks by type: the first block is the model's (empty) thinking, which is why reading `content[0]` showed "(No response)" until 2026-09-28. A safety-classifier decline is shown as an error; unlike the worker, this manual path has no server-side fallback.
 - Before prompting, it fetches the **live** OKX balance and holdings so the AI sees real capital, then builds:
-  - `buildSystemPrompt()` — strict trading rules (only recommend BUY with score ≥ 5.0 — deliberately stricter than the 4.5 STRONG BUY label, since this manual path has no automatic size reduction — and ≥ 2 confirmations, explicit SKIP conditions, confidence levels), risk-profile position sizing (conservative 10% / moderate 20% / aggressive 30% of capital), and the **TRADE tag contract** with Option 3 parameter guidance per volatility tier.
+  - `buildSystemPrompt()` — strict trading rules (only recommend BUY with score ≥ 5.0 — deliberately stricter than the 4.0 STRONG BUY label, since this manual path has no automatic size reduction — and ≥ 2 confirmations, explicit SKIP conditions, confidence levels), risk-profile position sizing (conservative 10% / moderate 20% / aggressive 30% of capital), and the **TRADE tag contract** with Option 3 parameter guidance per volatility tier.
   - `buildPrompt()` — per-coin technical snapshot, derivatives context (funding rate, open interest), portfolio with live P&L, news headlines + sentiment %.
 - The response is rendered as markdown; any `[TRADE:{...}]` tags are parsed (`parseTradeActions`) into **action buttons** ("⚡ Option 3 Trade · 🟢 BUY AVAX · TP50% +5% · Trail 3% · SL −8%").
 

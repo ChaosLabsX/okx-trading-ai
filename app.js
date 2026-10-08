@@ -2049,6 +2049,7 @@ function renderPerf() {
   }
   const exitLabels = {
     tp_trail: '🏁 TP + trailing', sl: '🔴 Stop loss', break_even: '⚪ Break-even',
+    be_stop: '🛡️ Break-even stop',
     tp_then_sl: '🔄 Fast reversal', cancelled: '✖ Cancelled', error: '⚠ Error',
   };
 

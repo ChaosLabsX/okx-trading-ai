@@ -3,6 +3,91 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-10-09 — STRONG BUY bar 4.5 → 4.0, and a break-even stop in phase 1
+
+Owner asked for more trades and better profit odds after a review of the live book.
+
+**The live book on 2026-10-08.** 38 closed trades, 21W/17L (55%), net −$9.25. The win
+rate is not the problem; the payoff shape is: average win +2.85%, average loss −3.52%,
+and the stop was further away than the target in 36 of 38 trades. That nets about 0%
+per trade, and the 45–60% sizing since 2026-09-03 turned it into −$19.16 over 13
+trades. The 67-coin universe did its job on frequency: 12 trades from 09-23 to 10-07,
+against 2 in the two weeks before. Since Opus 5.5: 6 closed, +$12.80 — too few to read.
+The size cap is now 45% (last-30 profit factor 0.81).
+
+**How it was measured.** A rebuilt minute-level replay, now in the repo as
+`research/` (the first version lived in a temp folder and was wiped). Live rules
+(finished candles, BTC filter, every gate), 54 coins, four non-overlapping 82-day
+windows Oct 2025 – Oct 2026, $100 per trade, AI not modelled. Checked against
+reality first: of the 12 live trades since 09-21 it took 6 identically, with matching
+outcomes (PENGU +7.2% live and replayed, UNI −2.8% vs −2.9%); the others diverge
+because a different coin ranked first in a busy scan and the slots shift after that.
+Baseline: 163 trades, −$38.06, worst losing streak $51.3.
+
+**Rejected** (`research/exp1.txt`): wider trailing stop 1.5×/2.0× ATR (−$42/−$46 —
+7 of 21 live winners did "leave money", but giving trades more room gives back more
+than it gains); risk-based sizing (−$79); 4 or 5 open trades; take-profit or stop
+multiples (both sides of today's setting "win", which is noise around the baseline);
+time stops.
+
+**1. `STRONG_BUY_SCORE` 4.5 → 4.0** (worker and `config.js`; parity 0/0/0). Portfolio:
+184 trades / −$12.00, better than 4.5 in all four windows. The totals zigzag across
+neighbours (3.5 −$47.95, 4.5 −$38.06, 5.0 −$21.46), so they are not the argument. The
+setups are: traded alone with the BTC filter on, score-4.0 setups averaged **+0.87% per
+trade (75)** against **−0.28%** for everything 4.5 and up (`research/score_buckets.txt`)
+— the same direction as the 2026-09-03 finding that the deepest oversold conditions do
+worst. An earlier run (2026-09-21, other windows) also favoured 4.0 in total but only in
+2 of 4 windows, so this is "more trades, not worse", not a proven edge. 3.5 is clearly
+worse; 4.0 is the floor.
+
+**2. Break-even stop (`BREAKEVEN_TRIGGER_FRAC = 0.7`).** Once price has covered 70% of
+the way from entry to the partial take-profit, both halves' stops move to the entry
+price. Every trigger tried beat "off" on total and on worst losing streak — six as a
+fraction of the way to TP (40–90%: −$15.67 to −$30.88) and six in ATR (+0.75 to +2.0:
+−$9.45 to −$35.08) — so the breadth is the evidence and 70% is the middle of the range,
+not its best point (`research/exp2.txt`). Expect roughly +$0.10 per $100 trade, a
+smaller worst streak, and 10–20% more trades as stalled trades free their slot sooner.
+The cost: more exits at about −0.2% (fees), so the win rate **shown** drops (~53% →
+~41% in the replay) while the money improves. Together with the 4.0 bar the replay
+gives 207 trades and −$0.35 → +$0.35, worst streak $33.7 — the best point of two
+noisy scans, so expect less.
+
+How it works (`_maybe_move_to_breakeven`, called from the phase-1 monitor):
+- Trigger: highest of the ticker and the last three finished 1-minute candles, so a
+  touch between ~2-minute monitor passes still counts, as in the replay.
+- OKX freezes the coins behind a sell algo, so each half is cancel-then-place. Second
+  half first; the OCO is re-placed with the same TP and SL = entry. A refused cancel
+  changes nothing (a cancel whose reply was lost is checked against OKX history before
+  anything is assumed); a rejected replacement restores the original; replacement AND
+  restore rejected → cancel what remains and sell the whole position at market (it is
+  in profit at that point) — the same "never leave coins unprotected" rule as
+  `_abort_unprotected` at entry.
+- State: the row gets the new order ids and `sl_pct = 0` ("stop 0% below entry", read by
+  `_be_active()`); no schema change. The AI's original stop stays in
+  `entry_context.chosen`. Three failed row updates send an urgent Telegram with the ids.
+- Exits: through the entry stop → `be_stop` ("Break-Even Stop" Telegram), kept out of
+  the 3-stop-losses circuit breaker and graded as an exit, not as a too-tight stop; TP
+  then entry stop → `break_even`. TP vs stop is now decided against the midpoint between
+  entry and the TP price, because a stop at entry can fill a hair above entry.
+- The advisor prompt defines `be_stop` and `break_even` so the journal is not misread as
+  stop-losses; the dashboard's exit table labels `be_stop`. Applies to the currently open
+  trade too, and to TEST_MODE. Manual dashboard trades (no 2nd-half stop) are left alone.
+- A new Telegram message on each move ("Stop Moved to Break-Even"), at most one per trade.
+
+**Verified** against a simulated OKX and Supabase (29 checks): the trigger line both
+ways; a touch seen only in the 1-minute highs; exact order bodies; swap order; no
+double move; legacy trades untouched; refused cancel; lost cancel reply; rejected
+replacement with restore, for each half; replacement and restore rejected (unwind),
+including a failed market sell; OCO cancel refused because TP just filled; failed row
+update; then the exits through the real monitor — stop fill just below and a hair
+above entry (both `be_stop`), unknown fills estimated at entry, TP then entry stop
+(`break_even`), and ordinary stop-loss and take-profit unchanged. **Not run against
+live OKX** (blocked from the development machine). The first real move is the live
+test: the log shows `[BE]` lines and Telegram says "Stop Moved to Break-Even".
+
+`backtest.py` does not model the break-even stop (hourly candles cannot order a touch
+and a stop within one hour); `research/replay.py` does.
+
 ## 2026-09-28 — Claude Opus 5 → Opus 5.5, effort pinned, refusals handled
 
 Owner's decision. Opus 5.5 is the successor to Opus 5 in the same line, at 20% lower

@@ -23,7 +23,7 @@ main()
 
 **Pass 1 — collect.** First one `/market/tickers` call drops every symbol under `MIN_OKX_VOL_24H_USDT` ($1M) of 24h OKX volume, or not listed on OKX at all — except coins with an open trade, which are always scanned (fails open if the call fails). Then for each remaining `SYMBOLS` entry (67 since 2026-09-21): fetch 1H candles (100), ticker, 30m candles (50, reversal check), 4H candles (50, RSI confirmation) — **finished candles only**: `fetch_candles()` drops the row OKX marks as still forming (`confirm = '0'`), so every gate below judges closed candles, the same thing `backtest.py` measures (since 2026-09-16; see CHANGELOG for the measurement). The BTC regime filter reads its 4H candles the same way. Compute RSI/MACD/BB/volume ratio; run `generate_signal()` (same scoring table as the browser — see [DASHBOARD.md](DASHBOARD.md#2-signal-engine-generatesignal); `parity_check.py` enforces that they stay identical). A coin survives to trade-candidacy only if **all** of these pass:
 
-1. Label is **STRONG BUY** (`score ≥ STRONG_BUY_SCORE` — 4.5 production, 1.0 test mode).
+1. Label is **STRONG BUY** (`score ≥ STRONG_BUY_SCORE` — 4.0 production since 2026-10-09, 1.0 test mode).
 2. **Reversal confirmed** on 30m candles (skipped in test mode): latest candle green **and** RSI rising **and** volume ≥ 1× the 20-bar average (`reversal_confirmed()`). Guards against buying a falling knife.
 3. **Volume confirmed**: the 1H volume ratio is at least `MIN_VOL_RATIO_TRADE` (2.0×) of the 20-bar average. A *trade* gate, not a labelling rule — the coin still reads STRONG BUY on the dashboard, the worker just declines to buy it, exactly as with the reversal gate. Set to `0.0` to disable.
 4. Not suppressed by the **zone/cooldown rules** (below).
@@ -66,7 +66,7 @@ One flag flips everything (all production values are preserved in the same file)
 
 | Behavior | Production | Test mode |
 |---|---|---|
-| STRONG BUY threshold | score ≥ 4.5 | score ≥ 1.0 (fires on common conditions, e.g. bullish MACD + price near lower BB) |
+| STRONG BUY threshold | score ≥ 4.0 | score ≥ 1.0 (fires on common conditions, e.g. bullish MACD + price near lower BB) |
 | 30m reversal confirmation | required | skipped |
 | Volume trade-gate (`MIN_VOL_RATIO_TRADE`) | 2.0× average required | skipped |
 | Claude advisor (`CLAUDE_MODEL`) | decides trade + sizing | bypassed |

@@ -19,3 +19,6 @@ Thumbs.db
 
 # Backtester candle cache
 backtest_cache/
+
+# Replay data downloaded by research/fetch_1m.py (~350 MB per window)
+research/w*/
