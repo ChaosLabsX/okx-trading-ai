@@ -68,6 +68,11 @@ Get-Content C:\OKXAI\logs\okx-signal-checker.log -Tail 30
 Stop-ScheduledTask  -TaskName "OKX-SignalChecker"; Get-Process python -EA SilentlyContinue | ? Path -like 'C:\OKXAI\*' | Stop-Process -Force
 Start-ScheduledTask -TaskName "OKX-SignalChecker"
 
+# keep it stopped (maintenance, key rotation). Since 2026-10-12 the task restarts
+# itself within 5 minutes, so a plain Stop is undone - disable it instead:
+Disable-ScheduledTask -TaskName "OKX-SignalChecker"; Stop-ScheduledTask -TaskName "OKX-SignalChecker"; Get-Process python -EA SilentlyContinue | ? Path -like 'C:\OKXAI\*' | Stop-Process -Force
+Enable-ScheduledTask  -TaskName "OKX-SignalChecker"; Start-ScheduledTask -TaskName "OKX-SignalChecker"
+
 # deploy an update
 # Stop the task AND kill the running python first: Stop-ScheduledTask ends the
 # task, not the process the wrapper already launched. Pulling without the kill
@@ -94,23 +99,38 @@ Get-Content C:\OKXAI\logs\okx-signal-checker.log -Tail 40
 ## "OKX STILL SILENT · task=Ready · py=0"
 
 That is `watchdog-okx.ps1` reporting that the log has stopped growing, the task is
-idle and no worker process exists. Before 2026-09-21 the task was registered
-`Interactive` + at-logon only, so signing out of RDP (or a reboot without
-auto-logon) killed the worker and nothing restarted it. It happened twice.
+idle and no worker process exists — the runner itself has ended.
 
-A task registered by an older `bootstrap-okx.ps1` still has that setup. Convert it
-in place (elevated PowerShell, one time), then start it:
+- Before 2026-09-21 the task was `Interactive` + at-logon only, so signing out of
+  RDP killed the worker and nothing restarted it. Fixed with `S4U` + at-startup.
+- On 2026-10-12 it happened a third time under `S4U`, with nobody signing out.
+  Whatever the cause, the task now also has a **repeating trigger every 5
+  minutes**: when the runner is not running it is started, when it is,
+  `MultipleInstances IgnoreNew` makes the firing a no-op (never two runners —
+  that would mean duplicate trades). An outage now lasts at most ~5 minutes.
+
+A task registered by an older `bootstrap-okx.ps1` lacks some of that. Bring it up
+to date in place (elevated PowerShell, one time):
 ```powershell
-Stop-ScheduledTask -TaskName "OKX-SignalChecker"
-Get-Process python -EA SilentlyContinue | ? Path -like 'C:\OKXAI\*' | Stop-Process -Force
 $p = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType S4U -RunLevel Highest
-$t = @((New-ScheduledTaskTrigger -AtStartup), (New-ScheduledTaskTrigger -AtLogOn))
+$t = @((New-ScheduledTaskTrigger -AtStartup), (New-ScheduledTaskTrigger -AtLogOn), (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5)))
 Set-ScheduledTask -TaskName "OKX-SignalChecker" -Principal $p -Trigger $t
 Start-ScheduledTask -TaskName "OKX-SignalChecker"
 ```
-Re-running `bootstrap-okx.ps1` does the same thing. The stop-and-kill first
-matters: a logon may already have started a runner under the old setup, and two
-runners at once means duplicate trades.
+Re-running `bootstrap-okx.ps1` does the same thing. Check the repeat stuck with
+`(Get-ScheduledTask -TaskName "OKX-SignalChecker").Triggers | % { $_.Repetition.Interval }`
+— one line should read `PT5M`.
+
+To find out *why* a runner ended, before restarting it (a restart overwrites the
+last result):
+```powershell
+$i = Get-ScheduledTaskInfo -TaskName "OKX-SignalChecker"; "last run $($i.LastRunTime), result 0x{0:X}" -f $i.LastTaskResult
+"booted " + (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+Get-Content C:\OKXAI\logs\okx-signal-checker.log -Tail 20
+```
+`0x0` = the runner script ended on its own; `0x41306` = stopped by someone or
+something; `0x40010004` / `0xC000013A` = its process was killed (shutdown, logoff,
+console closed); a boot time close to the log's last line = a reboot.
 
 **Going back to GitHub Actions** is no longer a toggle - the workflow file was
 deleted. Recover it with

@@ -54,10 +54,22 @@ New-Item -ItemType Directory -Force -Path (Join-Path $Root "logs") | Out-Null
 #    stays as a second chance; MultipleInstances IgnoreNew makes it a no-op while
 #    the task is already running, so a logon can never start a second runner
 #    (two runners = duplicate trades).
+#
+#    EVERY 5 MINUTES, added 2026-10-12 after a third outage with the same
+#    signature, this time under S4U and with nobody signing out: the runner ended
+#    and nothing started it again. RestartCount above only covers a run Task
+#    Scheduler itself counts as failed, and evidently did not fire. Whatever
+#    ends the runner - a crash, a killed process, a boot-time start that never
+#    happened - this trigger starts it again within five minutes, and while it is
+#    running IgnoreNew makes every firing a no-op. Consequence for maintenance:
+#    Stop-ScheduledTask alone is undone within five minutes. To keep the worker
+#    stopped, Disable-ScheduledTask (and Enable-ScheduledTask to resume).
 $runner   = Join-Path $Root "infra\run-okx.ps1"
 $action   = New-ScheduledTaskAction -Execute "powershell.exe" `
               -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runner`""
-$trigger  = @((New-ScheduledTaskTrigger -AtStartup), (New-ScheduledTaskTrigger -AtLogOn))
+$trigger  = @((New-ScheduledTaskTrigger -AtStartup), (New-ScheduledTaskTrigger -AtLogOn),
+              (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+                  -RepetitionInterval (New-TimeSpan -Minutes 5)))
 $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" `
               -LogonType S4U -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet `
@@ -67,7 +79,7 @@ $settings = New-ScheduledTaskSettingsSet `
               -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName "OKX-SignalChecker" -Action $action -Trigger $trigger `
     -Principal $principal -Settings $settings -Force | Out-Null
-Write-Host "  task 'OKX-SignalChecker' registered (runs logged on or not, starts at boot)" -ForegroundColor Green
+Write-Host "  task 'OKX-SignalChecker' registered (runs logged on or not, starts at boot, restarted within 5 min if it stops)" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "Done. Start it now with:" -ForegroundColor Cyan

@@ -3,6 +3,27 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-10-12 — The worker restarts itself within 5 minutes, whatever stopped it
+
+Third outage with the watchdog's `task=Ready · py=0` signature: on 2026-10-12 the
+log stopped and stayed stopped for 2+ hours. Unlike the first two, nobody signed out
+— the task has run as `S4U` since 2026-09-21 — so the sign-out fix did not cover it.
+The runner (`run-okx.ps1`) ended and nothing started it again; the task's
+restart-on-failure setting evidently did not count this as a failure.
+
+The cause is not known at the time of writing (diagnostic in `infra/VPS-SETUP.md`).
+Rather than wait for it, `bootstrap-okx.ps1` now adds a third trigger: **every 5
+minutes, forever**. When the runner is not running it starts it; when it is,
+`MultipleInstances IgnoreNew` makes the firing a no-op, so there are never two
+runners (two would place duplicate trades). Any future cause — a crash, a killed
+process, a boot-time start that never happened — now costs at most ~5 minutes of
+scans instead of hours. Open trades were never exposed: stops live on OKX.
+
+Consequence for maintenance: `Stop-ScheduledTask` alone is undone within 5 minutes.
+To keep the worker stopped (e.g. while rotating keys), `Disable-ScheduledTask`, then
+`Enable-ScheduledTask` to resume — both in `VPS-SETUP.md`. The trigger was checked to
+repeat indefinitely (`Repetition.Duration` empty) on PowerShell 5.1.
+
 ## 2026-10-09 — STRONG BUY bar 4.5 → 4.0, and a break-even stop in phase 1
 
 Owner asked for more trades and better profit odds after a review of the live book.
