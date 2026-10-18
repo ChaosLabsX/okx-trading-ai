@@ -337,8 +337,11 @@ TRAIL_BOUNDS   = (1.0, 5.0)
 
 # Break-even stop, added 2026-10-09. Once price has covered this fraction of the
 # distance from entry to the partial take-profit, the monitor moves the stop on
-# BOTH halves up to the entry price (_maybe_move_to_breakeven). A trade that then
-# turns back exits at about -0.2% (fees) instead of the full stop.
+# BOTH halves up to the break-even price (_maybe_move_to_breakeven, _be_price). A
+# trade that then turns back exits at about $0 instead of the full stop. Until
+# 2026-10-19 that stop sat at the entry price itself, so a "break-even" exit still
+# paid both fees: -0.2%, -$0.35 on the first live one (TRX). See
+# BREAKEVEN_MARGIN_PCT for where it sits now.
 #
 # Why: the live book's problem is the payoff shape, not the win rate. Over 38
 # closed trades: 55% winners, average win +2.85%, average loss -3.52%, and the stop
@@ -363,9 +366,21 @@ TRAIL_BOUNDS   = (1.0, 5.0)
 # the bumps between neighbours are noise, which is why 0.7 is the middle of the
 # range rather than its best point. Expect roughly +$0.10 per $100 trade, a
 # smaller worst streak, and 10-20% more trades because stalled trades free their
-# slot sooner. Cost: more exits at about -0.2%, so the win rate SHOWN drops
-# (~53% -> ~41% in the replay) while the money improves. Set 0 to turn it off.
+# slot sooner. Cost: more exits near $0, so the win rate SHOWN drops (~53% ->
+# ~41% in the replay) while the money improves. Set 0 to turn it off.
 BREAKEVEN_TRIGGER_FRAC = 0.7
+
+# Where the break-even stop sits: the price at which selling BOTH halves nets
+# exactly $0 after both fees, as _exit_pnl counts them, i.e.
+#     entry * (1 + OKX_FEE_RATE) / (1 - OKX_FEE_RATE)   (= entry +0.2%)
+# plus this margin. The margin is for slippage: a stop sells at MARKET when it
+# triggers, so the fill lands a little off the stop price. Measured on the 20
+# live stop exits to 2026-10-19: median -0.034%, 9 in 10 within -0.09%, worst
+# -0.20%. At 0.1% about 9 in 10 break-even exits finish at $0 or a few cents
+# above, and the rest within a few cents below. Exactly $0.00 every time is not
+# possible with a market stop, and a stop-LIMIT that could promise the price is
+# worse: on a gap down it would not fill, leaving the coins with no stop at all.
+BREAKEVEN_MARGIN_PCT = 0.1
 SR_TP_GAP_PCT  = 0.5            # sell this far below the nearest resistance
 SR_SL_GAP_PCT  = 0.75           # stop this far below the nearest support
 
@@ -1401,8 +1416,9 @@ conditions it was ENTERED on and what price did AFTER the exit. Use it:
 - LEFT_MONEY verdict = price ran well past our exit → widen trailingCallbackPct
 - Exit reasons: sl = full stop-loss; tp_trail = take-profit then trailing exit; be_stop = the
   trade got {BREAKEVEN_TRIGGER_FRAC:.0%} of the way to its target, the code moved both stops to the
-  entry price, and price came back — a scratch (about −0.2% in fees), NOT a stop-loss and NOT
-  evidence the slPct was wrong; break_even = first half took profit, second exited at entry.
+  break-even price (entry plus fees), and price came back — a scratch (about $0), NOT a stop-loss
+  and NOT evidence the slPct was wrong; break_even = first half took profit, second exited at
+  break-even.
 - This coin repeatedly stopping out on similar conditions → require a stronger setup or SKIP
 - Overall results negative → size toward the LOWER end of the capital range
 - YOUR PAST SKIPS: MISSED_WIN means you were too cautious in those conditions;
@@ -2242,6 +2258,13 @@ def _be_active(trade):
         return False
 
 
+def _be_price(entry_px):
+    """The break-even stop price: both halves sold here net ~$0 after both fees
+    (see BREAKEVEN_MARGIN_PCT). Also the estimate for a break-even fill whose real
+    price OKX did not return."""
+    return entry_px * (1 + OKX_FEE_RATE) / (1 - OKX_FEE_RATE) * (1 + BREAKEVEN_MARGIN_PCT / 100)
+
+
 def _update_trade(trade_id, updates, attempts=3):
     """PATCH a trade row without changing its phase, retrying. True on success."""
     for i in range(attempts):
@@ -2372,9 +2395,17 @@ def _maybe_move_to_breakeven(trade):
     if seen < trigger:
         return False
 
-    coin = symbol.replace('-USDT', '')
+    coin  = symbol.replace('-USDT', '')
+    be_px = _be_price(entry_px)
+    if be_px >= trigger:
+        # Only reachable with a misconfigured trigger (TP_BOUNDS keeps the 70% line
+        # at +1.05% or more, the break-even price is ~+0.3%). A sell stop above the
+        # market would fire at once, which is a sale, not a stop move.
+        print(f'  [BE] {symbol}: break-even price {fmt_price(be_px)} is not below the '
+              f'trigger {fmt_price(trigger)} — not moving')
+        return False
     base = {'instId': symbol, 'tdMode': 'cash', 'side': 'sell', 'sz': f'{sz_half:.8f}'}
-    at_entry, at_sl = f'{entry_px:.8f}', f'{entry_px * (1 - sl_pct / 100):.8f}'
+    at_be, at_sl = f'{be_px:.8f}', f'{entry_px * (1 - sl_pct / 100):.8f}'
     stop = lambda px: {**base, 'ordType': 'conditional',
                        'slTriggerPx': px, 'slOrdPx': '-1', 'slTriggerPxType': 'last'}
     oco  = lambda px: {**base, 'ordType': OCO_ORD_TYPE,
@@ -2382,11 +2413,11 @@ def _maybe_move_to_breakeven(trade):
                        'tpTriggerPxType': 'last',
                        'slTriggerPx': px, 'slOrdPx': '-1', 'slTriggerPxType': 'last'}
     print(f'  [BE] {symbol}: {fmt_price(seen)} is {BREAKEVEN_TRIGGER_FRAC:.0%}+ of the way to TP '
-          f'— moving both stops to entry {fmt_price(entry_px)}')
+          f'— moving both stops to break-even {fmt_price(be_px)} (entry {fmt_price(entry_px)} + fees)')
 
     # Second half first: a plain stop, the simpler swap. If it does not move, the
     # OCO is not touched this pass.
-    st2, new_sl2 = _replace_algo(symbol, sl2_id, 'conditional', stop(at_entry), stop(at_sl))
+    st2, new_sl2 = _replace_algo(symbol, sl2_id, 'conditional', stop(at_be), stop(at_sl))
     if st2 == 'naked':
         _breakeven_unwind(trade, [oco_id], 'second-half stop could not be re-placed')
         return True
@@ -2396,7 +2427,7 @@ def _maybe_move_to_breakeven(trade):
                           f"as {new_sl2} but the database still has {sl2_id}. Check OKX.")
         return st2 == 'restored'
 
-    st1, new_oco = _replace_algo(symbol, oco_id, OCO_ORD_TYPES, oco(at_entry), oco(at_sl))
+    st1, new_oco = _replace_algo(symbol, oco_id, OCO_ORD_TYPES, oco(at_be), oco(at_sl))
     if st1 == 'naked':
         _breakeven_unwind(trade, [new_sl2], 'first-half OCO could not be re-placed')
         return True
@@ -2404,7 +2435,7 @@ def _maybe_move_to_breakeven(trade):
     if st1 != 'kept':
         updates.update({'partial_tp_id': new_oco, 'sl_id': new_oco})
     if st1 == 'moved':
-        updates['sl_pct'] = 0          # both halves at entry: see _be_active
+        updates['sl_pct'] = 0          # both halves at break-even: see _be_active
     # 'kept' means the OCO could not be cancelled, normally because its take-profit
     # just filled. The next pass sees the TP and swaps the (now break-even) second
     # stop for the trailing stop as usual.
@@ -2417,8 +2448,8 @@ def _maybe_move_to_breakeven(trade):
         send_telegram(f"🛡️ <b>Stop Moved to Break-Even — {coin}</b>\n"
                       f"📈 Price reached {fmt_price(seen)}, {BREAKEVEN_TRIGGER_FRAC:.0%} of the way "
                       f"to the +{tp_pct}% target\n"
-                      f"🔒 If it turns back, both halves now exit at entry {fmt_price(entry_px)} "
-                      f"(about −0.2% in fees) instead of −{sl_pct}%")
+                      f"🔒 If it turns back, both halves now exit at {fmt_price(be_px)} — your entry "
+                      f"{fmt_price(entry_px)} plus fees — for about $0 instead of −{sl_pct}%")
     return True
 
 
@@ -2880,7 +2911,8 @@ def _close_full_position_at_sl(trade, sl_fill_px):
 
     estimated = False
     if not sl_fill_px and entry_px > 0 and (sl_pct > 0 or be):
-        sl_fill_px = entry_px * (1 - sl_pct / 100)   # SL trigger price (= entry at break-even)
+        # The trigger price: the break-even price when the stop was moved, else the SL.
+        sl_fill_px = _be_price(entry_px) if be else entry_px * (1 - sl_pct / 100)
         estimated  = True
     if half2_px is None:
         half2_px = sl_fill_px
@@ -2917,11 +2949,22 @@ def _close_full_position_at_sl(trade, sl_fill_px):
     extra = '' if second_half_sold else '\n⚠️ Could not auto-sell remaining 50% — check OKX'
     result_label = 'Total profit' if is_profit else 'Total loss'
     if be:
+        # The point of this exit is the money line, so it is the plain net after
+        # both fees, to the cent — "$0.00", "+$0.06", "−$0.03" — not the gross /
+        # fee split the stop-loss message uses, which made a scratch look like a
+        # "−$0.35 (+0.0%)" loss.
+        if net_total is None:
+            money = 'about $0'
+        elif abs(net_total) < 0.005:
+            money = '$0.00 USDT after fees'
+        else:
+            money = f"{'~' if estimated else ''}{'+' if net_total > 0 else '−'}${abs(net_total):.2f} USDT after fees"
         send_telegram(
             f"⚪ <b>Break-Even Stop — {coin}</b>\n"
-            f"🛡️ Price turned back after the stop had been moved to entry\n"
-            f"💸 Result: {result_str}\n"
-            f"{detail}\n"
+            f"🛡️ Price turned back after the stop had been moved to break-even\n"
+            f"💸 Result: {money}\n"
+            f"📍 Entry: {fmt_price(entry_px)} → Exit: {'~' if estimated else ''}"
+            f"{fmt_price(avg_exit) if avg_exit else '—'}\n"
             f"✅ Full position closed (both halves){extra}"
         )
         return
@@ -3032,16 +3075,17 @@ def monitor_option3_trades():
                             print(f'  [Option3] {symbol}: 2nd-half SL also fired (whipsaw) — closing...')
                             half2_px = _get_fill_price(sl2_id, 'conditional', symbol)
                             sl_pct_v = float(trade.get('sl_pct', 0) or 0)
-                            # After a break-even move the 2nd half's stop is AT entry:
-                            # first half took profit, second exited at entry. That is
-                            # exactly what 'break_even' already means in phase 2.
+                            # After a break-even move the 2nd half's stop is at the
+                            # break-even price: first half took profit, second exited at
+                            # ~$0. That is what 'break_even' already means in phase 2.
                             be       = _be_active(trade)
                             est2 = estimated
                             if not half2_px and entry_px > 0 and (sl_pct_v > 0 or be):
-                                half2_px, est2 = entry_px * (1 - sl_pct_v / 100), True
+                                half2_px = _be_price(entry_px) if be else entry_px * (1 - sl_pct_v / 100)
+                                est2 = True
                             msg = [f"🔄 <b>Fast Reversal — {coin}</b>",
                                    f"✅ TP hit on first 50%: {profit_line}"]
-                            what  = 'exited at entry (break-even stop)' if be else 'stopped out'
+                            what  = 'exited at break-even' if be else 'stopped out'
                             whole = None
                             if half2_px and entry_px > 0 and tp_pnl is not None:
                                 pnl2, _, _, _ = _exit_pnl(entry_px, half2_px, sz_half)

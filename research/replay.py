@@ -125,9 +125,12 @@ def exits(e, tp_mult, sl_mult, tr_mult):
         sc.ATR_TP_MULT, sc.ATR_SL_MULT, sc.ATR_TRAIL_MULT = old
 
 
-def simulate(c, entry_i, ex, be_atr=None, atr=None, time_stop_h=None, be_frac=None):
+def simulate(c, entry_i, ex, be_atr=None, atr=None, time_stop_h=None, be_frac=None, be_stop=None):
     """Returns (exit_i, type, pnl_fraction_of_stake). Break-even trigger either at
-    +be_atr x ATR above entry, or at be_frac of the way to the take-profit."""
+    +be_atr x ATR above entry, or at be_frac of the way to the take-profit.
+    be_stop: where the stop goes once triggered, as a multiple of entry. None = the
+    live rule (signal_checker._be_price: entry + both fees + margin, since
+    2026-10-19); 1.0 = the entry price itself, as live 2026-10-09 to 10-19."""
     mo, mh, ml, mc = c.m['o'], c.m['h'], c.m['l'], c.m['c']
     if entry_i >= c.n:
         return None
@@ -136,11 +139,12 @@ def simulate(c, entry_i, ex, be_atr=None, atr=None, time_stop_h=None, be_frac=No
     sl_px, tp_px = e * (1 - ex['sl'] / 100), e * (1 + ex['tp'] / 100)
     be_px = (e * (1 + be_atr * atr / 100) if be_atr else
              e * (1 + be_frac * ex['tp'] / 100) if be_frac else None)
+    be_stop_px = sc._be_price(e) if be_stop is None else e * be_stop
     stop_deadline = entry_i + int(time_stop_h * 60) if time_stop_h else None
     phase, banked, peak, at_be = 1, 0.0, 0.0, False
     for i in range(entry_i, c.n):
         if phase == 1:
-            stop = e if at_be else sl_px
+            stop = be_stop_px if at_be else sl_px
             if ml[i] <= stop:
                 fill = mo[i] if mo[i] <= stop else stop
                 return i, ('be' if at_be else 'sl'), nf(fill)
@@ -226,7 +230,8 @@ def portfolio(coins, events, t_from, v):
             if not ex:
                 continue
             c = coins[e['coin']]
-            out = simulate(c, e['entry_i'], ex, v.get('be_atr'), e['atr'], v.get('time_stop_h'), v.get('be_frac'))
+            out = simulate(c, e['entry_i'], ex, v.get('be_atr'), e['atr'], v.get('time_stop_h'),
+                           v.get('be_frac'), v.get('be_stop'))
             if out is None:
                 continue
             exit_i, typ, frac = out

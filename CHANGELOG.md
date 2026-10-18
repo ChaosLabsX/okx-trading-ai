@@ -3,6 +3,52 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-10-19 — The break-even stop sits at entry + fees, so it exits at about $0
+
+The first live break-even exit (TRX, 2026-10-18) closed at **−$0.35** on $180: the stop
+sat at the entry price, so both fees were still paid. Owner's call: a break-even exit
+must not be a loss.
+
+**What changed.** `_be_price(entry)` = entry × (1 + fee) / (1 − fee) — the price at which
+selling both halves nets exactly $0 after both fees, as `_exit_pnl` counts them (entry
++0.2%) — plus `BREAKEVEN_MARGIN_PCT = 0.1` for slippage, so about entry +0.3%. The
+margin is measured, not guessed: over the 20 live stop exits so far, fills landed
+a median 0.034% below the stop price, 9 in 10 within 0.092%, the worst 0.204%. On the TRX
+trade that would have been about **+$0.12** at median slippage, +$0.01 at the 90th
+percentile, −$0.19 at the worst ever seen — against −$0.35. Exactly $0.00 every time is
+not possible: a stop sells at market. A stop-LIMIT could promise the price but on a gap
+down it would not fill, leaving the coins with no stop at all, so it was not used.
+
+- Telegram: the move says "both halves now exit at $X — your entry plus fees — for about
+  $0"; the exit says "Result: $0.00 / +$0.06 / −$0.03 USDT after fees", the plain net,
+  instead of the old "−$0.35 USDT (+0.0% incl. fees)".
+- Unknown fills are estimated at the break-even price, in the stop exit and in the "TP
+  then break-even" reversal; a misconfigured trigger below the break-even price refuses
+  to move rather than placing a stop above the market. The AI prompt's `be_stop` and
+  `break_even` definitions say "about $0".
+
+**Measured** (`research/run_exp3.py` → `exp3.txt`, live rules incl. the 4.0 bar, four
+82-day windows; the same trades and paths, only the stop level after the trigger moves):
+
+| break-even stop at | net $ | worst streak | BE exits | avg BE exit | better than "at entry" |
+|---|---|---|---|---|---|
+| entry (2026-10-09 → 10-19) | +0.35 | 33.7 | 52 | −0.20% | — |
+| entry + fees | −0.38 | 32.5 | 55 | −0.01% | 3 of 4 windows |
+| **entry + fees + 0.1% (live)** | **−1.20** | 32.9 | 58 | **+0.09%** | 3 of 4 windows |
+| entry + fees + 0.2% | +2.77 | 31.3 | 59 | +0.19% | 3 of 4 windows |
+
+A wash in total: each break-even exit gains ~0.3%, a few more trades get stopped near
+entry instead of recovering, and the ±$2 spread between neighbours is noise. So this is a
+preference with no measurable cost, not an edge. The re-downloaded data reproduced the
+2026-10-09 figures exactly (−$12.00 without break-even, +$0.35 with), so the replay is
+consistent.
+
+**Also:** the break-even test is now in the repo (`tests/test_breakeven.py`, 35 checks
+against a simulated OKX — run it after any change to order handling); it had lived in a
+temp folder twice and nearly been lost. `research/replay.py` models the live stop
+(`be_stop=None`), and its data now downloads into `research/w*/` (git-ignored) rather
+than a temp folder that Windows cleans. A project `.venv/` (git-ignored) runs both.
+
 ## 2026-10-12 — The worker restarts itself within 5 minutes, whatever stopped it
 
 Third outage with the watchdog's `task=Ready · py=0` signature: on 2026-10-12 the

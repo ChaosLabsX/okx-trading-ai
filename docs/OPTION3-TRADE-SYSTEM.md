@@ -12,8 +12,8 @@
     │                     └─ 2nd-half SL swapped for an ACTIVE trailing stop
     │                        (floor = peak − trail% — above entry since trail% < TP%)
     │
-    ├──► price reaches 70% of the way to TP (Phase 1) ── BOTH stops moved up to entry
-    │        └─► turns back: both halves exit at ≈ entry (−fees only, `be_stop`)
+    ├──► price reaches 70% of the way to TP (Phase 1) ── BOTH stops moved up to break-even
+    │        └─► turns back: both halves exit at entry + fees ≈ $0 (`be_stop`)
     │
     └──► SL hit (Phase 1) ── BOTH halves stopped out at −SL% on OKX (max loss capped)
 ```
@@ -56,11 +56,11 @@ Because TP and SL share one algo ID, the monitor tells them apart by **fill pric
   1. New format: the 2nd-half SL shares the trigger price, so OKX normally sold **both halves server-side already** — the monitor just collects both fills (with a 2 s grace re-check). Market-sell is only a fallback (after cancelling the 2nd SL so it can't double-sell), and legacy rows always use it.
   2. Mark closed (`exit_reason = sl`, whole-trade net P&L recorded) and send Telegram: exact total USDT loss across both halves incl. fees, entry → exit average.
 - **OCO manually cancelled on OKX:** the 2nd-half SL and any trailing stop are cancelled too, trade marked closed (`cancelled`), Telegram notice (fresh signals will open a new trade for that coin).
-- **Neither fired → break-even check** (`_maybe_move_to_breakeven()`, since 2026-10-09). Once price has covered `BREAKEVEN_TRIGGER_FRAC` (0.7) of the way from entry to the TP — the highest of the ticker and the last three 1-minute candles, so a touch between ~2-minute monitor passes still counts — the stops on **both halves** move to the entry price: the 2nd-half SL first, then the OCO (re-placed with the same TP and SL = entry). OKX freezes the coins behind a sell algo, so each swap is cancel-then-place, never overlapped:
+- **Neither fired → break-even check** (`_maybe_move_to_breakeven()`, since 2026-10-09). Once price has covered `BREAKEVEN_TRIGGER_FRAC` (0.7) of the way from entry to the TP — the highest of the ticker and the last three 1-minute candles, so a touch between ~2-minute monitor passes still counts — the stops on **both halves** move to the break-even price (`_be_price()`: entry × (1 + fee) / (1 − fee), the price at which selling both halves nets $0 after both fees, plus `BREAKEVEN_MARGIN_PCT` 0.1% for market-stop slippage — about entry +0.3%; until 2026-10-19 it was the entry price itself, which left −0.2% in fees): the 2nd-half SL first, then the OCO (re-placed with the same TP and SL = that price). OKX freezes the coins behind a sell algo, so each swap is cancel-then-place, never overlapped:
   - Cancel refused → nothing changes; retried next pass. A cancel whose reply was lost is checked against OKX history before anything is assumed.
   - Replacement rejected → the original order is put back (new id recorded); retried next pass.
   - Replacement **and** restore rejected → that half is unprotected, so the remaining orders are cancelled and the whole position is market-sold (it is in profit at this point), trade closed as `error`, Telegram.
-  - The row gets the new `partial_tp_id` / `sl_id` / `sl2_id`, and `sl_pct = 0` once both halves sit at entry — that is the "break-even active" flag (`_be_active()`); the AI's original stop stays in `entry_context.chosen.sl_pct`. If the row update fails three times, an urgent Telegram lists the new ids.
+  - The row gets the new `partial_tp_id` / `sl_id` / `sl2_id`, and `sl_pct = 0` once both halves sit at break-even — that is the "break-even active" flag (`_be_active()`); the AI's original stop stays in `entry_context.chosen.sl_pct`. If the row update fails three times, an urgent Telegram lists the new ids.
   - A later exit through the entry stop is recorded as `be_stop` (Telegram "Break-Even Stop"), not `sl`, so it stays out of the 3-stop-losses circuit breaker and the journal grades it as an exit rather than a too-tight stop. TP then entry-stop on the 2nd half is `break_even`.
   - Because a break-even stop can fill a hair **above** entry, TP vs SL is decided by the fill against the **midpoint** between entry and the TP price, not against entry itself.
 - A legacy branch handles old rows where TP and SL were separate algo IDs (`is_oco == False`) — same flow.

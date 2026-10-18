@@ -17,6 +17,7 @@ be modelled at all.
 | `replay.py` | The engine. Real functions from `signal_checker.py` for every decision (signal, reversal gate, volume gate, ATR, support/resistance, exits, correlation guard, ranking); portfolio rules as in `run_scan`. The AI advisor is **not** modelled; $100 per trade. |
 | `run_exp.py` | 17 exit / sizing / frequency variants over the four windows → `exp1.txt`. |
 | `run_exp2.py` | Neighbourhood scans: break-even trigger (6 ATR-based, 6 fraction-of-TP) and score bar 3.5–5.0 → `exp2.txt`. |
+| `run_exp3.py` | Where the break-even stop sits once triggered: entry, entry + fees, entry + fees + margin → `exp3.txt` (2026-10-19). |
 | `chk_bucket.py` | Every setup traded alone, by score bucket → `score_buckets.txt`. |
 | `chk_score.py` | Score-4.0 trades vs 4.5+ trades inside the portfolio. |
 | `live_stats.py` | The live record from Supabase (read-only, public key). |
