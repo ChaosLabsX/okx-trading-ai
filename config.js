@@ -53,6 +53,15 @@ const CONFIG = {
   // score, label and reason strings. Change one side, change the other.
   STRONG_BUY_SCORE: 4.0,
 
+  // Placing trades from the dashboard's AI Advisor. OFF since 2026-11-03. A trade
+  // placed here only gets its second-half stop-loss from the worker, which finds the
+  // trade through a row this page writes to Supabase with the public key — and the
+  // public key is now read-only on trades (infra/supabase-2-lock-public-key.sql),
+  // because anything it can write, anyone can. Left on, a manual trade would be
+  // placed but never tracked: half the position with no stop. The AI's analysis and
+  // suggestions still show; act on them in the OKX app if you want to.
+  MANUAL_TRADING: false,
+
   // Refresh timing
   AUTO_REFRESH_INTERVAL: 60_000,       // 1 minute (crypto moves fast)
   NEWS_REFRESH_INTERVAL: 10 * 60_000,  // 10 minutes

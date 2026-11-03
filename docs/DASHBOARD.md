@@ -63,7 +63,9 @@ Browser alerts are **toasts only** — Telegram for STRONG BUY is handled exclus
   - `buildPrompt()` — per-coin technical snapshot, derivatives context (funding rate, open interest), portfolio with live P&L, news headlines + sentiment %.
 - The response is rendered as markdown; any `[TRADE:{...}]` tags are parsed (`parseTradeActions`) into **action buttons** ("⚡ Option 3 Trade · 🟢 BUY AVAX · TP50% +5% · Trail 3% · SL −8%").
 
-### 5. Trade execution (`showTradeConfirmation()` → `executeTrade()`)
+### 5. Trade execution (`showTradeConfirmation()` → `executeTrade()`) — OFF since 2026-11-03
+
+`CONFIG.MANUAL_TRADING` is `false`: the AI Advisor's `[TRADE]` suggestions render as disabled buttons with a note to use the OKX app, and both `showTradeConfirmation()` and `executeTrade()` refuse before anything reaches OKX. Reason: a manual trade's second half only gets a stop-loss from the worker, which finds it through a row this page writes with the public Supabase key — and that key is now read-only on trades (`infra/supabase-2-lock-public-key.sql`). Left on, a manual trade would be placed but never tracked. The description below is how it works when switched back on.
 
 Clicking an action button opens a confirmation modal where amount, partial-TP %, trailing %, and SL % are all **editable** with live price previews. Confirming runs the same Option 3 placement sequence as the worker:
 
@@ -96,7 +98,7 @@ Three layers: `"orientation": "portrait"` in both manifests (locks installed PWA
 
 ### 11. Settings modal
 
-Sections: Supabase config, Claude API key, Telegram (token/chat ID), OKX keys (Read + Trade, no Withdraw), **Cloud Security** (password + "Save All to Cloud" → encrypt to Supabase `app_settings`), scanner export/import JSON, full reset. Risk profile (`aggressive`) and auto-refresh interval (1 minute) are fixed in `config.js` and intentionally absent from the UI.
+Sections: Supabase config, Claude API key, Telegram (token/chat ID), OKX keys (Read + Trade, no Withdraw), **Cloud Security** (password + "Save All to Cloud" → encrypt to Supabase `app_settings`: PBKDF2-SHA256, 600 000 rounds, AES-GCM. Since 2026-11-03 no password hash is stored — the password is checked by decrypting, so a guess costs the full PBKDF2; the row's `password_hash` column holds only a format marker like `pbkdf2-600000`. Rows saved earlier still open, at 100 000 rounds, and unlocking one shows a one-time reminder to re-save), scanner export/import JSON, full reset. Risk profile (`aggressive`) and auto-refresh interval (1 minute) are fixed in `config.js` and intentionally absent from the UI.
 
 ## Refresh behavior
 

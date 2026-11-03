@@ -227,15 +227,21 @@ function randomHex(bytes) {
     .map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function hashPassword(password, salt) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password + salt));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
+// PBKDF2 rounds for settings saved from now on (OWASP's figure for PBKDF2-SHA256).
+// Rows saved before 2026-11-03 used 100 000 and still open — see loadFromCloud.
+const PBKDF2_ITERATIONS = 600_000;
+const LEGACY_PBKDF2_ITERATIONS = 100_000;
 
-async function deriveKey(password, salt) {
+// There is deliberately no password hash any more. The settings row used to store
+// SHA-256(password + salt) to check the password before decrypting, and that row is
+// readable with the public key that ships in config.js. One SHA-256 per guess let
+// anyone holding the row try billions of passwords a second offline, skipping the
+// slow PBKDF2 entirely. The password is now checked by decrypting: AES-GCM refuses
+// a wrong key, so every guess costs the full PBKDF2.
+async function deriveKey(password, salt, iterations = LEGACY_PBKDF2_ITERATIONS) {
   const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: new TextEncoder().encode(salt), iterations: 100_000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: new TextEncoder().encode(salt), iterations, hash: 'SHA-256' },
     base,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -243,8 +249,8 @@ async function deriveKey(password, salt) {
   );
 }
 
-async function encryptJSON(obj, password, salt) {
-  const key = await deriveKey(password, salt);
+async function encryptJSON(obj, password, salt, iterations) {
+  const key = await deriveKey(password, salt, iterations);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const buf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(obj)));
   return {
@@ -253,8 +259,8 @@ async function encryptJSON(obj, password, salt) {
   };
 }
 
-async function decryptJSON(encB64, ivB64, password, salt) {
-  const key = await deriveKey(password, salt);
+async function decryptJSON(encB64, ivB64, password, salt, iterations) {
+  const key = await deriveKey(password, salt, iterations);
   const encrypted = Uint8Array.from(atob(encB64), c => c.charCodeAt(0));
   const iv = Uint8Array.from(atob(ivB64), c => c.charCodeAt(0));
   const buf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encrypted);
@@ -294,12 +300,15 @@ async function saveToCloud(password) {
     tgToken: CONFIG.TELEGRAM_BOT_TOKEN, tgChatId: CONFIG.TELEGRAM_CHAT_ID,
   };
   const salt = randomHex(16);
-  const password_hash = await hashPassword(password, salt);
-  const { encrypted, iv } = await encryptJSON(payload, password, salt);
+  const { encrypted, iv } = await encryptJSON(payload, password, salt, PBKDF2_ITERATIONS);
+  // `password_hash` keeps its column name but now holds only a format marker — the
+  // PBKDF2 round count — and nothing derived from the password (see deriveKey).
+  // Saving overwrites the old row, so the old fast hash is gone after one save.
   const res = await fetch(`${getSupabaseCfg().url}/rest/v1/app_settings`, {
     method: 'POST',
     headers: sbHeaders({ 'Prefer': 'resolution=merge-duplicates,return=minimal' }),
-    body: JSON.stringify({ id: 'main', password_hash, encrypted_data: encrypted, iv, salt }),
+    body: JSON.stringify({ id: 'main', password_hash: `pbkdf2-${PBKDF2_ITERATIONS}`,
+                           encrypted_data: encrypted, iv, salt }),
   });
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
@@ -316,9 +325,30 @@ async function loadFromCloud(password) {
   const rows = await res.json();
   if (!rows.length) throw new Error('No cloud data found. Fill in your settings and click "Save All to Cloud" first.');
   const row = rows[0];
-  const hash = await hashPassword(password, row.salt);
-  if (hash !== row.password_hash) throw new Error('Incorrect password.');
-  return decryptJSON(row.encrypted_data, row.iv, password, row.salt);
+  // 'pbkdf2-600000' = saved by this version. Anything else is a row from before
+  // 2026-11-03: 100 000 rounds plus a SHA-256 password hash, which is ignored on
+  // purpose — the decryption below is the password check either way.
+  const fmt = /^pbkdf2-(\d+)$/.exec(row.password_hash || '');
+  const iterations = fmt ? Number(fmt[1]) : LEGACY_PBKDF2_ITERATIONS;
+  let data;
+  try {
+    data = await decryptJSON(row.encrypted_data, row.iv, password, row.salt, iterations);
+  } catch {
+    // AES-GCM rejects a wrong key outright (it authenticates), so a failed decrypt is
+    // a wrong password, not corrupted data.
+    throw new Error('Incorrect password.');
+  }
+  // Still the old format: the old fast hash sits in the row until one re-save.
+  state.cloudLegacy = !fmt;
+  return data;
+}
+
+// After an unlock that opened an old-format row: ask for the one re-save that
+// replaces it (new format, no password hash, 600 000 rounds).
+function remindCloudResave() {
+  if (!state.cloudLegacy) return;
+  toast('🔒 Security update: open ⚙ Settings and click "Save All to Cloud" once — ideally with a new, '
+        + 'long password. That removes the old password fingerprint from the database.', 'info', 15000);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -383,6 +413,7 @@ async function handleUnlock() {
     saveCloudAuth(password);
     el('lockScreen').style.display = 'none';
     toast('Unlocked — settings loaded from cloud ✓', 'success');
+    remindCloudResave();
     await loadAppData();
   } catch (err) {
     setLockError(err.message);
@@ -1528,8 +1559,11 @@ function renderAiResponse(text) {
   const displayed = text.replace(/\[TRADE:\{[^}]+\}\]/g, '').trim();
 
   let actionsHtml = '';
+  const manual = CONFIG.MANUAL_TRADING === true;
   if (actions.length) {
     actionsHtml = '<div class="trade-actions-bar">' +
+      (manual ? '' : '<div class="trade-actions-note">🔒 Manual trading from the dashboard is off — the bot '
+        + 'places and protects its own trades. To act on a suggestion below, use the OKX app.</div>') +
       actions.map((a, i) => {
         const isBuy = a.side === 'buy';
         const coin = a.symbol.replace('-USDT', '');
@@ -1537,8 +1571,8 @@ function renderAiResponse(text) {
         const detail = isO3
           ? `TP50% +${a.partialTpPct}% · Trail ${a.trailingCallbackPct}% · SL −${a.slPct}%`
           : `$${a.amountUsdt.toLocaleString()} USDT`;
-        return `<button class="btn-take-action ${isBuy ? '' : 'sell'}" data-idx="${i}">
-          ⚡ ${isO3 ? 'Option 3 Trade' : 'Take Action'} &nbsp;·&nbsp; ${isBuy ? '🟢 BUY' : '🔴 SELL'} ${coin} &nbsp;·&nbsp; ${detail}
+        return `<button class="btn-take-action ${isBuy ? '' : 'sell'}" data-idx="${i}"${manual ? '' : ' disabled'}>
+          ${manual ? '⚡' : '💡'} ${isO3 ? 'Option 3 Trade' : 'Take Action'} &nbsp;·&nbsp; ${isBuy ? '🟢 BUY' : '🔴 SELL'} ${coin} &nbsp;·&nbsp; ${detail}
         </button>`;
       }).join('') +
       '</div>';
@@ -1564,12 +1598,17 @@ function renderAiResponse(text) {
     detailsBtn.textContent = open ? 'Read Details ▼' : 'Hide Details ▲';
   });
 
-  el('aiResponseArea').querySelectorAll('.btn-take-action').forEach(btn => {
-    btn.addEventListener('click', () => showTradeConfirmation(state._tradeActions[+btn.dataset.idx]));
-  });
+  if (manual) {
+    el('aiResponseArea').querySelectorAll('.btn-take-action').forEach(btn => {
+      btn.addEventListener('click', () => showTradeConfirmation(state._tradeActions[+btn.dataset.idx]));
+    });
+  }
 }
 
 function showTradeConfirmation(action) {
+  if (CONFIG.MANUAL_TRADING !== true) {
+    toast('Manual trading from the dashboard is off — use the OKX app', 'info'); return;
+  }
   if (!CONFIG.OKX_API_KEY) {
     toast('Add your OKX API key in Settings to place trades', 'error'); return;
   }
@@ -1717,6 +1756,11 @@ async function saveOption3Trade({ id, symbol, entryPrice, partialTpId, slId, sl2
 }
 
 async function executeTrade(action, coinAmt) {
+  // Second guard: nothing reaches OKX from this page while manual trading is off
+  // (see MANUAL_TRADING in config.js), whatever path called it.
+  if (CONFIG.MANUAL_TRADING !== true) {
+    toast('Manual trading from the dashboard is off — use the OKX app', 'info'); return;
+  }
   const btn = el('tradeConfirmBtn');
   btn.disabled = true;
   btn.textContent = 'Placing order…';
@@ -2436,6 +2480,7 @@ async function init() {
         if (data.tgChatId) CONFIG.TELEGRAM_CHAT_ID = data.tgChatId;
         state.sessionPassword = saved;
         saveCloudAuth(saved); // refresh the 30-day TTL on successful use
+        remindCloudResave();
         await loadAppData();
         return;
       } catch {

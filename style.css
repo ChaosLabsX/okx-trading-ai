@@ -706,6 +706,15 @@ tr:hover .btn-row-del { opacity: 1; }
   border-color: #7f1d1d;
 }
 .btn-take-action.sell:hover { background: linear-gradient(135deg, #5a1414, #701616); }
+/* Manual trading off (CONFIG.MANUAL_TRADING): suggestions stay readable, not clickable. */
+.btn-take-action[disabled],
+.btn-take-action[disabled]:hover { opacity: .55; cursor: not-allowed; transform: none; }
+.trade-actions-note {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted, #9ca3af);
+  padding: 2px 2px 6px;
+}
 
 /* ─── Trade confirmation modal details ─── */
 .trade-detail-table {

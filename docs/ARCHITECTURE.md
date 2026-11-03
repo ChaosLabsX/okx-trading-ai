@@ -94,7 +94,12 @@ misconfiguration.
 
 ## Supabase
 
-One Supabase project. The URL and **anon key** ship publicly in `config.js` (this is by design — the anon key is meant to be public; data protection comes from encryption for settings, and row content for trades is not sensitive). The worker authenticates with `SUPABASE_URL` / `SUPABASE_KEY` GitHub Secrets, using the same REST (PostgREST) API.
+One Supabase project, two keys:
+
+- **Public `anon` key** — ships in `config.js`, so it is on GitHub and on the website and anyone can use it. It may only **read trades** (the dashboard's performance panel) and **read/save the encrypted settings** (unlock and "Save All to Cloud"). Nothing else.
+- **Private `service_role` key** — the worker's, in `C:\OKXAI\.env` as `SUPABASE_KEY` and nowhere else. Bypasses row-level security; needs the table grants in `infra/supabase-1-grant-worker.sql`.
+
+**Until 2026-11-03 both were the public key, and the public key could write.** The VPS `.env` held the anon key, so (1) every AI skip was rejected — `skipped_setups` was created without any grant for it — and the AI never saw a skip, and (2) the trade table the worker acts on could be edited, added to and deleted by anyone holding the published key. Fixed by giving the worker the service key and running `infra/supabase-2-lock-public-key.sql`; `db_check.py` (repo root, run on the VPS) checks both keys with requests that touch no data, and the worker warns daily on Telegram if it is ever started on the public key again (`_check_db_key`). The anon key being public is fine **only** while it stays read-only on trades.
 
 ### Table: `app_settings`
 
@@ -103,12 +108,12 @@ Encrypted cloud storage for the dashboard's API keys. Exactly one row (`id = 'ma
 | Column | Type | Notes |
 |---|---|---|
 | `id` | text PK | Always `'main'` |
-| `password_hash` | text | SHA-256 of `password + salt` — used to verify the unlock password |
+| `password_hash` | text | Since 2026-11-03 only a format marker, e.g. `pbkdf2-600000` (the PBKDF2 round count) — nothing derived from the password. Earlier rows hold SHA-256(`password + salt`), which is ignored on load and replaced by the next save; it was removed because the row is readable with the public key and one SHA-256 per guess allowed fast offline password guessing |
 | `encrypted_data` | text | Base64 AES-GCM ciphertext of the settings JSON |
 | `iv` | text | Base64 12-byte AES-GCM IV |
 | `salt` | text | Random hex, used for both PBKDF2 and the password hash |
 
-The plaintext payload (never stored unencrypted) is: Claude API key, OKX key/secret/passphrase, Telegram token/chat ID. (Risk profile and refresh interval are hard-coded in `config.js` — always `aggressive` / 1 minute — and are no longer stored or shown in Settings; older cloud rows may still contain them, and they're simply ignored on load.) Crypto: PBKDF2 (SHA-256, 100 000 iterations) → AES-GCM-256, all via the browser Web Crypto API (`encryptJSON`/`decryptJSON` in `app.js`). **The password is never stored** — only its salted hash; the worker has no access to this table and doesn't need it.
+The plaintext payload (never stored unencrypted) is: Claude API key, OKX key/secret/passphrase, Telegram token/chat ID. (Risk profile and refresh interval are hard-coded in `config.js` — always `aggressive` / 1 minute — and are no longer stored or shown in Settings; older cloud rows may still contain them, and they're simply ignored on load.) Crypto: PBKDF2 (SHA-256, **600 000** iterations since 2026-11-03; 100 000 before) → AES-GCM-256, all via the browser Web Crypto API (`encryptJSON`/`decryptJSON` in `app.js`). **Neither the password nor anything derived from it is stored**: the password is checked by decrypting (AES-GCM rejects a wrong key), so anyone who reads the row with the public key pays the full PBKDF2 for every guess. A strong password is still what protects these keys — this row is readable by anyone with the published anon key. The worker has no access to this table and doesn't need it.
 
 ### Table: `option3_trades`
 

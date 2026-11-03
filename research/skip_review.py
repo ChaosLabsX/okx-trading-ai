@@ -20,14 +20,20 @@ sys.path.insert(0, ROOT)
 from ai_check import load_env      # same .env rules as the worker's runner
 
 load_env(os.path.join(ROOT, '.env'))
-URL, KEY = os.environ.get('SUPABASE_URL', ''), os.environ.get('SUPABASE_KEY', '')
+import signal_checker as sc        # after load_env: it reads the environment at import
+URL, KEY = sc.SUPABASE_URL, sc.SUPABASE_KEY
 if not URL or not KEY:
     sys.exit('SUPABASE_URL / SUPABASE_KEY not found in .env')
-H = {'apikey': KEY, 'Authorization': f'Bearer {KEY}'}
+if sc._supabase_key_role() in ('anon', 'publishable'):
+    sys.exit('SUPABASE_KEY in .env is the PUBLIC key, which cannot read skipped_setups. '
+             'Put the service_role key there first (infra/VPS-SETUP.md), then run db_check.py.')
 
 
 def get(table, select, extra=''):
-    r = requests.get(f'{URL}/rest/v1/{table}?select={select}&order=created_at.asc{extra}', headers=H, timeout=30)
+    r = requests.get(f'{URL}/rest/v1/{table}?select={select}&order=created_at.asc{extra}',
+                     headers=sc._sb_headers(), timeout=30)
+    if r.status_code in (401, 403):
+        sys.exit(f'{table}: HTTP {r.status_code} - the key cannot read it. Run db_check.py.')
     r.raise_for_status()
     return r.json()
 

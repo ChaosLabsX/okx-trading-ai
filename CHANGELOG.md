@@ -3,6 +3,62 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-11-03 (later) — The database keys: worker on the private key, public key read-only
+
+Found while running `research/skip_review.py` on the VPS: HTTP 401. The worker's
+`SUPABASE_KEY` was the **public anon key** — the same one `config.js` publishes.
+
+**What that broke, silently, since the journal was built.** `skipped_setups` was created
+without any grant for the public role, so every AI skip was rejected (one log line, then
+nothing), the 24h grading of skips returned on a bare `if r.status_code != 200: return`,
+and `_skip_history_context` returned an empty string — the AI was never shown a single
+past skip. The changelog entries of 2026-07-17 onward describe a skip ledger that never
+held a row.
+
+**What it exposed.** Zero-row probes with the published key (they touch no data) showed
+it could **edit, add and delete** rows in `option3_trades`, and read `app_settings`. A
+forged or edited trade row is something the worker acts on — it cancels and places orders
+by the ids in the row and can market-sell `sz_half` — so anyone with the key could have
+disrupted open trades. `app_settings` held SHA-256(password + salt) next to the encrypted
+OKX / Claude / Telegram keys: one fast hash per guess let anyone with the row test
+passwords offline at full speed, skipping the 100 000-round PBKDF2. No sign any of this
+was used.
+
+**What changed.**
+- **Worker:** all seven hand-built Supabase header sets now go through `_sb_headers`, which
+  also handles Supabase's newer non-JWT `sb_` keys (apikey only). `_check_db_key` reads the
+  key's role and, on a public key, logs every run and Telegrams once a day. The two silent
+  skip-journal failures now log their HTTP status.
+- **`db_check.py` (new, run on the VPS):** checks the worker's key can read and write its
+  three tables and the public key can only read trades and read/save settings — with
+  reads of one id, writes aimed at an id that does not exist, and empty-batch inserts.
+- **`infra/supabase-1-grant-worker.sql`** (grants for `service_role`; safe any time) and
+  **`infra/supabase-2-lock-public-key.sql`** (revokes the public key's writes; only after
+  the worker is on the service key, or it loses the ability to record trades).
+- **Dashboard settings:** no password hash is stored any more — the password is checked by
+  decrypting (AES-GCM rejects a wrong key), so every guess pays the full PBKDF2, now 600 000
+  rounds for new saves. The `password_hash` column keeps only a format marker
+  (`pbkdf2-600000`). Old rows still open (100 000 rounds, hash ignored) and unlocking one
+  shows a one-time reminder to re-save, which overwrites the old hash.
+- **Manual trading from the dashboard: off** (`CONFIG.MANUAL_TRADING`). A manual trade's
+  second-half stop comes from the worker, which finds the trade through a row the page
+  writes with the public key — now read-only. Suggestions still show, as disabled buttons
+  with a note; both entry points refuse before anything reaches OKX.
+- `ai_check.load_env` now lets `.env` win over existing environment variables, as the
+  runner does; it used `setdefault`, so a stale machine-wide value could have made a check
+  test a different key than the worker uses.
+
+**Verified.** `tests/test_db_key.py` (14 checks: key roles incl. the published key, headers
+per key format, the daily warning, the now-visible journal failures),
+`tests/test_dashboard_settings.js` (15: an old-format row opens with the right password
+and not a wrong one, a new save holds no hash or password, 600 000 rounds ≈ 0.3 s per
+unlock, the manual-trading switch both ways), `tests/test_ai_prompt.py` (the advisor
+prompt renders and past skips reach it), break-even 35/35, parity 0/0/0. `db_check.py` run
+against the live database with the public key reproduces the problem exactly (worker key
+FAIL; public key: edit/add/delete trades and save learning results open) and its
+empty-batch probes added no rows. **Not verifiable from here:** the service key and the
+SQL, which only the owner can apply — `db_check.py` on the VPS is that test.
+
 ## 2026-11-03 — Review after a losing month: no rule change, and why
 
 Owner asked what to change for more profitable trades after a bad run. No code change to

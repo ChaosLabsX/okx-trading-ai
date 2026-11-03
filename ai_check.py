@@ -27,8 +27,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def load_env(path):
-    """Same rules as infra/run-okx.ps1: KEY=VALUE lines, optional quotes. Must run
-    before signal_checker is imported, which reads os.environ at import time."""
+    """Same rules as infra/run-okx.ps1: KEY=VALUE lines, optional quotes, and the file
+    WINS over anything already in the environment, as it does for the worker (the
+    runner sets each one with SetEnvironmentVariable). Until 2026-11-03 this used
+    setdefault, so a stale machine-wide variable could silently beat .env here and
+    make a check test a different key than the worker uses. Must run before
+    signal_checker is imported, which reads os.environ at import time."""
     if not os.path.exists(path):
         return False
     with open(path, encoding='utf-8-sig') as f:
@@ -39,7 +43,7 @@ def load_env(path):
             val = m.group(2).strip()
             if len(val) >= 2 and val[0] == val[-1] and val[0] in '"\'':
                 val = val[1:-1]
-            os.environ.setdefault(m.group(1), val)
+            os.environ[m.group(1)] = val
     return True
 
 

@@ -1554,9 +1554,60 @@ def _rnd(v, n):
 
 
 def _sb_headers(extra=None):
-    h = {'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'}
+    """
+    Headers for every Supabase REST call in this worker (learn.py uses it too). A
+    legacy key is a JWT (anon / service_role) and goes in both apikey and
+    Authorization; Supabase's newer sb_secret_ / sb_publishable_ keys are not JWTs
+    and belong in apikey only. Until 2026-11-03 seven call sites built this by hand.
+    """
+    h = {'apikey': SUPABASE_KEY}
+    if SUPABASE_KEY.count('.') == 2:
+        h['Authorization'] = f'Bearer {SUPABASE_KEY}'
     h.update(extra or {})
     return h
+
+
+def _supabase_key_role(key=None):
+    """
+    Which role a Supabase key acts as: 'service_role', 'anon', ... read from a legacy
+    key's JWT payload (not verified - this is a self-check, not authentication), or
+    'secret' / 'publishable' for the newer key format. None if unreadable.
+    """
+    key = SUPABASE_KEY if key is None else key
+    if not key:
+        return None
+    if key.startswith('sb_secret_'):
+        return 'secret'
+    if key.startswith('sb_publishable_'):
+        return 'publishable'
+    try:
+        payload = key.split('.')[1]
+        return json.loads(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4))).get('role')
+    except Exception:
+        return None
+
+
+def _check_db_key(cache):
+    """
+    Warn when the worker is running on the PUBLIC database key. It did, unnoticed,
+    from the start until 2026-11-03: the public key cannot touch skipped_setups, so
+    every AI skip was rejected, none was graded, and the AI never saw one - and a
+    key that can write the trade table is a key anyone could use (it ships in
+    config.js). Logged every run; Telegrammed at most once a day.
+    """
+    role = _supabase_key_role()
+    if role not in ('anon', 'publishable'):
+        return
+    print('  [Supabase] WARNING: SUPABASE_KEY is the PUBLIC key (role anon). The skip journal '
+          'cannot be written and the AI cannot learn from its skips. Put the service_role '
+          'key in .env - see infra/VPS-SETUP.md.')
+    now = time.time()
+    if now - cache.get('_db_key_warned', {}).get('at', 0) > 24 * 3600:
+        send_telegram("⚠️ <b>OKX bot is using the PUBLIC database key</b>\n"
+                      "The skipped-trades journal cannot be saved, so the AI cannot learn from its skips.\n"
+                      "👉 Put the <b>service_role</b> key in C:\\OKXAI\\.env as SUPABASE_KEY "
+                      "(steps in infra/VPS-SETUP.md).")
+        cache['_db_key_warned'] = {'at': now}
 
 
 def _build_entry_snapshot(cand, extra=None, params=None, evidence=None):
@@ -1759,6 +1810,10 @@ def grade_journal_followups():
             headers=_sb_headers(), timeout=10,
         )
         if r.status_code != 200:
+            # Was a bare `return`: on the public key this failed every run for months
+            # without a word. 401 here means the key cannot read the table.
+            print(f'  [Journal] skip grading unavailable (HTTP {r.status_code}) — '
+                  f'the database key cannot read skipped_setups')
             return
         for s in r.json():
             px = float(s.get('price') or 0)
@@ -1788,12 +1843,7 @@ def _save_option3_trade(trade_data):
     try:
         r = requests.post(
             f'{SUPABASE_URL}/rest/v1/option3_trades',
-            headers={
-                'apikey':        SUPABASE_KEY,
-                'Authorization': f'Bearer {SUPABASE_KEY}',
-                'Content-Type':  'application/json',
-                'Prefer':        'resolution=merge-duplicates,return=minimal',
-            },
+            headers=_sb_headers({'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal'}),
             json=trade_data,
             timeout=10,
         )
@@ -1808,12 +1858,7 @@ def _save_option3_trade(trade_data):
             slim = {k: v for k, v in trade_data.items() if k not in optional}
             r2 = requests.post(
                 f'{SUPABASE_URL}/rest/v1/option3_trades',
-                headers={
-                    'apikey':        SUPABASE_KEY,
-                    'Authorization': f'Bearer {SUPABASE_KEY}',
-                    'Content-Type':  'application/json',
-                    'Prefer':        'resolution=merge-duplicates,return=minimal',
-                },
+                headers=_sb_headers({'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=minimal'}),
                 json=slim,
                 timeout=10,
             )
@@ -2115,7 +2160,7 @@ def _fetch_option3_trades():
     try:
         r = requests.get(
             f'{SUPABASE_URL}/rest/v1/option3_trades?phase=lt.3&select=*',
-            headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
+            headers=_sb_headers(),
             timeout=10,
         )
         if r.status_code == 200:
@@ -2271,8 +2316,7 @@ def _update_trade(trade_id, updates, attempts=3):
         try:
             r = requests.patch(
                 f'{SUPABASE_URL}/rest/v1/option3_trades?id=eq.{trade_id}',
-                headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}',
-                         'Content-Type': 'application/json'},
+                headers=_sb_headers({'Content-Type': 'application/json'}),
                 json=updates, timeout=10,
             )
             if r.status_code in (200, 204):
@@ -2459,11 +2503,7 @@ def _mark_phase2(trade_id, updates):
     try:
         r = requests.patch(
             f'{SUPABASE_URL}/rest/v1/option3_trades?id=eq.{trade_id}',
-            headers={
-                'apikey':        SUPABASE_KEY,
-                'Authorization': f'Bearer {SUPABASE_KEY}',
-                'Content-Type':  'application/json',
-            },
+            headers=_sb_headers({'Content-Type': 'application/json'}),
             json={'phase': 2, **updates},
             timeout=10,
         )
@@ -2494,11 +2534,7 @@ def _mark_trade_closed(trade_id, exit_reason=None, exit_price=None, net_pnl=None
     def _patch(payload):
         return requests.patch(
             f'{SUPABASE_URL}/rest/v1/option3_trades?id=eq.{trade_id}',
-            headers={
-                'apikey':        SUPABASE_KEY,
-                'Authorization': f'Bearer {SUPABASE_KEY}',
-                'Content-Type':  'application/json',
-            },
+            headers=_sb_headers({'Content-Type': 'application/json'}),
             json=payload,
             timeout=10,
         )
@@ -2591,7 +2627,7 @@ def _count_recent_sl(hours=24):
         r = requests.get(
             f'{SUPABASE_URL}/rest/v1/option3_trades'
             f'?select=id&exit_reason=eq.sl&closed_at=gte.{since}',
-            headers={'apikey': SUPABASE_KEY, 'Authorization': f'Bearer {SUPABASE_KEY}'},
+            headers=_sb_headers(),
             timeout=10,
         )
         if r.status_code == 200:
@@ -2802,6 +2838,7 @@ def _skip_history_context(symbol):
             headers=_sb_headers(), timeout=10,
         )
         if r.status_code != 200:
+            print(f'  [Journal] past skips unavailable to the AI (HTTP {r.status_code})')
             return '', {}
         rows = r.json()
         if not rows:
@@ -3650,6 +3687,8 @@ def main():
         elapsed = time.time() - start
         print(f'\n=== Scan #{scan_num} | +{elapsed:.0f}s | {time.strftime("%H:%M:%S UTC")} ===')
 
+        if scan_num == 1:
+            _check_db_key(cache)        # once per run; Telegram at most once a day
         run_scan(cache, warm_up=(fresh and scan_num == 1))
         monitor_option3_trades()
         if scan_num == 1:

@@ -78,7 +78,7 @@ okx-trading-ai/  (repo root)
 | Service | Used for | Credentials live in |
 |---|---|---|
 | **OKX** | Market data (public API, no key) + account balance, spot orders, algo orders (private API, HMAC-signed) | Browser: encrypted Supabase settings · Worker: `C:\OKXAI\.env` on the VPS (GitHub Secrets only matter if the Actions fallback is re-enabled) |
-| **Supabase** | 1) Encrypted API-key storage for the dashboard, 2) `option3_trades` table that both halves write/read | URL + anon key are public in `config.js`; worker uses `SUPABASE_URL`/`SUPABASE_KEY` secrets |
+| **Supabase** | 1) Encrypted API-key storage for the dashboard, 2) `option3_trades` table that both halves write/read | URL + anon key are public in `config.js` and can only read trades and read/save the encrypted settings; the worker uses the private **service_role** key in `C:\OKXAI\.env` (`db_check.py` verifies both) |
 | **Telegram** | All trade/exit notifications (sent **only** by the Python worker — the browser never sends Telegram messages) | Bot token + chat ID |
 | **Anthropic (Claude)** | Worker trade advisor (`claude-opus-5-5` with adaptive thinking at effort `high` — the autonomous decision-maker, model set in `signal_checker.py`) and the browser's manual AI Advisor (same model, set in `config.js`; rarely used since the app is fully automated) | Browser: user's key in settings · Worker: `CLAUDE_API_KEY` secret |
 | **cron-job.org** *(retired)* | Used to trigger the GitHub Actions workflow every 5 minutes. **No longer used** — the workflow has been deleted and the VPS runs the worker continuously. If a job still exists in your cron-job.org account, delete it: it now fires at nothing, and it holds a GitHub PAT for no reason | *(was: GitHub PAT in the cron-job.org job config)* |

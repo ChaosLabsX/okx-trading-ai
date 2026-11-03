@@ -132,6 +132,28 @@ Get-Content C:\OKXAI\logs\okx-signal-checker.log -Tail 20
 something; `0x40010004` / `0xC000013A` = its process was killed (shutdown, logoff,
 console closed); a boot time close to the log's last line = a reboot.
 
+## The database key (`SUPABASE_KEY`)
+
+It must be the **private `service_role` key**, never the public `anon` key that is in
+`config.js`. Until 2026-11-03 this VPS ran on the public key: the AI's skip journal was
+rejected every time, and the public key could edit trade rows. Setting it up (once):
+
+1. Supabase → the **OKX** project → SQL Editor → run `infra/supabase-1-grant-worker.sql`.
+2. Supabase → Project Settings → API Keys → **Legacy API keys** → `service_role` →
+   Reveal → copy. Paste it into `C:\OKXAI\.env` as `SUPABASE_KEY=...` (Notepad), save.
+   Never into chat, GitHub or `config.js` — it is full admin access to the database.
+3. Restart the worker and check:
+   ```powershell
+   Stop-ScheduledTask -TaskName "OKX-SignalChecker"; Get-Process python -EA SilentlyContinue | ? Path -like 'C:\OKXAI\*' | Stop-Process -Force; Start-ScheduledTask -TaskName "OKX-SignalChecker"
+   cd C:\OKXAI; .venv\Scripts\python.exe db_check.py
+   ```
+   Wait for `PASS - worker key`.
+4. Only then: SQL Editor → run `infra/supabase-2-lock-public-key.sql`, and `db_check.py`
+   again — the public-key section should read `locked down`.
+
+The worker prints a warning every run, and Telegrams once a day, while it is on the
+public key.
+
 **Going back to GitHub Actions** is no longer a toggle - the workflow file was
 deleted. Recover it with
 `git show 151be53:.github/workflows/signal-checker.yml`, restore it to
