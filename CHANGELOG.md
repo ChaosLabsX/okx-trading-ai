@@ -3,6 +3,53 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-11-03 — Review after a losing month: no rule change, and why
+
+Owner asked what to change for more profitable trades after a bad run. No code change to
+the trading rules came out of it; this entry records the evidence so the same ideas are
+not re-litigated on the next losing streak.
+
+**The book.** 46 closed trades, 22W/24L, −$43.73. Since 2026-10-09 (4.0 bar +
+break-even stop): 7 trades, 1W/6L, −$34.13 — six stop-losses at $92–$189. Since the
+45–60% sizing (2026-09-03): 21 trades, −$53.65, −1.71% per trade; the 25 trades before it
+made +$9.91 at ~$16 each.
+
+**October was hostile to the strategy itself.** Replaying the live rules over
+Oct 9 – Nov 3 (`research/exp4.txt`, feature table), every kind of setup lost — by score,
+1H RSI, 4H RSI, Bollinger position, volume, 24h change — about −1.4% to −3.6% each. The
+same rules over Oct 1 – Nov 3: −0.36% per trade, against −1.43% live
+(`live_vs_replay.txt`). The gap is mostly setups only one side took (OKX vs Binance data,
+AI choices, slot order): live alone took PYTH −7.7%, INJ −5.2%, SAND −4.1%, ETHFI −4.0%;
+the replay alone took INJ +5.4%, NEAR +4.6%, JTO +2.7%.
+
+**The AI's exits help a little — keep them** (`ai_exit_check.txt`). All 42 live trades
+replayed on 1-minute prices: with the AI's exits the replay reproduces 41 of 42 real
+outcomes; the AI's exits average −0.14% per trade against −0.36% for the code's
+suggestion (AI better in 23, code in 15), about $5 better at the real sizes — mainly a
+slightly wider take-profit catching bigger moves. Real fills cost ~0.25% per trade more
+than modelled, almost all of it one trade (STX 2026-10-29 stopped out on OKX at −4.37%
+where Binance's prices reached the target first — a thin-book wick).
+
+**Nothing else passed** (five windows: the four 82-day ones plus Oct 9 – Nov 3; a change
+must help most windows AND its neighbouring settings must agree):
+
+| idea | result vs live rules (−$10.07, 220 trades) |
+|---|---|
+| sell 33% / 67% / 100% at the take-profit | −7.13 (4/5) / −13.02 / −23.18 — a trend, but ~1 cent a trade |
+| stop 1.75× / 2.0× / 2.25× / 3.0× ATR | +1.50 / −2.10 / −20.70 / +7.16 — zigzag, noise |
+| take-profit 1.5× / 2.5× ATR | −11.92 / −6.22 |
+| 24h / 72h pause on a coin after its stop | −3.34 / −8.12 (2/5 each) |
+| volume gate 2.5× / 3.0× | −16.65 / −26.04 |
+| skip 1H RSI ≤ 20 / ≤ 25 | +23.87 (4/5) / +20.64 (2/5) — the neighbour disagrees |
+| skip price below the lower band (%b ≤ 0 / ≤ −0.1) | +18.81 on 88 trades (−60%) / −14.25 |
+| skip 4H RSI ≤ 30 / ≤ 35 | −23.52 / −6.95 |
+| skip after a 24h fall ≥ 8% / ≥ 12% | +6.15 (2/5) / −5.68 |
+| stricter BTC filter (4 variants, `exp5.txt`) | −34.54 … +2.02, best 3/5, 25–35% fewer trades |
+
+Changing rules after one bad month would be fitting that month. Unmeasured so far: the
+AI's SKIP decisions — `research/skip_review.py` (run on the VPS; the table needs the
+service key) summarises them for the next review.
+
 ## 2026-10-19 — The break-even stop sits at entry + fees, so it exits at about $0
 
 The first live break-even exit (TRX, 2026-10-18) closed at **−$0.35** on $180: the stop

@@ -18,6 +18,12 @@ be modelled at all.
 | `run_exp.py` | 17 exit / sizing / frequency variants over the four windows → `exp1.txt`. |
 | `run_exp2.py` | Neighbourhood scans: break-even trigger (6 ATR-based, 6 fraction-of-TP) and score bar 3.5–5.0 → `exp2.txt`. |
 | `run_exp3.py` | Where the break-even stop sits once triggered: entry, entry + fees, entry + fees + margin → `exp3.txt` (2026-10-19). |
+| `run_exp4.py` | 2026-11-03 review: 19 untested ideas (share sold at TP, stop/TP multiples, post-stop pause, volume, deep-dip and crash filters) over five windows incl. the live period, plus a feature table → `exp4.txt`. |
+| `run_exp5.py` | Stricter BTC regime filters → `exp5.txt`. |
+| `live_review.py` | The live book by period, score, exit type, coin; AI exits vs the code's suggestion. Writes `live_rows.json` (git-ignored). |
+| `live_vs_replay.py` | The live rules replayed over the live period, trade by trade against the real trades → `live_vs_replay.txt`. |
+| `ai_exit_check.py` | Every live trade replayed on 1m prices with the AI's exits and with the code's → `ai_exit_check.txt`. |
+| `skip_review.py` | Run **on the VPS** (needs the service key in `.env`): were the AI's SKIP decisions right? |
 | `chk_bucket.py` | Every setup traded alone, by score bucket → `score_buckets.txt`. |
 | `chk_score.py` | Score-4.0 trades vs 4.5+ trades inside the portfolio. |
 | `live_stats.py` | The live record from Supabase (read-only, public key). |

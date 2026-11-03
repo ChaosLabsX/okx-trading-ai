@@ -1,0 +1,32 @@
+replay of the live rules from 2026-10-01 00:00 UTC: 20 trades; live bot: 13 trades
+  LIVE 2026-10-01T11:34 TRX-USDT    be_stop    -0.20%   | replay: same setup, be +0.10%
+  LIVE 2026-10-01T15:34 FIL-USDT    tp_trail   +2.68%   | replay: did not take it
+  LIVE 2026-10-01T17:34 POL-USDT    tp_trail   +2.63%   | replay: same setup, tp_trail +2.18%
+  LIVE 2026-10-02T19:31 PENGU-USDT  tp_trail   +7.21%   | replay: same setup, tp_trail +7.19%
+  LIVE 2026-10-06T16:32 UNI-USDT    sl         -2.81%   | replay: same setup, sl -2.86%
+  LIVE 2026-10-07T03:03 XRP-USDT    sl         -2.47%   | replay: did not take it
+  LIVE 2026-10-11T01:32 SAND-USDT   sl         -4.07%   | replay: did not take it
+  LIVE 2026-10-13T06:03 BCH-USDT    tp_trail   +1.91%   | replay: did not take it
+  LIVE 2026-10-14T13:31 SHIB-USDT   sl         -2.30%   | replay: same setup, sl -2.67%
+  LIVE 2026-10-22T03:31 INJ-USDT    sl         -5.23%   | replay: did not take it
+  LIVE 2026-10-22T09:31 ETHFI-USDT  sl         -3.96%   | replay: did not take it
+  LIVE 2026-10-29T02:46 STX-USDT    sl         -4.37%   | replay: same setup, sl -4.44%
+  LIVE 2026-10-29T21:31 PYTH-USDT   sl         -7.66%   | replay: did not take it
+  REPLAY ONLY 2026-10-01 15:30 NEAR-USDT   be         +0.10%
+  REPLAY ONLY 2026-10-07 01:00 UNI-USDT    sl         -2.82%
+  REPLAY ONLY 2026-10-07 03:00 ETH-USDT    sl         -2.20%
+  REPLAY ONLY 2026-10-11 04:30 ENS-USDT    tp_trail   +1.08%
+  REPLAY ONLY 2026-10-12 15:30 SEI-USDT    sl         -3.69%
+  REPLAY ONLY 2026-10-13 13:30 TRX-USDT    tp_trail   +1.03%
+  REPLAY ONLY 2026-10-18 14:30 INJ-USDT    tp_trail   +5.44%
+  REPLAY ONLY 2026-10-18 15:00 JTO-USDT    tp_trail   +2.70%
+  REPLAY ONLY 2026-10-20 12:30 NEAR-USDT   tp_trail   +4.59%
+  REPLAY ONLY 2026-10-22 07:30 ORDI-USDT   sl         -2.62%
+  REPLAY ONLY 2026-10-27 16:00 AAVE-USDT   tp_trail   +1.67%
+  REPLAY ONLY 2026-10-29 21:30 BNB-USDT    sl         -3.58%
+  REPLAY ONLY 2026-11-02 04:00 AR-USDT     sl         -2.58%
+  REPLAY ONLY 2026-11-02 08:00 NEAR-USDT   sl         -5.81%
+
+replay: 20 trades, -0.36% per trade, net -7.18 at $100 each
+live:   13 closed, -1.43% per trade
+replay blocks: {'correlation': 37, 'btc_regime': 310, 'already_open': 1}

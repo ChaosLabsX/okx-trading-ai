@@ -1,0 +1,12 @@
+  w4 done
+  w3 done
+  w2 done
+  w_now done
+  w_live done
+
+block new trades when BTC 4H is    trades    net $  $/trade  maxDD          w4       w3       w2    w_now   w_live   better (of 5)
+live (below EMA50 and RSI<45)         220   -10.07   -0.046   33.9       +6.01    -2.61   +14.58   -19.18    -8.87   0
+below EMA50 and RSI<50                167   -15.26   -0.091   29.8      -11.64    +2.46   +17.18   -12.87   -10.39   3
+RSI<50                                142    +2.02   +0.014   29.4       -4.75    +8.89   +18.97   -10.71   -10.39   3
+below EMA50 at all                    149   -34.54   -0.232   39.6      -18.06    -3.19   +11.51   -17.75    -7.05   2
+below EMA50 or RSI<45                 147   -34.05   -0.232   39.6      -18.06    -3.19   +11.51   -17.26    -7.05   2

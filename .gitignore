@@ -25,3 +25,4 @@ research/w*/
 
 # research/fetch_1m.py progress logs
 research/*.log
+research/live_rows.json

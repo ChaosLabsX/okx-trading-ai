@@ -112,7 +112,11 @@ def events_for(c, score_bar=None, minvol=None):
         sup, res = sc.find_support_resistance(highs, lows, closes)
         out.append({'T': T, 'coin': c.inst, 'entry_i': c.mi(T) + 1, 'score': sig['score'], 'vol': vr,
                     'rank': sc._rank_candidate(sig, rsi, rsi4, vr), 'atr': atr, 'sup': sup, 'res': res,
-                    'px': closes[-1]})
+                    'px': closes[-1],
+                    # Features for filter studies (run_exp4.py); not used by the live rules.
+                    'rsi': rsi, 'rsi4': rsi4, 'pct_b': bb['pct_b'] if bb else None,
+                    'macd_cross': bool(macd and macd['bullish_cross']),
+                    'chg24': (closes[-1] / closes[-25] - 1) * 100 if len(closes) >= 25 else None})
     return out
 
 
@@ -125,12 +129,15 @@ def exits(e, tp_mult, sl_mult, tr_mult):
         sc.ATR_TP_MULT, sc.ATR_SL_MULT, sc.ATR_TRAIL_MULT = old
 
 
-def simulate(c, entry_i, ex, be_atr=None, atr=None, time_stop_h=None, be_frac=None, be_stop=None):
+def simulate(c, entry_i, ex, be_atr=None, atr=None, time_stop_h=None, be_frac=None, be_stop=None,
+             tp_frac=0.5):
     """Returns (exit_i, type, pnl_fraction_of_stake). Break-even trigger either at
     +be_atr x ATR above entry, or at be_frac of the way to the take-profit.
     be_stop: where the stop goes once triggered, as a multiple of entry. None = the
     live rule (signal_checker._be_price: entry + both fees + margin, since
-    2026-10-19); 1.0 = the entry price itself, as live 2026-10-09 to 10-19."""
+    2026-10-19); 1.0 = the entry price itself, as live 2026-10-09 to 10-19.
+    tp_frac: share of the position sold at the take-profit (live: 0.5); the rest
+    rides the trailing stop. 1.0 = sell everything at the take-profit."""
     mo, mh, ml, mc = c.m['o'], c.m['h'], c.m['l'], c.m['c']
     if entry_i >= c.n:
         return None
@@ -150,7 +157,9 @@ def simulate(c, entry_i, ex, be_atr=None, atr=None, time_stop_h=None, be_frac=No
                 return i, ('be' if at_be else 'sl'), nf(fill)
             if mh[i] >= tp_px:
                 fill = mo[i] if mo[i] >= tp_px else tp_px
-                phase, banked, peak = 2, nf(fill) / 2, fill
+                if tp_frac >= 1.0:
+                    return i, 'tp', nf(fill)
+                phase, banked, peak = 2, nf(fill) * tp_frac, fill
                 continue
             if be_px and not at_be and mh[i] >= be_px:
                 at_be = True                  # takes effect from the next minute
@@ -160,10 +169,10 @@ def simulate(c, entry_i, ex, be_atr=None, atr=None, time_stop_h=None, be_frac=No
         floor = peak * (1 - ex['trail'] / 100)
         if ml[i] <= floor:
             fill = mo[i] if mo[i] <= floor else floor
-            return i, 'tp_trail', banked + nf(fill) / 2
+            return i, 'tp_trail', banked + nf(fill) * (1 - tp_frac)
         peak = max(peak, mh[i])
     last = mc[c.n - 1]
-    return c.n - 1, 'open', (nf(last) if phase == 1 else banked + nf(last) / 2)
+    return c.n - 1, 'open', (nf(last) if phase == 1 else banked + nf(last) * (1 - tp_frac))
 
 
 def btc_bear(btc, T, cache):
@@ -186,11 +195,15 @@ def portfolio(coins, events, t_from, v):
             groups[e['T']].append(e)
     last, open_tr, trades, sl_times, blocks = {}, {}, [], [], Counter()
     max_open = v.get('max_open', sc.MAX_OPEN_TRADES)
+    keep = v.get('filter')                       # research only: callable(event) -> trade it?
+    cool = v.get('sl_cooldown_h', 0) * H         # research only: pause a coin after its stop-loss
+    last_sl = {}
     for T in sorted(groups):
         for coin in list(open_tr):
             if open_tr[coin]['exit_T'] <= T:
                 if open_tr[coin]['type'] == 'sl':
                     sl_times.append(open_tr[coin]['exit_T'])
+                    last_sl[coin] = open_tr[coin]['exit_T']
                 del open_tr[coin]
         cands = []
         for e in groups[T]:
@@ -199,6 +212,10 @@ def portfolio(coins, events, t_from, v):
             last[e['coin']] = T
             if e['coin'] in open_tr:
                 blocks['already_open'] += 1; continue
+            if cool and T - last_sl.get(e['coin'], -10**15) < cool:
+                blocks['sl_cooldown'] += 1; continue
+            if keep and not keep(e):
+                blocks['filtered'] += 1; continue
             cands.append(e)
         if not cands:
             continue
@@ -231,7 +248,7 @@ def portfolio(coins, events, t_from, v):
                 continue
             c = coins[e['coin']]
             out = simulate(c, e['entry_i'], ex, v.get('be_atr'), e['atr'], v.get('time_stop_h'),
-                           v.get('be_frac'), v.get('be_stop'))
+                           v.get('be_frac'), v.get('be_stop'), v.get('tp_frac', 0.5))
             if out is None:
                 continue
             exit_i, typ, frac = out
