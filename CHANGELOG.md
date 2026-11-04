@@ -59,6 +59,13 @@ FAIL; public key: edit/add/delete trades and save learning results open) and its
 empty-batch probes added no rows. **Not verifiable from here:** the service key and the
 SQL, which only the owner can apply — `db_check.py` on the VPS is that test.
 
+**Applied and verified 2026-11-04.** Service key in the VPS `.env`, both SQL files run.
+`db_check.py` on the VPS: worker key `service_role`, all 7 checks PASS; public key
+`locked down`, all 9 checks PASS. Probed independently with the published key: editing,
+adding and deleting trades, reading skipped setups and writing learning results all
+return 401, while the dashboard's reads of trades and settings still return 200. The
+settings row is in the new format (`pbkdf2-600000`, no password hash).
+
 ## 2026-11-03 — Review after a losing month: no rule change, and why
 
 Owner asked what to change for more profitable trades after a bad run. No code change to
