@@ -49,6 +49,12 @@
 └──────────────────────────────────────────────┘
 ```
 
+> **2026-11-10: strategies have modes.** Everything on this page about placing trades
+> describes the `dip` strategy in `live` mode. It is currently on `paper`, where step 3
+> below records a simulated trade in `paper_trades` (`paper.py`) instead of calling
+> `place_option3_trade()`, and nothing reaches OKX's private endpoints. Two more
+> strategies (`flush`, `trend`) run on paper beside it. See [STRATEGIES.md](STRATEGIES.md).
+
 Two independent programs cooperate through shared external state:
 
 - **Browser dashboard** — for a human watching the market and placing trades manually (with AI help). Runs only while a browser tab is open.
@@ -96,7 +102,7 @@ misconfiguration.
 
 One Supabase project, two keys:
 
-- **Public `anon` key** — ships in `config.js`, so it is on GitHub and on the website and anyone can use it. It may only **read trades** (the dashboard's performance panel) and **read/save the encrypted settings** (unlock and "Save All to Cloud"). Nothing else.
+- **Public `anon` key** — ships in `config.js`, so it is on GitHub and on the website and anyone can use it. It may only **read** what the dashboard shows (`option3_trades`, `paper_trades`, `skipped_setups`, `bot_status`, `learned_rules`) and **read/save the encrypted settings** (unlock and "Save All to Cloud"). No other write.
 - **Private `service_role` key** — the worker's, in `C:\OKXAI\.env` as `SUPABASE_KEY` and nowhere else. Bypasses row-level security; needs the table grants in `infra/supabase-1-grant-worker.sql`.
 
 **Until 2026-11-03 both were the public key, and the public key could write.** The VPS `.env` held the anon key, so (1) every AI skip was rejected — `skipped_setups` was created without any grant for it — and the AI never saw a skip, and (2) the trade table the worker acts on could be edited, added to and deleted by anyone holding the published key. Fixed by giving the worker the service key and running `infra/supabase-2-lock-public-key.sql`; `db_check.py` (repo root, run on the VPS) checks both keys with requests that touch no data, and the worker warns daily on Telegram if it is ever started on the public key again (`_check_db_key`). The anon key being public is fine **only** while it stays read-only on trades.
@@ -180,6 +186,19 @@ create table if not exists learned_rules (
   proposals       jsonb
 );
 ```
+
+### Added 2026-11-10 (`infra/supabase-3-paper-and-status.sql`)
+
+| Table / column | What it holds |
+|---|---|
+| `paper_trades` | One row per simulated trade: `strategy` (dip / flush / trend), `kind` (exit model: `option3`, `hold`, `rule`), entry, stake, `params`, `state` (phase, break-even flag, peak), outcome (`exit_reason`, `net_pct`, `net_pnl_usdt`), worst and best point reached (`mae_pct`, `mfe_pct`), and the same `entry_context` / `followup` journal fields as live trades. Real money is never in this table. |
+| `bot_status` | One row (`id = 'worker'`) the worker rewrites every ~5 minutes: last scan, code version, BTC regime, breadth, strategy modes, which keys are present, the risk limits, and 14 days of per-gate counters (the "why no trade" funnel). |
+| `skipped_setups.gate` | Who refused a qualified signal: `ai`, `funding`, `regime`, `max_open`, `breaker`, `loss_limit`, `correlation`, `cap`. Only `ai` rows are shown back to the advisor. |
+| `skipped_setups.strategy`, `option3_trades.strategy` | Which strategy the row belongs to (default `dip`). |
+
+New tables in `public` are created writable by the public key (Supabase's default
+privileges), so the migration revokes everything and grants read-only. If you add a
+table, do the same, and add it to `db_check.py`.
 
 ### The trade journal (`entry_context` / `followup` / `skipped_setups`)
 

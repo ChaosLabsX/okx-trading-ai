@@ -107,6 +107,23 @@
         </div>
       </div>
 
+      <!-- Status strip: is the bot alive, what does it think of the market, which
+           strategies trade real money. One small row from Supabase (bot.js). -->
+      <div class="bot-strip" id="botStrip"></div>
+
+      <div class="bot-tabs" role="tablist">
+        <button class="bot-tab active" data-tab="live" role="tab">Live trades</button>
+        <button class="bot-tab" data-tab="paper" role="tab">Paper strategies</button>
+        <button class="bot-tab" data-tab="why" role="tab">Why no trade?</button>
+        <button class="bot-tab" data-tab="system" role="tab">System</button>
+      </div>
+
+      <div class="bot-pane" data-pane="paper" style="display:none;"><div id="paperBody"></div></div>
+      <div class="bot-pane" data-pane="why" style="display:none;"><div id="whyBody"></div></div>
+      <div class="bot-pane" data-pane="system" style="display:none;"><div id="systemBody"></div></div>
+
+      <div class="bot-pane" data-pane="live">
+      <div class="bot-note" id="liveModeNote" style="display:none;"></div>
       <div class="perf-ranges">
         <!-- Period stepper. The arrows walk one month (or one year) at a time and
              disable themselves at the edges of the data, so you cannot page off
@@ -135,6 +152,7 @@
       <div id="perfBody">
         <div class="loading-row"><span class="spinner"></span> Loading trade history…</div>
       </div>
+      </div><!-- /live pane -->
     </section>
   </div>
 
@@ -414,6 +432,7 @@
 
   <script src="config.js"></script>
   <script src="app.js"></script>
+  <script src="bot.js"></script>
 </body>
 
 </html>

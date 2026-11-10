@@ -2082,6 +2082,14 @@ function renderPerf() {
   const pf        = grossLoss > 0 ? grossWin / grossLoss : Infinity;
   const avgW      = wins.length ? grossWin / wins.length : 0;
   const avgL      = losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : 0;
+  // Per-trade result as a share of the money put in. The dollar total is dominated by
+  // whichever months ran the biggest sizes; this is the figure that says whether the
+  // rule itself makes or loses money, and the one a strategy has to get above zero.
+  const pcts      = rows.filter(t => +t.amount_usdt > 0).map(t => (+t.net_pnl_usdt || 0) / +t.amount_usdt * 100);
+  const avgPct    = pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : 0;
+  // Deepest fall from a running peak of the cumulative result, in dollars.
+  let run = 0, peak = 0, maxDD = 0;
+  for (const p of pnls) { run += p; peak = Math.max(peak, run); maxDD = Math.max(maxDD, peak - run); }
 
   const byCoin = {}, byExit = {};
   for (const t of rows) {
@@ -2115,6 +2123,12 @@ function renderPerf() {
         <span class="ps-value">${pf === Infinity ? '∞' : pf.toFixed(2)}</span></div>
       <div class="perf-stat"><span class="ps-label">Avg win / avg loss</span>
         <span class="ps-value"><span class="pos">${fmtSigned(avgW)}</span> / <span class="neg">${fmtSigned(avgL)}</span></span></div>
+      <div class="perf-stat" title="Average result of a trade as a share of the money put into it, after fees. Above zero = the rule makes money; below = it loses, whatever the size.">
+        <span class="ps-label">Average per trade ⓘ</span>
+        <span class="ps-value ${avgPct >= 0 ? 'pos' : 'neg'}">${avgPct >= 0 ? '+' : '−'}${Math.abs(avgPct).toFixed(2)}%</span></div>
+      <div class="perf-stat" title="The deepest fall from a peak of the running total in this period.">
+        <span class="ps-label">Worst drawdown ⓘ</span>
+        <span class="ps-value ${maxDD > 0 ? 'neg' : ''}">${maxDD > 0 ? '−$' + maxDD.toFixed(2) : '$0.00'}</span></div>
     </div>
     ${equityCurveSvg(pnls)}
     <div class="perf-tables">
@@ -2436,6 +2450,9 @@ async function loadAppData() {
   // race rather than queue. Called from loadAppData (not init) so a locked app
   // still fetches nothing until the password lands.
   loadPerfData().then(ok => { if (ok) { perfSnapToData(); renderPerf(); } });
+  // Status strip + the paper / why / system tabs (bot.js). One small read now; the
+  // tabs fetch their own data when first opened.
+  if (typeof initBotPanel === 'function') initBotPanel();
 
   renderScanner();
   await fetchAllData();

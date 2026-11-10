@@ -1,0 +1,57 @@
+30 coins, 2024-02-15 00:00 -> 2026-11-09 23:00
+
+1. threshold grid - hold 48h, no stop (net of costs)
+fall >= 5%, open interest down >= 0%         n 3696 days 681  avg -0.31%  med -0.57%  win  46%  t +1.3  PF 0.89  worst  -34.3%  5%ile  -11.3% | 24:1221/-0.01 25:1463/-0.64 26:1012/-0.21
+fall >= 5%, open interest down >= 5%         n 1751 days 526  avg +0.52%  med -0.12%  win  50%  t +1.3  PF 1.20  worst  -30.0%  5%ile  -11.0% | 24:636/+1.20 25:617/+0.04 26:498/+0.26
+fall >= 5%, open interest down >= 10%        n  640 days 269  avg +1.83%  med +0.94%  win  55%  t +0.8  PF 1.79  worst  -26.6%  5%ile   -9.9% | 24:287/+2.01 25:197/+2.43 26:156/+0.76
+fall >= 5%, open interest down >= 15%        n  265 days 115  avg +3.04%  med +2.37%  win  60%  t +0.4  PF 2.42  worst  -19.7%  5%ile  -10.3% | 24:127/+2.39 25: 92/+4.87 26: 46/+1.15
+fall >= 5%, open interest down >= 20%        n  123 days  41  avg +4.72%  med +4.81%  win  71%  t +1.2  PF 4.64  worst  -13.9%  5%ile   -7.1% | 24: 52/+4.09 25: 48/+6.18 26: 23/+3.11
+fall >= 5%, open interest down >= 25%        n   77 days  19  avg +4.78%  med +4.81%  win  74%  t +0.6  PF 4.89  worst  -13.9%  5%ile   -9.0% | 24: 22/+3.33 25: 37/+5.80 26: 18/+4.44
+
+fall >= 8%, open interest down >= 0%         n 1712 days 379  avg +0.27%  med -0.08%  win  50%  t +1.5  PF 1.10  worst  -28.6%  5%ile  -11.9% | 24:614/+0.30 25:682/+0.14 26:416/+0.45
+fall >= 8%, open interest down >= 5%         n  919 days 284  avg +1.42%  med +0.75%  win  55%  t +1.4  PF 1.61  worst  -26.2%  5%ile  -10.6% | 24:375/+1.70 25:317/+1.58 26:227/+0.74
+fall >= 8%, open interest down >= 10%        n  428 days 167  avg +2.85%  med +1.71%  win  60%  t +2.3  PF 2.52  worst  -24.2%  5%ile   -9.7% | 24:204/+2.66 25:137/+4.25 26: 87/+1.11
+fall >= 8%, open interest down >= 15%        n  205 days  83  avg +3.70%  med +3.09%  win  62%  t +0.6  PF 2.77  worst  -19.7%  5%ile  -10.2% | 24:100/+2.77 25: 75/+6.22 26: 30/+0.51
+fall >= 8%, open interest down >= 20%        n   99 days  31  avg +5.52%  med +6.00%  win  72%  t +1.8  PF 5.43  worst   -9.3%  5%ile   -6.5% | 24: 43/+4.56 25: 45/+6.56 26: 11/+4.97
+fall >= 8%, open interest down >= 25%        n   63 days  18  avg +5.57%  med +5.29%  win  75%  t +1.2  PF 5.69  worst  -10.9%  5%ile   -9.1% | 24: 20/+4.04 25: 34/+6.45 26:  9/+5.63
+
+fall >= 12%, open interest down >= 0%        n  632 days 156  avg +2.78%  med +2.20%  win  61%  t +2.9  PF 2.27  worst  -21.9%  5%ile  -10.7% | 24:262/+3.25 25:245/+2.37 26:125/+2.59
+fall >= 12%, open interest down >= 5%        n  406 days 118  avg +3.56%  med +3.29%  win  66%  t +2.9  PF 2.86  worst  -21.9%  5%ile   -9.6% | 24:197/+3.67 25:131/+4.23 26: 78/+2.17
+fall >= 12%, open interest down >= 10%       n  239 days  85  avg +4.65%  med +3.64%  win  68%  t +2.3  PF 3.69  worst  -16.8%  5%ile   -9.3% | 24:123/+4.15 25: 75/+7.28 26: 41/+1.31
+fall >= 12%, open interest down >= 15%       n  134 days  42  avg +5.27%  med +6.33%  win  70%  t +0.6  PF 3.77  worst  -16.8%  5%ile   -9.3% | 24: 72/+4.19 25: 51/+8.59 26: 11/-3.09
+fall >= 12%, open interest down >= 20%       n   75 days  16  avg +6.80%  med +7.03%  win  73%  t +2.1  PF 6.61  worst   -9.2%  5%ile   -6.8% | 24: 36/+6.12 25: 36/+8.22 26:  3/-1.98
+fall >= 12%, open interest down >= 25%       n   44 days  10  avg +6.36%  med +7.14%  win  73%  t +1.1  PF 5.67  worst  -10.9%  5%ile   -8.9% | 24: 13/+5.07 25: 29/+7.91 26:  2/-7.71
+
+2/4. fall >= 8%, OI down >= 20%: holding period and disaster stop
+hold 12h, no stop                            n   99 days  31  avg +2.97%  med +1.87%  win  63%  t +1.2  PF 2.87  worst  -16.2%  5%ile   -6.6% | 24: 43/+0.33 25: 45/+4.38 26: 11/+7.47
+hold 24h, no stop                            n   99 days  31  avg +0.31%  med -0.40%  win  46%  t -0.2  PF 1.09  worst  -22.1%  5%ile  -12.9% | 24: 43/-1.17 25: 45/-0.45 26: 11/+9.18
+hold 48h, no stop                            n   99 days  31  avg +5.52%  med +6.00%  win  72%  t +1.8  PF 5.43  worst   -9.3%  5%ile   -6.5% | 24: 43/+4.56 25: 45/+6.56 26: 11/+4.97
+hold 72h, no stop                            n   99 days  31  avg +5.83%  med +5.08%  win  70%  t +0.6  PF 3.91  worst  -14.4%  5%ile  -12.8% | 24: 43/+4.47 25: 45/+8.04 26: 11/+2.14
+hold 120h, no stop                           n   99 days  31  avg +2.76%  med +0.87%  win  54%  t +0.6  PF 1.86  worst  -16.5%  5%ile  -12.0% | 24: 43/+5.17 25: 45/+1.06 26: 11/+0.27
+hold 48h, disaster stop -20%                 n   99 days  31  avg +2.85%  med +5.82%  win  69%  t +0.4  PF 1.80  worst  -20.2%  5%ile  -20.2% | 24: 43/-0.12 25: 45/+5.18 26: 11/+4.97
+hold 48h, disaster stop -15%                 n   99 days  31  avg +2.17%  med +5.65%  win  64%  t +0.1  PF 1.57  worst  -15.2%  5%ile  -15.2% | 24: 43/-0.98 25: 45/+4.62 26: 11/+4.42
+hold 48h, disaster stop -10%                 n   99 days  31  avg +1.66%  med +4.24%  win  59%  t -0.2  PF 1.45  worst  -10.2%  5%ile  -10.2% | 24: 43/-0.57 25: 45/+3.01 26: 11/+4.87
+hold 48h, disaster stop -7%                  n   99 days  31  avg +1.45%  med +0.18%  win  51%  t -0.2  PF 1.43  worst   -7.2%  5%ile   -7.2% | 24: 43/-1.01 25: 45/+2.89 26: 11/+5.15
+hold 48h, disaster stop -5%                  n   99 days  31  avg -0.00%  med -5.24%  win  36%  t -0.2  PF 1.00  worst   -5.2%  5%ile   -5.2% | 24: 43/-1.53 25: 45/+0.15 26: 11/+5.35
+hold 72h, stop -15%, sell all at +6%         n   99 days  31  avg +0.05%  med +5.74%  win  69%  t -1.3  PF 1.01  worst  -15.2%  5%ile  -15.2% | 24: 43/-2.80 25: 45/+1.66 26: 11/+4.59
+hold 72h, stop -15%, sell all at +10%        n   99 days  31  avg +1.39%  med +9.74%  win  64%  t -1.0  PF 1.32  worst  -15.2%  5%ile  -15.2% | 24: 43/-2.05 25: 45/+4.17 26: 11/+3.45
+hold 72h, stop -15%, sell all at +15%        n   99 days  31  avg +2.69%  med +5.44%  win  64%  t -0.7  PF 1.62  worst  -15.2%  5%ile  -15.2% | 24: 43/-0.77 25: 45/+5.79 26: 11/+3.52
+
+3. who and when
+market-wide (BTC also fell >= 4% in 24h)     n   63 days  14  avg +6.69%  med +7.64%  win  76%  t +3.0  PF 7.49  worst   -9.2%  5%ile   -6.4% | 24: 25/+4.89 25: 37/+8.33 26:  1/-9.16
+single-coin (BTC fell < 4%)                  n   78 days  25  avg +7.13%  med +5.36%  win  73%  t +0.4  PF 6.14  worst  -14.3%  5%ile   -7.4% | 24: 31/+3.22 25: 36/+11.29 26: 11/+4.51
+10 majors only                               n   26 days  12  avg +4.76%  med +5.31%  win  73%  t +1.8  PF 4.45  worst   -9.3%  5%ile   -7.0% | 24: 11/+2.87 25: 15/+6.14
+the other 20                                 n   73 days  27  avg +5.79%  med +6.48%  win  71%  t +1.9  PF 5.84  worst   -9.2%  5%ile   -6.3% | 24: 32/+5.14 25: 30/+6.77 26: 11/+4.97
+BTC regime bearish at entry                  n   92 days  25  avg +5.88%  med +6.42%  win  74%  t +2.1  PF 6.13  worst   -9.3%  5%ile   -6.7% | 24: 39/+4.48 25: 43/+7.12 26: 10/+6.02
+BTC regime OK at entry                       n   25 days  11  avg +3.22%  med +2.70%  win  60%  t -0.6  PF 2.67  worst   -9.6%  5%ile   -8.5% | 24: 13/+8.68 25: 10/-1.77 26:  2/-7.28
+entered on a green hour with RSI rising      n   85 days  25  avg +6.28%  med +7.03%  win  75%  t +2.3  PF 6.43  worst  -11.0%  5%ile   -6.4% | 24: 40/+6.29 25: 36/+6.70 26:  9/+4.51
+
+5. portfolio: each trade = a fixed slice of equity, at most `cap` open, 48h hold, stop -15%
+fall 8% / OI 20%, slice 10% x max 5:  trades   63  total   +12%  cagr   +4%  max dd   9% | 24:-0% 25:+8% 26:+3%
+fall 8% / OI 20%, slice 20% x max 3:  trades   51  total    +9%  cagr   +3%  max dd  13% | 24:-1% 25:+6% 26:+4%
+fall 8% / OI 15%, slice 10% x max 5:  trades  138  total   +10%  cagr   +4%  max dd  13% | 24:+1% 25:+13% 26:-4%
+fall 8% / OI 15%, slice 20% x max 3:  trades  117  total    -4%  cagr   -2%  max dd  24% | 24:-7% 25:+15% 26:-10%
+fall 8% / OI 10%, slice 10% x max 5:  trades  295  total   +14%  cagr   +5%  max dd  15% | 24:+7% 25:+4% 26:+2%
+fall 8% / OI 10%, slice 20% x max 3:  trades  240  total   +15%  cagr   +5%  max dd  21% | 24:+1% 25:+4% 26:+10%
+fall 5% / OI 20%, slice 10% x max 5:  trades   76  total   +11%  cagr   +4%  max dd   7% | 24:+2% 25:+7% 26:+2%
+fall 5% / OI 20%, slice 20% x max 3:  trades   61  total    +6%  cagr   +2%  max dd  13% | 24:-1% 25:+9% 26:-2%

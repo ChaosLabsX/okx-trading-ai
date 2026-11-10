@@ -14,10 +14,38 @@ the wrapper, so coverage is continuous.
 ```
 main()
  └─ loop every 60s for ~4min:
-     ├─ run_scan(cache)            # signals → filters → ranking → auto-trades → Telegram
-     ├─ monitor_option3_trades()   # exit detection for all open trades (see OPTION3 doc)
-     └─ save_cache(cache)          # persists alert-dedup state to signal_cache.json
+     ├─ run_scan(cache)            # signals → filters → ranking → trade (live) or paper trade → Telegram
+     │    └─ paper.flush_scan / paper.trend_scan     # the paper-only strategies
+     ├─ monitor_option3_trades()   # exit detection for all open LIVE trades (see OPTION3 doc)
+     ├─ paper.monitor(cache)       # steps open PAPER trades against real 1-minute candles
+     ├─ write_bot_status(cache)    # first scan and last: the row the dashboard's status strip reads
+     └─ save_cache(cache)          # alert-dedup state, gate counters, paper-trade progress
 ```
+
+## Strategy modes (2026-11-10)
+
+`STRATEGY_MODE = {'dip': 'paper', 'flush': 'paper', 'trend': 'paper'}` — `live`, `paper`
+or `off` per strategy. **Everything below describes the `dip` strategy.** On `paper` it
+runs unchanged up to the moment an order would be sent; then `paper.open_trade()` records
+a simulated trade instead of `place_option3_trade()`, and the open paper trades stand in
+for open live ones wherever a rail counts positions (open-trade cap, correlation guard,
+circuit breaker). The evidence behind the mode, and the bar for `live`:
+[STRATEGIES.md](STRATEGIES.md).
+
+Also new in the scan:
+
+- **Every qualified signal that is not traded is journalled with its gate** (`_log_refused`
+  → `skipped_setups.gate`): the BTC regime filter, the open-trade cap, the circuit breaker,
+  the monthly loss limit, the correlation guard, ranking below the top pick, crowded
+  funding, the AI. All graded 24h later. One request per scan however many are refused.
+- **Gate counters** (`_funnel_today`) tick at each stage and are kept 14 days in the cache
+  file; the BTC regime is read on every scan so quiet days are explained too.
+- **Risk limits for live trades:** `RISK_PER_TRADE_PCT` (a stop-out may cost at most 1% of
+  the account; applied in `ai_trade_params` after the stop is final) and
+  `MAX_30D_LOSS_PCT` (new live trades stop while the last 30 days of closed live trades
+  have lost more than 6% of the account).
+- **The advisor's context** gained the 24h change in futures open interest (in coins),
+  long/short ratio, taker buying share and market breadth (`fetch_derivs_context`).
 
 ## Scan pipeline (`run_scan()`)
 

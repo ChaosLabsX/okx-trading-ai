@@ -30,15 +30,21 @@ The two halves share the same signal engine (identical scoring logic implemented
 >
 > The VPS is the only thing that trades. See [infra/VPS-SETUP.md](infra/VPS-SETUP.md).
 >
-> **`TEST_MODE = False`. This bot trades real money.** Production sizing, the
-> full score ≥ 4.0 bar, the reversal gate, and the AI advisor are all active.
-> Setting `TEST_MODE = True` (one line) switches to fixed $5 test trades —
-> see [docs/SIGNAL-CHECKER.md](docs/SIGNAL-CHECKER.md#test-mode).
+> **Since 2026-11-10 no strategy trades real money.** `STRATEGY_MODE` in
+> `signal_checker.py` has every strategy on `paper`: the scan, the gates, the AI
+> advisor and the exits all run, fills are simulated on live OKX candles, and no
+> order is sent. The original dip strategy lost money over 46 live trades and over
+> 34 months of tests, so it has to earn its way back. What is being tested, on what
+> evidence, and the bar for switching anything to `live`:
+> [docs/STRATEGIES.md](docs/STRATEGIES.md). (`TEST_MODE = True` is a separate
+> thing — a $5 live pipeline test, see
+> [docs/SIGNAL-CHECKER.md](docs/SIGNAL-CHECKER.md#test-mode).)
 
 ## Documentation map
 
 | Doc | What it covers |
 |---|---|
+| [docs/STRATEGIES.md](docs/STRATEGIES.md) | **Start here.** What each strategy is, the evidence for and against it, live vs paper, the bar for real money, the risk limits |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System components, data flow, file map, Supabase tables, secrets & config |
 | [docs/DASHBOARD.md](docs/DASHBOARD.md) | The browser app: scanner, signal engine, AI Advisor, trade execution, news, settings/lock screen, PWA |
 | [docs/SIGNAL-CHECKER.md](docs/SIGNAL-CHECKER.md) | The Python worker: scan loop, alert rules, auto-trade decision flow, test mode, Telegram messages |
@@ -59,11 +65,15 @@ okx-trading-ai/  (repo root)
 ├── sw.js                   # Service worker (offline cache for static assets)
 ├── manifest.json           # PWA manifest
 ├── site.webmanifest        # PWA manifest (linked from index.html)
+├── bot.js                  # Dashboard: status strip + paper strategies / why-no-trade / system tabs
 ├── signal_checker.py       # 24/7 background worker (signals + auto-trade + monitor + Telegram)
+├── paper.py                # paper trading: simulated fills on live candles; the flush and trend strategies
+├── db_check.py             # pre-flight: the worker's database key and the public key's limits
 ├── backtest.py             # local backtesting harness — replays the worker's rules over history
 ├── ai_check.py             # pre-flight: proves the worker's AI calls work with the VPS key
 ├── tests/test_breakeven.py # break-even stop vs a simulated OKX (no network) — run after order-handling changes
-├── research/               # minute-level replay of the live rules — the evidence behind recent changes
+├── tests/test_paper.py     # paper trading vs the research engine, and "no order is ever sent" — no network
+├── research/               # replay of the live rules + the strategy lab — the evidence behind every change
 ├── infra/                  # VPS deployment: bootstrap + wrapper scripts, .env template
 │   ├── VPS-SETUP.md        # ← how the worker is actually deployed and run
 │   ├── bootstrap-okx.ps1
@@ -87,6 +97,10 @@ okx-trading-ai/  (repo root)
 | **CryptoPanic** *(dormant)* | Community-voted news sentiment for the dashboard — code is in place but unused: their API went paid (~$50/week, not worth it). Keyword sentiment is used instead; trading is unaffected (the AI reads raw headlines itself) | `CRYPTOPANIC_API_KEY` in `config.js` left empty on purpose |
 
 ## Quick "how it trades" summary
+
+*(The dip strategy, described below, is on **paper** since 2026-11-10: step 6 records a
+simulated trade instead of placing one. Two more strategies run on paper beside it —
+see [docs/STRATEGIES.md](docs/STRATEGIES.md).)*
 
 1. On the VPS, a wrapper keeps `signal_checker.py` running continuously — the script scans every 60 s, self-exits after ~4 min, and is relaunched immediately, so coverage is gap-free.
 2. Each coin gets a score from RSI(1H), MACD, Bollinger %B, volume ratio, and RSI(4H), all read from **finished** candles (the one still forming is ignored). Score ≥ 4.0 → STRONG BUY (≥ 1 in test mode). Scores land on half-points, so each half-point is a whole step on the scale, not a fractional nudge.

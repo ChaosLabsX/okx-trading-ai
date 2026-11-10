@@ -3,6 +3,171 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-11-10 — Full audit: the dip strategy goes to paper; paper trading, a journal of every "no", risk limits, a bot panel
+
+Asked for: find out why nothing has traded for 11 days, audit everything, and upgrade the
+bot to a professional standard — more good trades, never at the cost of capital, validated
+by backtest and paper trading before anything goes live. This entry is long because the
+answer to the first question changed the answer to all the others.
+
+### Why nothing traded for 11 days
+
+Last trade: PYTH, opened 2026-10-29 21:31 UTC. Replaying the live rule gate by gate from
+30 Oct to 10 Nov (`research/funnel.py`, 54 coins, `funnel_2026-11-10.txt`):
+
+| Stage | Count |
+|---|---|
+| STRONG BUY readings (coin × half-hour) | 1,123 |
+| … still falling: no 30-minute reversal | 854 |
+| … hourly volume under 2× | 54 |
+| … same coin again within 4h | 47 |
+| **Qualified setups** | **168** |
+| … refused by the BTC regime filter | **165** |
+| Reached the AI (all on 2 Nov) | 3 |
+
+BTC was below its 4H EMA50 with 4H RSI under 45 for 78% of the period. The skip journal,
+working since 2026-11-04, is empty for the same reason: nothing has reached the AI since.
+The bot did exactly what it was built to do. The setups it refused came in three market-wide
+sell-offs (30 Oct, 5 Nov, 8 Nov) — the moments a rule that buys oversold coins fires most
+and the filter above it, correctly, says no.
+
+So the drought is structural: **the rule's signals and its permission to trade almost never
+coincide.** That raised the real question — is the rule worth freeing?
+
+### What the evidence says about the rule (and about everything else at its timeframe)
+
+A second research engine (`research/lab.py`): hourly bars from 2024-01, 77 coins including
+the ones the bot has dropped, 0.30% per round trip, signals on a bar's close filled at the
+next open. Results in `research/lab_exp*.txt`; the table is the summary.
+
+| Tested | Result after costs |
+|---|---|
+| The live dip rule, 34 months | **−0.58% per trade, t = −3.7**; negative in 2024, 2025 and 2026 |
+| Random entries, same exits (the yardstick) | −0.37% per trade |
+| Trend pullback, breakouts (24h/48h/96h/20-day), MACD turn | every one negative, −0.2% to −0.6% |
+| The same entries with wider exits | still negative |
+| The live record, 46 trades | −0.56% per trade |
+
+Nothing at this timeframe has an edge; a 2–4% target is too small for the fees, and none of
+these rules forecasts well enough to pay them. This is not a threshold to tune — 24 variants
+of the dip rule's own stops, targets and filters had already failed the same way on 2026-11-03.
+
+Three further families, on daily bars:
+
+- **Momentum rotation** (hold the strongest coins of the last 3–28 days) looked excellent on
+  the bot's coin list: +50% to +80% a year. Re-run on a universe chosen without hindsight
+  (every Binance pair, delisted ones included, the top 50 by volume as of each day) it
+  **lost on every setting**. The good result was the coin list: a list written in 2026
+  already knows which coins survived. This is the most useful thing the audit found,
+  because it is the mistake that looks most like a discovery.
+- **Trend-following on the 12 largest coins of January 2023**, 2018–2026: about the return
+  of holding with roughly half the drawdown, across 14 rules. It lost in 2025 and 2026.
+- **Liquidation flush** (coin down 8%+ in a day while futures open interest collapses):
+  +3.7% per trade over 2024–2026 at the 15% setting, every year positive, growing steadily
+  with the size of the collapse. On 2022–2023 data that played no part in choosing the
+  rule: +1.2%, not significant, 2022 negative. Promising, unproven. Stops and targets both
+  destroy it.
+
+### What changed
+
+**1. Strategy modes; the dip strategy is on PAPER.** `STRATEGY_MODE` gives every strategy
+`live`, `paper` or `off`. `dip` is `paper`: the scan, the gates, the AI call, the exits and
+the Telegram messages (marked PAPER) all run; no order is sent. One line switches it back.
+Reason: three independent measurements say it loses and none says it earns. A smaller size
+would lose the same percentage more slowly; on paper it can finally produce evidence either
+way. **From this commit the bot places no real orders** until a strategy is switched to
+`live`. Open live trades, if any existed, would still be managed.
+
+**2. Paper trading (`paper.py`, new).** Simulated fills on real OKX candles, stepped minute
+by minute, both fees plus 0.05% slippage per side, the stop assumed to be hit before the
+target inside one candle. The Option 3 exit model is the one in `research/replay.py`;
+`tests/test_paper.py` checks 400 random trades match it to the last decimal. Minute-level
+progress lives in the cache file and is rebuilt from the entry time if that file is lost;
+Supabase is written on open, on a change of phase, and on close. Two new strategies run
+there: `flush` and `trend` (rules and evidence in `docs/STRATEGIES.md`).
+
+**3. Every refusal is journalled, with who refused.** `skipped_setups.gate`: `ai`, `regime`,
+`max_open`, `breaker`, `loss_limit`, `correlation`, `cap`, `funding`. All are graded 24h
+later the way AI skips already were. Only `gate = ai` rows are shown back to the advisor as
+"your past skips". The regime filter refused 165 setups in 11 days and until now left no
+record of one, let alone of whether refusing them saved money.
+
+**4. Risk limits for live trades.** `RISK_PER_TRADE_PCT = 1.0`: a stop-out may cost at most
+1% of the account, so the stop distance sets the size (applied on top of the 45–60% ladder;
+it can only shrink a position; the advisor is told). `MAX_30D_LOSS_PCT = 6.0`: when the
+closed live trades of the last 30 days have lost more than that share of the account, new
+live trades stop until the losses age out. The live record is why: ~$12 a trade in July,
+~$130 in September and October, on the same per-trade percentage.
+
+**5. What the AI sees.** The bare "Open interest: N coins" line is gone — a level without a
+change is not information. In its place: the 24h change in open interest in coins (the one
+derivatives figure with measured evidence), long/short account ratio, taker buying share
+and market breadth (share of scanned coins at 1H RSI ≤ 30), the last three labelled as
+context with no measured edge. All recorded in every entry snapshot so the journal can
+test them. OKX public statistics endpoints; three requests, only for the one candidate
+being decided.
+
+**6. The bot reports its own state.** `bot_status` (one row, rewritten every ~5 minutes):
+last scan, code version, regime, breadth, strategy modes, which keys are present, and 14
+days of gate counters. The BTC regime is now read every scan, not only when something
+qualified. The daily Telegram report adds yesterday's line: how many setups qualified,
+what stopped them, how long the market was in a downtrend.
+
+**7. Dashboard (`bot.js`, new).** A status strip (bot alive? market? which strategies are
+live) and four tabs in the performance card: **Live trades** (existing, plus average per
+trade in % and worst drawdown), **Paper strategies** (scoreboard per strategy against the
+promotion bar, open and closed paper trades), **Why no trade?** (the funnel, day by day,
+every refused signal and whether refusing it was right) and **System**. The card's content
+no longer touches its border.
+
+**8. Database (`infra/supabase-3-paper-and-status.sql`, applied 2026-11-10).** New tables
+`paper_trades`, `bot_status`; `gate` and `strategy` on `skipped_setups`; `strategy` on
+`option3_trades`; indexes. New tables in `public` are born writable by the public key, so
+the file revokes everything and grants read-only; it also removes the public key's leftover
+TRUNCATE / REFERENCES / TRIGGER. Verified from outside with the public key: reads allowed,
+every write 401. `db_check.py` covers the new tables.
+
+### The bar for real money
+
+`docs/STRATEGIES.md`, written before any paper result exists: 30+ closed paper trades,
+average above zero, profit factor 1.3+, the average clears 1.3 standard errors, and the
+trades look like the backtest. Passing is permission to try at the risk limits above, not
+proof.
+
+### Verified
+
+- `tests/test_paper.py` (36 checks, no network): exits match the research engine; a paper
+  trade never reaches an OKX private endpoint; flush needs both the fall and the
+  open-interest collapse; trend buys and sells on the band; `run_scan` on paper records a
+  paper trade and never calls `place_option3_trade`, on live it does; the regime, loss
+  limit and ranking refusals are journalled with their gate; a fault inside `paper.py`
+  cannot stop the scan; an exit that could not be saved is retried as it was, not
+  recomputed from later prices.
+- `tests/test_ai_prompt.py`: the prompt carries the risk cap and the new lines; $170 asked
+  at a 4% stop on a $400 account becomes $100.
+- `tests/test_dashboard_bot.js` (22 checks): the panel's arithmetic, and every tab renders
+  from realistic rows and from an empty database.
+- `tests/test_breakeven.py`, `tests/test_db_key.py`, `tests/test_dashboard_settings.js`,
+  `parity_check.py`: unchanged and passing.
+- The worker itself (`python signal_checker.py`, the way the VPS runs it) through one full
+  4-minute cycle on the development machine against live OKX data, with no keys: warm-up
+  scan, a real scan, `[Paper] dip strategy is on PAPER`, gate counters written to the cache
+  file, clean exit. Regime, breadth, open-interest lookups and daily candles returned real
+  values. (That run also showed 28 of the 67 coins under the $1M/24h OKX liquidity floor
+  that day, up from 12 in September: the market is thin, and the floor is doing its job.)
+
+Not verified here, because it needs the VPS's private key: the worker's writes to the new
+tables. `db_check.py` on the VPS checks them.
+
+### On the VPS
+
+```powershell
+Stop-ScheduledTask -TaskName "OKX-SignalChecker"; Get-Process python -EA SilentlyContinue | ? Path -like 'C:\OKXAI\*' | Stop-Process -Force
+cd C:\OKXAI; git pull
+Start-ScheduledTask -TaskName "OKX-SignalChecker"
+cd C:\OKXAI; .venv\Scripts\python.exe db_check.py
+```
+
 ## 2026-11-03 (later) — The database keys: worker on the private key, public key read-only
 
 Found while running `research/skip_review.py` on the VPS: HTTP 401. The worker's

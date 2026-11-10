@@ -28,6 +28,45 @@ be modelled at all.
 | `chk_score.py` | Score-4.0 trades vs 4.5+ trades inside the portfolio. |
 | `live_stats.py` | The live record from Supabase (read-only, public key). |
 
+## The strategy lab (2026-11-10)
+
+`replay.py` answers "what would the live rule have done?". The lab answers a different
+question — "does this *kind* of rule have an edge at all?" — which needs more market
+regimes than 13 months of minute data hold. Hourly and daily bars, 2018/2022/2024 onward
+depending on the test, numpy. Rules of the house are in `lab.py`'s docstring: signal on a
+bar's close, fill at the next open, higher timeframes only from closed bars, 0.30% per
+round trip, the stop wins a bar that touches both.
+
+| File | What it asks | Answer |
+|---|---|---|
+| `funnel.py` | Gate by gate, why did the live rule not trade? → `funnel_2026-11-10.txt` | 168 setups qualified in 11 days; the BTC regime filter refused 165 |
+| `market_map.py` | Monthly return of BTC and of the coin list; share of each month in the "bearish" regime → `market_map.txt` | — |
+| `lab.py`, `lab_feat.py` | The hourly engine and its indicators (4H / 1D from closed bars only) | — |
+| `lab_random.py` | What do random entries cost? → `lab_random.txt` | −0.37% per trade: the yardstick |
+| `lab_exp1.py` | Does any hourly entry family have an edge (dip, trend pullback, breakouts, MACD turn; three exit sets)? | No. All negative; the live rule −0.58% (t −3.7) |
+| `lab_d1.py`, `lab_exp2.py` | Multi-day breakout / trend / momentum rotation on the bot's coin list | Looks excellent |
+| `fetch_all_1d.py`, `lab_exp3.py` | The same on a point-in-time universe (every Binance pair, top 50 by volume as of each day) | **Negative on every setting.** The result above was the coin list |
+| `lab_exp4.py` | 14 simple daily trend rules on the 12 largest coins of Jan 2023, 2018–2026 | About the return of holding, half the drawdown; lost in 2025–26 |
+| `fetch_derivs.py`, `lab_exp5.py` | Do open interest, funding, long/short ratio, taker flow mark the dips worth buying? | Only open interest: a fall with collapsing open interest rebounds |
+| `lab_exp6.py` | Stress test of that: thresholds, holding time, stops, who and when, portfolio. Run again on 2022–2023 data never used to choose the rule → `lab_exp6_oos_2022-2023.txt` | Strong on 2024–26 (+3.7%/trade), weak on 2022–23 (+1.2%, not significant). Paper only |
+
+```bash
+python research/fetch_bars.py 1h 2024-01-01 2026-11-10      # ~3 min, 82 MB, git-ignored
+python research/fetch_bars.py 1d 2023-01-01 2026-11-10
+python research/fetch_all_1d.py 2023-01-01 2026-11-10
+python research/fetch_derivs.py 2024-01-01 2026-11-09       # ~4 min, 31k small files -> 31 MB
+python research/lab_exp1.py
+python research/lab_exp6.py bars_1h derivs coin             # in-sample
+python research/lab_exp6.py bars_1h_oos derivs_oos coin     # after fetching 2022-2023 into those folders
+```
+
+The lab needs `numpy` (research only; the worker itself still depends on `requests` alone).
+
+**The lesson worth keeping:** `lab_exp2` vs `lab_exp3`. A coin list written today already
+knows which coins survived and grew. Any "buy what is rising" rule tested on it is graded
+on an exam it has seen. Test selection rules on a universe built from what was known at
+the time, or do not believe them.
+
 ## Running it
 
 ```bash

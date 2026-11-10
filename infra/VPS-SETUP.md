@@ -154,6 +154,26 @@ rejected every time, and the public key could edit trade rows. Setting it up (on
 The worker prints a warning every run, and Telegrams once a day, while it is on the
 public key.
 
+## Paper trading and the status row (2026-11-10)
+
+Needs `infra/supabase-3-paper-and-status.sql` in the database (already applied on
+2026-11-10; safe to run again). After pulling a version that has `paper.py`:
+
+```powershell
+cd C:\OKXAI; .venv\Scripts\python.exe db_check.py
+```
+
+The worker section should list `read / open / close paper trades` and `read / write status
+row` as PASS, and the public-key section should end `locked down`. In the log, a healthy
+run now shows `[Paper] dip strategy is on PAPER — no orders will be sent`, a `[Regime]`
+line on every scan, and `[Flush]` / `[Trend]` lines when those strategies look at a coin.
+
+To put the dip strategy back on real money, edit one line in `C:\OKXAI\signal_checker.py`
+(`'dip':   'paper',` → `'dip':   'live',`) and restart the task. Read
+`docs/STRATEGIES.md` first. A later `git pull` will not undo that edit silently: it stops
+and says the file differs from the repository, and the change has to be made in the
+repository itself to stick.
+
 **Going back to GitHub Actions** is no longer a toggle - the workflow file was
 deleted. Recover it with
 `git show 151be53:.github/workflows/signal-checker.yml`, restore it to

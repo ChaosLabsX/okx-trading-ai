@@ -26,3 +26,11 @@ research/w*/
 # research/fetch_1m.py progress logs
 research/*.log
 research/live_rows.json
+
+# Long-history bars downloaded by research/fetch_bars.py
+research/bars_*/
+research/derivs/
+research/derivs_*/
+
+# Static layout preview written by tests/test_dashboard_bot.js --preview
+tests/_preview/

@@ -92,6 +92,33 @@ Three sources fetched **in parallel and merged** (deduped by normalized title, s
 
 **Open on load** since 2026-09-11 — it sits above the scanner and is the first thing on the page after the summary strip, which is the point: the result of the last month is what you open the app to see. The bar-chart button in the header collapses it again and reopens it. Open in the markup (`class="perf-card open"`, no inline `display:none`) rather than by script after `DOMContentLoaded`, so it paints in place on the first frame with no fade-in. Its history is fetched once from `loadAppData()` — **not awaited**, so the one Supabase query races the scanner's OKX calls instead of queuing behind them, and **not** from `init()`, so a password-locked app still fetches nothing until the password lands. `loadPerfData()` caches: period switching is instant afterwards, "↻ Refresh data" re-fetches, and if the load-time fetch fails, reopening the panel retries it. **Period control:** a stepper (`‹ September 2026 ›`) plus mode buttons **Month / Year / Last 6 months / All**, and custom from→to date pickers. The arrows walk one month (or one year) at a time — by click, or with the ← / → keys while the panel is open — and **disable themselves at the edges of the data**, so you cannot page off into empty periods in either direction. Month and year bounds are built from calendar `Date` parts rather than by subtracting days, so a month means that month however long it is and DST cannot shift an edge; the per-month totals partition thehistory exactly. The anchor snaps to the newest traded month (`perfSnapToData()`) as soon as the rows land, so the panel never shows blank after a quiet spell. The 7D / 30D / 90D buttons were removed on 2026-09-03 — unused. Shows: **Net P&L after OKX fees** (headline — the real result), before-fees P&L and estimated fees (0.2% round trip on `amount_usdt`), trades W/L, win rate, profit factor, avg win/loss, a cumulative equity-curve SVG, per-coin net table, and exit-type counts. Only trades closed after the P&L-tracking migration appear (older rows have no recorded outcome).
 
+**Since 2026-11-10 the card is the bot panel** (`bot.js`), read-only, three small
+Supabase reads with the public key:
+
+- **Status strip** (always visible) — from the `bot_status` row the worker rewrites every
+  ~5 minutes: *Bot running · updated N min ago* (amber after 15 minutes without a report,
+  red after 45), the market regime (*BTC downtrend — dip buys blocked*), and one chip per
+  strategy with its mode. Re-read every 5 minutes while the page is visible.
+- **Live trades** — the panel described above, plus *Average per trade* (result as a share
+  of the money put in: the figure that says whether the rule makes money, independent of
+  size) and *Worst drawdown*. A note at the top says plainly when no strategy is trading
+  real money.
+- **Paper strategies** — a card per strategy (closed trades, average, profit factor, open
+  now) with the four promotion checks from [STRATEGIES.md](STRATEGIES.md) ticked or not
+  and a verdict: *not enough evidence yet* / *failing* / *passes — eligible for a small
+  live trial*. Then the open and the closed paper trades, with the worst and best point
+  each reached. `PROMO` in `bot.js` must match that document.
+- **Why no trade?** — a one-sentence answer, the funnel (STRONG BUY readings → failed
+  reversal / volume / cooldown → qualified setups → stopped by which gate → taken), a
+  day-by-day table, a scorecard per gate (*would have lost* / *would have won* / *neither*,
+  from the 24h grading), and every refused signal with who refused it and why.
+- **System** — last report, code version, coins scanned, regime, which keys the VPS has,
+  the database key's role, the risk limits.
+
+The paper and why tabs fetch when first opened and are cached; *Refresh data* reloads the
+open one. Tested by `tests/test_dashboard_bot.js` (arithmetic, rendering from realistic
+rows and from an empty database, escaping); `--preview` writes a static page to look at.
+
 ### 10. Portrait-only lock
 
 Three layers: `"orientation": "portrait"` in both manifests (locks installed PWAs on Android), a best-effort `screen.orientation.lock('portrait')` at init, and a CSS overlay (`#rotateOverlay`) that covers the app with a "rotate back" prompt whenever a phone-sized screen goes landscape (`orientation: landscape` + `max-height: 500px` — desktops are unaffected).

@@ -1,0 +1,51 @@
+30 coins, 2024-01-01 00:00 -> 2026-11-09 23:00; open interest known for 99% of coin-hours
+all hours, average next-N-hour return: 12h +0.00%  24h +0.01%  48h +0.01%  72h +0.02%
+
+event (one per coin per 24h)                       n  days   12h avg (t)   24h avg (t)   48h avg (t)   72h avg (t)
+fall >= 8% in 24h (price only)                  3152   530    +0.35 (+5.2)    +0.48 (+4.8)    +0.69 (+4.0)    +1.28 (+3.4)
+  + open interest down >= 10%  (flush)          2056   401    +0.68 (+4.6)    +0.89 (+4.6)    +1.38 (+4.4)    +1.68 (+3.3)
+  + open interest down >= 20%  (hard flush)      500   154    +3.10 (+3.7)    +2.71 (+2.7)    +4.40 (+3.3)    +4.43 (+2.8)
+  + open interest UP >= 5%  (sellers adding)      79    59    -0.56 (-0.3)    -0.87 (-0.7)    -0.66 (-0.9)    +1.08 (-0.2)
+  + flush + funding <= 0                        1043   269    +0.49 (+2.5)    +0.82 (+2.1)    +1.56 (+2.3)    +1.83 (+1.4)
+  + flush + turning up (green, RSI up)          1500   321    +1.07 (+3.2)    +0.91 (+2.7)    +1.71 (+2.9)    +2.15 (+2.1)
+fall >= 5% in 24h (price only)                  7587   807    +0.17 (+6.8)    +0.27 (+5.6)    +0.20 (+3.3)    +0.52 (+2.9)
+  + open interest down >= 10%                   3145   618    +0.45 (+6.1)    +0.69 (+5.7)    +1.00 (+4.1)    +1.33 (+4.0)
+funding <= -0.02% and RSI <= 35                  965   448    +0.07 (+2.4)    +0.24 (+2.6)    +0.76 (+2.5)    +1.15 (+2.2)
+funding <= -0.05%                                570   401    +0.24 (+0.4)    +0.24 (-0.2)    +0.85 (+1.0)    +1.37 (+1.2)
+funding >= +0.05% (longs crowded)                591    59    +0.41 (+0.9)    +0.63 (+0.6)    +1.12 (+0.9)    +1.33 (+0.8)
+RSI <= 25 (price only)                          2822   425    +0.06 (+4.5)    +0.00 (+3.9)    +0.18 (+2.8)    +0.65 (+3.1)
+  + open interest down >= 10% in 24h            1077   206    +0.87 (+4.1)    +1.01 (+3.4)    +1.90 (+3.4)    +2.27 (+3.0)
+crowd net long: long/short accounts >= 3        6770   841    -0.23 (-0.4)    -0.23 (+0.7)    -0.46 (-0.0)    -0.56 (+0.2)
+crowd net short: long/short accounts <= 0.8     1005   581    +0.14 (+0.4)    +0.23 (+0.3)    +0.47 (+1.0)    +0.50 (+0.8)
+
+the same events as trades, after costs (S = each traded alone, B = max 3 open, 1 new per hour):
+-- live exits 2.0/2.5/1.0
+S fall >= 8% in 24h (price only)   n  3134  win  62%  avg -0.216%  t -2.5  PF 0.90  net    -676  dd  1109  hold   15h | 24:1077/-0.34  25:1351/-0.18  26: 706/-0.10
+B fall >= 8% in 24h (price only)   n  1199  win  62%  avg -0.215%  t -1.5  PF 0.90  net    -258  dd   341  hold   15h | 24: 441/-0.41  25: 454/-0.07  26: 304/-0.15
+S + open interest down >= 10%  (   n  2045  win  62%  avg -0.186%  t -1.6  PF 0.92  net    -381  dd   811  hold   16h | 24: 766/-0.32  25: 819/-0.17  26: 460/+0.01
+B + open interest down >= 10%  (   n   872  win  61%  avg -0.431%  t -2.5  PF 0.82  net    -375  dd   418  hold   16h | 24: 318/-0.71  25: 329/-0.25  26: 225/-0.31
+S + open interest down >= 20%  (   n   497  win  63%  avg -0.067%  t -0.2  PF 0.98  net     -33  dd   369  hold   17h | 24: 248/-0.35  25: 157/-0.49  26:  92/+1.43
+B + open interest down >= 20%  (   n   267  win  67%  avg +0.552%  t +1.4  PF 1.24  net    +147  dd    56  hold   20h | 24: 112/+0.47  25:  87/+0.46  26:  68/+0.80
+S + flush + funding <= 0           n  1037  win  61%  avg -0.422%  t -2.7  PF 0.82  net    -438  dd   519  hold   18h | 24: 245/-0.42  25: 499/-0.33  26: 293/-0.58
+B + flush + funding <= 0           n   520  win  61%  avg -0.438%  t -1.9  PF 0.81  net    -228  dd   283  hold   18h | 24: 125/-0.39  25: 233/-0.57  26: 162/-0.29
+S + flush + turning up (green, R   n  1498  win  63%  avg -0.137%  t -1.0  PF 0.94  net    -205  dd   539  hold   17h | 24: 566/-0.11  25: 610/-0.27  26: 322/+0.06
+B + flush + turning up (green, R   n   615  win  60%  avg -0.426%  t -1.9  PF 0.83  net    -262  dd   292  hold   17h | 24: 220/-0.48  25: 230/-0.30  26: 165/-0.53
+S funding <= -0.05%                n   501  win  61%  avg -0.235%  t -1.2  PF 0.88  net    -118  dd   139  hold   19h | 24: 190/-0.34  25: 181/+0.00  26: 130/-0.42
+B funding <= -0.05%                n   447  win  60%  avg -0.465%  t -2.2  PF 0.77  net    -208  dd   228  hold   20h | 24: 175/-0.41  25: 155/-0.52  26: 117/-0.48
+S + open interest down >= 10% in   n  1075  win  58%  avg -0.560%  t -3.7  PF 0.76  net    -602  dd   940  hold   15h | 24: 379/-0.74  25: 441/-0.66  26: 255/-0.13
+B + open interest down >= 10% in   n   410  win  59%  avg -0.410%  t -1.8  PF 0.80  net    -168  dd   243  hold   16h | 24: 133/-0.64  25: 157/-0.29  26: 120/-0.31
+-- wide 4.0/2.5/3.0
+S fall >= 8% in 24h (price only)   n  3057  win  45%  avg -0.418%  t -3.6  PF 0.86  net   -1279  dd  1634  hold   35h | 24:1051/-0.38  25:1316/-0.32  26: 690/-0.66
+B fall >= 8% in 24h (price only)   n  1062  win  45%  avg -0.511%  t -2.6  PF 0.83  net    -542  dd   660  hold   35h | 24: 384/-0.62  25: 412/-0.39  26: 266/-0.54
+S + open interest down >= 10%  (   n  2023  win  46%  avg -0.511%  t -3.4  PF 0.84  net   -1034  dd  1421  hold   34h | 24: 756/-0.41  25: 812/-0.59  26: 455/-0.55
+B + open interest down >= 10%  (   n   800  win  44%  avg -0.683%  t -2.8  PF 0.79  net    -547  dd   685  hold   34h | 24: 293/-0.98  25: 301/-0.49  26: 206/-0.55
+S + open interest down >= 20%  (   n   496  win  51%  avg +0.044%  t +0.1  PF 1.01  net     +22  dd   331  hold   34h | 24: 247/-0.17  25: 157/-0.36  26:  92/+1.30
+B + open interest down >= 20%  (   n   257  win  51%  avg +0.355%  t +0.7  PF 1.11  net     +91  dd   104  hold   40h | 24: 105/+0.34  25:  87/+0.08  26:  65/+0.75
+S + flush + funding <= 0           n  1033  win  45%  avg -0.681%  t -3.3  PF 0.79  net    -704  dd   851  hold   38h | 24: 244/-0.01  25: 498/-0.84  26: 291/-0.98
+B + flush + funding <= 0           n   493  win  44%  avg -0.608%  t -2.0  PF 0.81  net    -300  dd   375  hold   35h | 24: 121/-0.21  25: 214/-0.72  26: 158/-0.76
+S + flush + turning up (green, R   n  1497  win  48%  avg -0.311%  t -1.7  PF 0.90  net    -466  dd   768  hold   37h | 24: 566/-0.11  25: 609/-0.40  26: 322/-0.50
+B + flush + turning up (green, R   n   588  win  44%  avg -0.749%  t -2.6  PF 0.78  net    -440  dd   464  hold   34h | 24: 210/-0.53  25: 220/-0.60  26: 158/-1.24
+S funding <= -0.05%                n   445  win  49%  avg -0.295%  t -1.0  PF 0.89  net    -131  dd   170  hold   33h | 24: 170/-0.61  25: 159/+0.29  26: 116/-0.63
+B funding <= -0.05%                n   402  win  47%  avg -0.668%  t -2.3  PF 0.75  net    -269  dd   297  hold   34h | 24: 159/-0.88  25: 136/-0.36  26: 107/-0.74
+S + open interest down >= 10% in   n  1072  win  42%  avg -0.754%  t -3.9  PF 0.76  net    -808  dd  1228  hold   35h | 24: 377/-1.13  25: 441/-0.72  26: 254/-0.25
+B + open interest down >= 10% in   n   407  win  42%  avg -0.900%  t -3.1  PF 0.70  net    -366  dd   422  hold   34h | 24: 131/-1.20  25: 156/-0.68  26: 120/-0.86

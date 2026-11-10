@@ -1,6 +1,6 @@
 """
 Database permission check. Run on the VPS after changing SUPABASE_KEY or the table
-permissions (infra/supabase-permissions.sql):
+permissions (infra/supabase-*.sql):
 
     cd C:\\OKXAI; .venv\\Scripts\\python.exe db_check.py
 
@@ -8,11 +8,13 @@ Checks two keys, with requests that touch no data (reads of one id; writes aimed
 an id that does not exist; an empty batch insert):
 
   1. The worker's key (SUPABASE_KEY in .env) must be the PRIVATE service key and must
-     be able to read and write its three tables. Until 2026-11-03 it was the public
-     key, which cannot touch skipped_setups at all: every AI skip was rejected.
+     be able to read and write its tables (trades, the journal of refused signals,
+     learning results, paper trades, the status row). Until 2026-11-03 it was the
+     public key, which could not write the journal: every AI skip was rejected.
   2. The public key (SUPABASE_ANON_KEY in config.js, published on GitHub and the
-     website) should only be able to READ trades and read/save the encrypted
-     dashboard settings. Anything more is something anyone on the internet can do.
+     website) should only be able to READ what the dashboard shows and read/save the
+     encrypted dashboard settings. Any write beyond that is something anyone on the
+     internet can do.
 
 Exit code 0 = the worker's key is right. The public-key section reports separately.
 """
@@ -64,12 +66,19 @@ def main():
         ('grade skipped setups',      'PATCH', 'skipped_setups?id=eq.-1', {'followup': None}),
         ('read learning results',     'GET',   'learned_rules?select=id&limit=1', None),
         ('save learning results',     'POST',  'learned_rules', []),
+        # 2026-11-10 (infra/supabase-3-paper-and-status.sql)
+        ('journal: gate column',      'GET',   'skipped_setups?select=id,gate,strategy&limit=1', None),
+        ('read paper trades',         'GET',   'paper_trades?select=id&limit=1', None),
+        ('open paper trades',         'POST',  'paper_trades', []),
+        ('close paper trades',        'PATCH', 'paper_trades?id=eq.-1', {'exit_reason': None}),
+        ('read status row',           'GET',   'bot_status?select=id&limit=1', None),
+        ('write status row',          'PATCH', 'bot_status?id=eq.db-check-no-such-row', {'data': {}}),
     ]
     for label, method, path, body in checks:
         code, text = probe(url, sc.SUPABASE_KEY, method, path, body)
         good = code in OK
         worker_ok &= good
-        print(f"  {'PASS' if good else 'FAIL'}  {label:<24} HTTP {code}{'' if good else '  ' + text}")
+        print(f"  {'PASS' if good else 'FAIL'}  {label:<26} HTTP {code}{'' if good else '  ' + text}")
 
     if public:
         print('\n2. PUBLIC KEY (config.js - anyone can use it)')
@@ -80,7 +89,15 @@ def main():
             ('edit trades',                      'PATCH', 'option3_trades?id=eq.db-check-no-such-row', {'exit_reason': None}, False),
             ('add trades',                       'POST',  'option3_trades', [], False),
             ('delete trades',                    'DELETE', 'option3_trades?id=eq.db-check-no-such-row', None, False),
-            ('touch skipped setups',             'GET',   'skipped_setups?select=id&limit=1', None, False),
+            ('read refused signals (dashboard)', 'GET',   'skipped_setups?select=id&limit=1', None, True),
+            ('read paper trades (dashboard)',    'GET',   'paper_trades?select=id&limit=1', None, True),
+            ('read bot status (dashboard)',      'GET',   'bot_status?select=id&limit=1', None, True),
+            ('add refused signals',              'POST',  'skipped_setups', [], False),
+            ('edit refused signals',             'PATCH', 'skipped_setups?id=eq.-1', {'followup': None}, False),
+            ('add paper trades',                 'POST',  'paper_trades', [], False),
+            ('edit paper trades',                'PATCH', 'paper_trades?id=eq.-1', {'exit_reason': None}, False),
+            ('delete paper trades',              'DELETE', 'paper_trades?id=eq.-1', None, False),
+            ('write bot status',                 'PATCH', 'bot_status?id=eq.db-check-no-such-row', {'data': {}}, False),
             ('save learning results',            'POST',  'learned_rules', [], False),
             ('delete settings',                  'DELETE', 'app_settings?id=eq.db-check-no-such-row', None, False),
         ]

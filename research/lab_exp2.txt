@@ -1,0 +1,47 @@
+77 coins, 1409 days, 2023-01-01 -> 2026-11-09; results from 2023-05-01
+BTC buy & hold                           tot  +169% cagr  +32% dd  53% sh  0.84 exp 100% | n    0 win   0% avg  +0.0% PF 9.99 hold  0.0d | 23:+51% 24:+121% 25:-6% 26:-14%
+all coins equal-weight, hold             tot   -30% cagr   -9% dd  84% sh  0.23 exp 100% | n    0 win   0% avg  +0.0% PF 9.99 hold  0.0d | 23:+52% 24:+59% 25:-65% 26:-17%
+BTC only while above its EMA50           tot  +189% cagr  +35% dd  29% sh  1.08 exp 100% | n    0 win   0% avg  +0.0% PF 9.99 hold  0.0d | 23:+51% 24:+76% 25:+11% 26:-1%
+
+--- no gate ---
+DON 10/5 sl2.5                           tot   -67% cagr  -27% dd  89% sh  0.03 exp  81% | n  430 win  28% avg  +0.3% PF 1.06 hold  7.3d | 23:+10% 24:-13% 25:-58% 26:-17%
+DON 20/10 sl2.5                          tot   +73% cagr  +17% dd  78% sh  0.59 exp  80% | n  214 win  30% avg  +3.9% PF 1.48 hold 14.4d | 23:+120% 24:-24% 25:+98% 26:-48%
+DON 30/15 sl2.5                          tot   -16% cagr   -5% dd  79% sh  0.30 exp  77% | n  141 win  31% avg  +3.3% PF 1.31 hold 21.0d | 23:+170% 24:-39% 25:+33% 26:-62%
+DON 55/27 sl2.5                          tot    +3% cagr   +1% dd  70% sh  0.30 exp  73% | n   83 win  27% avg  +nan% PF 1.35 hold 36.7d | 23:+73% 24:+12% 25:-30% 26:-24%
+EMA 20>50, r14>0 sl2.5                   tot  +236% cagr  +41% dd  80% sh  0.82 exp  80% | n  292 win  26% avg  +3.7% PF 1.60 hold 10.5d | 23:+212% 24:+20% 25:+35% 26:-33%
+EMA 20>50, exit < EMA50 sl2.5            tot    +3% cagr   +1% dd  69% sh  0.40 exp  84% | n  150 win  25% avg  +3.2% PF 1.37 hold 21.4d | 23:+98% 24:+8% 25:-8% 26:-48%
+
+--- BTC>EMA50 ---
+DON 10/5 sl2.5                           tot   +85% cagr  +19% dd  69% sh  0.59 exp  55% | n  285 win  30% avg  +2.3% PF 1.37 hold  7.5d | 23:+42% 24:+52% 25:-19% 26:+5%
+DON 20/10 sl2.5                          tot  +340% cagr  +52% dd  72% sh  0.93 exp  62% | n  159 win  30% avg  +7.2% PF 1.90 hold 14.7d | 23:+141% 24:-11% 25:+205% 26:-32%
+DON 30/15 sl2.5                          tot  +110% cagr  +23% dd  67% sh  0.65 exp  63% | n  112 win  34% avg  +7.0% PF 1.74 hold 21.0d | 23:+190% 24:-28% 25:+106% 26:-51%
+DON 55/27 sl2.5                          tot   +55% cagr  +13% dd  67% sh  0.51 exp  61% | n   74 win  26% avg  +7.0% PF 1.64 hold 30.9d | 23:+28% 24:-5% 25:+113% 26:-40%
+EMA 20>50, r14>0 sl2.5                   tot  +617% cagr  +75% dd  62% sh  1.10 exp  63% | n  204 win  27% avg  +6.5% PF 2.00 hold 11.8d | 23:+181% 24:+34% 25:+115% 26:-11%
+EMA 20>50, exit < EMA50 sl2.5            tot  +112% cagr  +24% dd  70% sh  0.65 exp  68% | n  108 win  27% avg  +7.0% PF 1.75 hold 23.8d | 23:+80% 24:+28% 25:+61% 26:-43%
+
+--- BTC>EMA50, exit on flip ---
+DON 10/5 sl2.5                           tot  +199% cagr  +36% dd  63% sh  0.78 exp  50% | n  301 win  31% avg  +2.6% PF 1.48 hold  6.4d | 23:+56% 24:+70% 25:+6% 26:+6%
+DON 20/10 sl2.5                          tot  +237% cagr  +41% dd  75% sh  0.85 exp  49% | n  191 win  31% avg  +4.6% PF 1.73 hold 10.0d | 23:+168% 24:-29% 25:+118% 26:-18%
+DON 30/15 sl2.5                          tot   +44% cagr  +11% dd  74% sh  0.47 exp  49% | n  149 win  30% avg  +3.3% PF 1.46 hold 12.8d | 23:+148% 24:-49% 25:+79% 26:-36%
+DON 55/27 sl2.5                          tot  +218% cagr  +39% dd  61% sh  0.85 exp  47% | n  110 win  31% avg  +7.8% PF 2.09 hold 16.5d | 23:+205% 24:-4% 25:+30% 26:-16%
+EMA 20>50, r14>0 sl2.5                   tot  +258% cagr  +44% dd  68% sh  0.86 exp  53% | n  249 win  29% avg  +3.6% PF 1.64 hold  8.3d | 23:+194% 24:+13% 25:+11% 26:-3%
+EMA 20>50, exit < EMA50 sl2.5            tot    +0% cagr   +0% dd  79% sh  0.31 exp  54% | n  162 win  28% avg  +3.1% PF 1.46 hold 12.8d | 23:+206% 24:-13% 25:-45% 26:-32%
+
+--- breadth>50% ---
+DON 10/5 sl2.5                           tot   +22% cagr   +6% dd  77% sh  0.39 exp  37% | n  196 win  28% avg  +2.3% PF 1.35 hold  7.3d | 23:+61% 24:+120% 25:-55% 26:-23%
+DON 20/10 sl2.5                          tot   -53% cagr  -19% dd  86% sh -0.04 exp  43% | n  126 win  29% avg  +0.8% PF 1.09 hold 13.0d | 23:+67% 24:-12% 25:-50% 26:-37%
+DON 30/15 sl2.5                          tot   -54% cagr  -20% dd  82% sh -0.09 exp  44% | n   92 win  26% avg  +0.4% PF 1.04 hold 18.2d | 23:+86% 24:-4% 25:-39% 26:-58%
+DON 55/27 sl2.5                          tot    -3% cagr   -1% dd  64% sh  0.26 exp  45% | n   61 win  25% avg  +5.5% PF 1.48 hold 28.3d | 23:+129% 24:-3% 25:-33% 26:-35%
+EMA 20>50, r14>0 sl2.5                   tot  +143% cagr  +29% dd  64% sh  0.70 exp  45% | n  128 win  32% avg  +5.0% PF 1.61 hold 13.1d | 23:+85% 24:+16% 25:+37% 26:-17%
+EMA 20>50, exit < EMA50 sl2.5            tot   -18% cagr   -6% dd  74% sh  0.25 exp  51% | n   73 win  23% avg  +2.7% PF 1.23 hold 25.7d | 23:+72% 24:-40% 25:+38% 26:-43%
+
+--- XS rotation (top 3, keep while in top 6) ---
+XS r14 no gate                           tot   +95% cagr  +21% dd  82% sh  0.67 exp  87% | n  525 win  31% avg  +1.7% PF 1.33 hold  6.4d | 23:+35% 24:+92% 25:+7% 26:-30%
+XS r14 BTC>EMA50                         tot  +446% cagr  +62% dd  78% sh  0.98 exp  65% | n  352 win  36% avg  +3.5% PF 1.58 hold  7.1d | 23:+57% 24:+83% 25:+194% 26:-36%
+XS r14 BTC>EMA50, exit on flip           tot  +425% cagr  +60% dd  74% sh  0.98 exp  53% | n  382 win  36% avg  +2.9% PF 1.56 hold  5.5d | 23:+68% 24:+84% 25:+112% 26:-20%
+XS r28 no gate                           tot  +236% cagr  +41% dd  77% sh  0.83 exp  88% | n  336 win  32% avg  +3.1% PF 1.51 hold 10.2d | 23:+67% 24:+55% 25:+48% 26:-12%
+XS r28 BTC>EMA50                         tot  +611% cagr  +74% dd  71% sh  1.06 exp  69% | n  216 win  38% avg  +5.9% PF 1.88 hold 12.1d | 23:+106% 24:+85% 25:+159% 26:-28%
+XS r28 BTC>EMA50, exit on flip           tot  +336% cagr  +52% dd  73% sh  0.91 exp  54% | n  266 win  37% avg  +3.7% PF 1.66 hold  8.0d | 23:+99% 24:+38% 25:+62% 26:-2%
+XS r7 no gate                            tot   +75% cagr  +17% dd  88% sh  0.63 exp  84% | n  769 win  35% avg  +1.1% PF 1.25 hold  4.2d | 23:+89% 24:+76% 25:-38% 26:-14%
+XS r7 BTC>EMA50                          tot  +703% cagr  +80% dd  76% sh  1.10 exp  59% | n  532 win  38% avg  +2.4% PF 1.54 hold  4.3d | 23:+93% 24:+114% 25:+53% 26:+27%
+XS r7 BTC>EMA50, exit on flip            tot  +721% cagr  +81% dd  70% sh  1.12 exp  53% | n  554 win  39% avg  +2.3% PF 1.56 hold  3.7d | 23:+82% 24:+134% 25:+55% 26:+24%

@@ -1423,3 +1423,81 @@ tr.sig-ssell:hover { background: rgba(239,68,68,.08) !important; }
   .perf-wrap { padding: 0 8px; }
   .perf-card { margin-top: 8px; }
 }
+
+/* ══════════════════════════════════════════════════════════
+   BOT PANEL  (bot.js): status strip, tabs, paper strategies, "why no trade?"
+══════════════════════════════════════════════════════════ */
+.bot-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; min-height: 26px; }
+.bot-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 500; line-height: 1.4; white-space: nowrap;
+  background: var(--bg-input); border: 1px solid var(--border); color: var(--text-dim);
+}
+.bot-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.bot-chip.good { color: var(--green); border-color: var(--green-dim); }
+.bot-chip.warn { color: var(--amber); border-color: #6b4a0a; }
+.bot-chip.bad  { color: var(--red);   border-color: var(--red-dim); }
+.bot-chip.mode-live  { color: var(--green); border-color: var(--green-dim); font-weight: 700; }
+.bot-chip.mode-paper { color: var(--text-dim); }
+.bot-chip.mode-off   { color: var(--text-muted); opacity: .7; }
+
+.bot-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+.bot-tab {
+  background: none; border: none; border-bottom: 2px solid transparent; color: var(--text-muted);
+  font: 500 13px var(--font); padding: 8px 12px; cursor: pointer; margin-bottom: -1px;
+}
+.bot-tab:hover { color: var(--text); }
+.bot-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.bot-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.bot-note {
+  background: var(--bg-input); border: 1px solid var(--border); border-left: 3px solid var(--border-focus);
+  border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12.5px; line-height: 1.6;
+  color: var(--text-dim); margin-bottom: 14px;
+}
+.bot-note strong { color: var(--text); }
+.bot-note a { color: var(--accent); }
+.bot-note.good { border-left-color: var(--green); }
+.bot-note.warn { border-left-color: var(--amber); }
+.bot-note.bad  { border-left-color: var(--red); }
+.bot-intro { font-size: 12.5px; color: var(--text-dim); line-height: 1.6; margin: 0 0 12px; }
+.bot-intro strong { color: var(--text); }
+.bot-h { font-size: 12px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; margin: 18px 0 8px; }
+.muted { color: var(--text-muted); }
+
+.strat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.strat-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; background: var(--bg-card); }
+.strat-card .perf-stats { grid-template-columns: repeat(2, 1fr); margin-bottom: 10px; }
+.strat-card .bot-note { margin-bottom: 0; }
+.strat-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; }
+.strat-what { font-size: 12px; color: var(--text-muted); line-height: 1.5; margin: 6px 0 10px; min-height: 36px; }
+.checks { list-style: none; margin: 0 0 10px; padding: 0; font-size: 12px; line-height: 1.8; }
+.checks li.ok { color: var(--green); }
+.checks li.no { color: var(--text-muted); }
+
+.funnel { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.funnel-row { display: grid; grid-template-columns: minmax(150px, 250px) 1fr 64px; gap: 10px; align-items: center; font-size: 12px; }
+.funnel-row .fl { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.funnel-row .fb { height: 12px; background: var(--bg-input); border-radius: 3px; overflow: hidden; }
+.funnel-row .fbar { display: block; height: 100%; background: var(--text-muted); border-radius: 3px; }
+.funnel-row .fbar.dim   { background: #334155; }
+.funnel-row .fbar.blue  { background: var(--blue); }
+.funnel-row .fbar.amber { background: var(--amber); }
+.funnel-row .fbar.green { background: var(--green); }
+.funnel-row .fn { font-family: var(--mono); text-align: right; color: var(--text); }
+.why-cell { max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
+.bot-pane .table-wrap { overflow: auto; }
+@media (max-width: 640px) {
+  .funnel-row { grid-template-columns: 120px 1fr 48px; gap: 6px; font-size: 11px; }
+  .why-cell { max-width: 150px; }
+  .bot-tab { padding: 8px 9px; font-size: 12px; }
+}
+
+/* The performance card's body never had side padding (its content touched the border).
+   Everything below the header now lives in .bot-strip / .bot-tabs / .bot-pane. */
+.perf-card > .bot-strip, .perf-card > .bot-tabs, .perf-card > .bot-pane { margin-left: 16px; margin-right: 16px; }
+.perf-card > .bot-strip { margin-top: 14px; }
+.perf-card > .bot-pane { padding-bottom: 16px; }
+@media (max-width: 520px) {
+  .perf-card > .bot-strip, .perf-card > .bot-tabs, .perf-card > .bot-pane { margin-left: 10px; margin-right: 10px; }
+}

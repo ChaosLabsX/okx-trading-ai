@@ -1,0 +1,16 @@
+=== exits live 2.0/2.5/1.0 ===
+S random entries, seed 0           n  2807  win  60%  avg -0.374%  t -6.2  PF 0.74  net   -1049  dd  1118  hold   35h | 24: 936/-0.53  25:1057/-0.21  26: 814/-0.41
+S random entries, seed 1           n  2813  win  61%  avg -0.329%  t -5.4  PF 0.77  net    -926  dd   929  hold   35h | 24: 924/-0.28  25:1071/-0.36  26: 818/-0.34
+S random entries, seed 2           n  2742  win  60%  avg -0.394%  t -6.4  PF 0.73  net   -1081  dd  1084  hold   34h | 24: 896/-0.52  25:1033/-0.36  26: 813/-0.30
+S random entries, seed 3           n  2771  win  59%  avg -0.427%  t -6.8  PF 0.72  net   -1183  dd  1189  hold   35h | 24: 883/-0.54  25:1059/-0.28  26: 829/-0.50
+S random entries, seed 4           n  2772  win  60%  avg -0.337%  t -5.4  PF 0.77  net    -935  dd  1127  hold   36h | 24: 920/-0.28  25:1071/-0.39  26: 781/-0.32
+mean of the five: -0.372% per trade
+
+=== exits wide 4.0/2.5/3.0 ===
+S random entries, seed 0           n  2715  win  47%  avg -0.373%  t -4.3  PF 0.82  net   -1011  dd  1109  hold   50h | 24: 907/-0.49  25:1016/-0.30  26: 792/-0.34
+S random entries, seed 1           n  2733  win  47%  avg -0.404%  t -4.6  PF 0.80  net   -1103  dd  1105  hold   49h | 24: 900/-0.29  25:1038/-0.52  26: 795/-0.39
+S random entries, seed 2           n  2656  win  45%  avg -0.406%  t -4.5  PF 0.81  net   -1078  dd  1129  hold   48h | 24: 873/-0.61  25: 996/-0.26  26: 787/-0.37
+S random entries, seed 3           n  2700  win  45%  avg -0.348%  t -3.9  PF 0.83  net    -939  dd   972  hold   48h | 24: 860/-0.42  25:1031/-0.29  26: 809/-0.35
+S random entries, seed 4           n  2707  win  46%  avg -0.370%  t -4.1  PF 0.82  net   -1002  dd  1249  hold   49h | 24: 903/-0.16  25:1042/-0.52  26: 762/-0.42
+mean of the five: -0.380% per trade
+

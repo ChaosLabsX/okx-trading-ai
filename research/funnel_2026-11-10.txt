@@ -1,0 +1,48 @@
+window 2026-10-30 00:00 -> 2026-11-10 06:00 UTC, 54 coins, 539 half-hour checks
+BTC regime bearish for 419 of 539 checks (78%)
+
+1 scored                              29106
+2 STRONG BUY (score >= 4)              1123
+  x no 30m reversal                     854
+    (volume was fine)                   380
+3 + 30m reversal                        269
+  x 1H volume under 2x                   54
+4 + volume >= 2x                        215
+  x same coin within 4h                  47
+5 distinct candidates                   168
+  x BTC regime bearish                  165
+6 reach the AI                            3
+
+score distribution of coin-moments at score >= 2 (half-hour checks):
+  score  2.0     450
+  score  2.5    1244
+  score  3.0     586
+  score  3.5     808
+  score  4.0      76
+  score  4.5     586
+  score  5.0      16
+  score  5.5     399
+  score  6.5      46
+
+per day: bearish share of the day | STRONG BUY moments | distinct candidates | reach the AI
+  2026-10-30  bear 100%   sb  229   cand  36   ai   0
+  2026-10-31  bear 100%   sb   16   cand   2   ai   0
+  2026-11-01  bear 100%   sb   26   cand   4   ai   0
+  2026-11-02  bear  50%   sb  228   cand  15   ai   3
+  2026-11-03  bear  67%   sb   48   cand   2   ai   0
+  2026-11-04  bear  33%   sb   18   cand   3   ai   0
+  2026-11-05  bear  33%   sb  256   cand  45   ai   0
+  2026-11-06  bear 100%   sb   16   cand   1   ai   0
+  2026-11-07  bear 100%   sb   68   cand   4   ai   0
+  2026-11-08  bear 100%   sb  160   cand  49   ai   0
+  2026-11-09  bear  83%   sb   58   cand   7   ai   0
+  2026-11-10  bear  33%   sb    0   cand   0   ai   0
+
+candidates that reached the AI (3):
+  2026-11-02 04:00  AR-USDT     score 4.0  vol 4.2x  rsi 50  rsi4h 39  MACD cross
+  2026-11-02 08:00  NEAR-USDT   score 5.5  vol 4.1x  rsi 27  rsi4h 35  
+  2026-11-02 09:00  AR-USDT     score 4.0  vol 41.2x  rsi 53  rsi4h 35  MACD cross
+
+candidates blocked by the BTC regime (165):
+  2026-10-30 01:00  BTC-USDT    score 5.5  vol 3.5x  rsi 25  rsi4h 34  
+  2026-10-30 01:00  ETH-USDT    score 5.5  vol 3.7x  rsi 27  rsi4h 34  

@@ -1,0 +1,75 @@
+77 coins, 25056 hourly bars, 2024-01-01 00:00 -> 2026-11-09 23:00  (features 8s)
+
+=== exits live 2.0/2.5/1.0 (TP x ATR on half / SL x ATR / trail x ATR) ===
+S DIP  live rule (approx)          n   716  win  57%  avg -0.621%  t -4.9  PF 0.63  net    -444  dd   452  hold   15h | 24: 207/-0.33  25: 249/-0.89  26: 260/-0.59
+B DIP  live rule (approx)          n   398  win  58%  avg -0.581%  t -3.7  PF 0.63  net    -231  dd   245  hold   16h | 24: 111/-0.66  25: 132/-0.78  26: 155/-0.35
+S DIP  same, any regime            n  3200  win  57%  avg -0.513%  t -6.7  PF 0.74  net   -1642  dd  1818  hold   15h | 24:1021/-0.52  25:1163/-0.54  26:1016/-0.48
+B DIP  same, any regime            n  1131  win  60%  avg -0.368%  t -3.4  PF 0.78  net    -417  dd   442  hold   15h | 24: 322/-0.47  25: 388/-0.24  26: 421/-0.41
+S TPB  pullback + EMA20 reclaim    n  4545  win  59%  avg -0.443%  t -8.7  PF 0.72  net   -2012  dd  2222  hold   13h | 24:1747/-0.25  25:1504/-0.56  26:1294/-0.57
+B TPB  pullback + EMA20 reclaim    n  1468  win  59%  avg -0.451%  t -5.0  PF 0.72  net    -663  dd   733  hold   13h | 24: 577/-0.13  25: 467/-0.70  26: 424/-0.61
+S TPB  + volume 1.5x               n  1379  win  62%  avg -0.328%  t -3.7  PF 0.78  net    -452  dd   514  hold   11h | 24: 545/-0.11  25: 444/-0.47  26: 390/-0.47
+B TPB  + volume 1.5x               n   722  win  59%  avg -0.406%  t -3.1  PF 0.75  net    -293  dd   315  hold   12h | 24: 294/-0.06  25: 223/-0.70  26: 205/-0.57
+S BRK  24h high, vol 2x            n  9743  win  61%  avg -0.259%  t -7.1  PF 0.83  net   -2524  dd  2657  hold   10h | 24:3518/-0.24  25:3253/-0.27  26:2972/-0.27
+B BRK  24h high, vol 2x            n  2712  win  60%  avg -0.277%  t -3.6  PF 0.84  net    -751  dd   931  hold   10h | 24:1007/-0.16  25: 862/-0.49  26: 843/-0.20
+S BRK  48h high, vol 2x            n  8312  win  61%  avg -0.288%  t -7.2  PF 0.81  net   -2397  dd  2472  hold   10h | 24:3013/-0.29  25:2793/-0.29  26:2506/-0.28
+B BRK  48h high, vol 2x            n  2560  win  60%  avg -0.317%  t -3.9  PF 0.82  net    -812  dd   952  hold   10h | 24: 968/-0.25  25: 809/-0.52  26: 783/-0.20
+S BRK  96h high, vol 2x            n  7240  win  61%  avg -0.264%  t -6.1  PF 0.83  net   -1912  dd  2006  hold   10h | 24:2641/-0.27  25:2449/-0.25  26:2150/-0.26
+B BRK  96h high, vol 2x            n  2333  win  59%  avg -0.317%  t -3.6  PF 0.82  net    -740  dd   897  hold   10h | 24: 887/-0.25  25: 732/-0.49  26: 714/-0.22
+S BRK  48h high, no vol rule       n 12278  win  61%  avg -0.291%  t -9.1  PF 0.81  net   -3576  dd  3625  hold   11h | 24:4459/-0.39  25:4374/-0.31  26:3445/-0.13
+B BRK  48h high, no vol rule       n  2757  win  59%  avg -0.391%  t -5.0  PF 0.78  net   -1077  dd  1211  hold   11h | 24:1023/-0.42  25: 906/-0.56  26: 828/-0.16
+S BRKD 20-day high                 n  4465  win  62%  avg -0.232%  t -3.8  PF 0.86  net   -1038  dd  1146  hold   12h | 24:1988/-0.29  25:1228/-0.23  26:1249/-0.14
+B BRKD 20-day high                 n  1692  win  62%  avg -0.238%  t -2.3  PF 0.87  net    -404  dd   575  hold   12h | 24: 693/-0.08  25: 472/-0.61  26: 527/-0.11
+S MACDX cross below zero, 4H up    n  6149  win  59%  avg -0.406%  t -9.3  PF 0.74  net   -2499  dd  2666  hold   15h | 24:2358/-0.43  25:1953/-0.32  26:1838/-0.48
+B MACDX cross below zero, 4H up    n  1453  win  60%  avg -0.441%  t -4.7  PF 0.73  net    -641  dd   707  hold   23h | 24: 643/-0.20  25: 505/-0.66  26: 305/-0.60
+S MACDX cross, any trend           n 18302  win  61%  avg -0.354%  t -15.2  PF 0.75  net   -6475  dd  6744  hold   14h | 24:5713/-0.44  25:7035/-0.32  26:5554/-0.31
+B MACDX cross, any trend           n  2109  win  59%  avg -0.479%  t -6.3  PF 0.71  net   -1011  dd  1049  hold   19h | 24: 821/-0.29  25: 783/-0.63  26: 505/-0.56
+
+=== exits trend 3.0/2.0/2.0 (TP x ATR on half / SL x ATR / trail x ATR) ===
+S DIP  live rule (approx)          n   715  win  45%  avg -0.594%  t -4.3  PF 0.68  net    -425  dd   430  hold   19h | 24: 207/-0.32  25: 248/-0.90  26: 260/-0.52
+B DIP  live rule (approx)          n   399  win  47%  avg -0.502%  t -2.8  PF 0.71  net    -200  dd   226  hold   20h | 24: 111/-0.53  25: 134/-0.68  26: 154/-0.32
+S DIP  same, any regime            n  3211  win  45%  avg -0.543%  t -6.7  PF 0.75  net   -1743  dd  1981  hold   20h | 24:1033/-0.67  25:1166/-0.40  26:1012/-0.58
+B DIP  same, any regime            n  1110  win  47%  avg -0.431%  t -3.6  PF 0.77  net    -478  dd   545  hold   21h | 24: 318/-0.61  25: 396/-0.30  26: 396/-0.41
+S TPB  pullback + EMA20 reclaim    n  4634  win  47%  avg -0.473%  t -8.4  PF 0.74  net   -2192  dd  2515  hold   16h | 24:1774/-0.30  25:1539/-0.59  26:1321/-0.57
+B TPB  pullback + EMA20 reclaim    n  1385  win  46%  avg -0.632%  t -6.2  PF 0.66  net    -875  dd   948  hold   16h | 24: 525/-0.28  25: 460/-0.83  26: 400/-0.86
+S TPB  + volume 1.5x               n  1386  win  49%  avg -0.382%  t -3.9  PF 0.78  net    -529  dd   636  hold   14h | 24: 547/-0.33  25: 448/-0.46  26: 391/-0.37
+B TPB  + volume 1.5x               n   721  win  46%  avg -0.523%  t -3.7  PF 0.72  net    -377  dd   405  hold   14h | 24: 290/-0.25  25: 224/-0.87  26: 207/-0.53
+S BRK  24h high, vol 2x            n  9043  win  50%  avg -0.252%  t -5.9  PF 0.86  net   -2279  dd  2356  hold   13h | 24:3283/-0.33  25:3005/-0.21  26:2755/-0.21
+B BRK  24h high, vol 2x            n  2321  win  49%  avg -0.280%  t -2.9  PF 0.86  net    -650  dd   741  hold   13h | 24: 870/-0.22  25: 752/-0.51  26: 699/-0.11
+S BRK  48h high, vol 2x            n  7716  win  49%  avg -0.271%  t -5.8  PF 0.85  net   -2092  dd  2096  hold   13h | 24:2822/-0.39  25:2585/-0.21  26:2309/-0.20
+B BRK  48h high, vol 2x            n  2179  win  48%  avg -0.348%  t -3.5  PF 0.83  net    -759  dd   788  hold   12h | 24: 820/-0.39  25: 707/-0.45  26: 652/-0.19
+S BRK  96h high, vol 2x            n  6725  win  49%  avg -0.252%  t -4.9  PF 0.86  net   -1694  dd  1699  hold   12h | 24:2486/-0.42  25:2253/-0.15  26:1986/-0.16
+B BRK  96h high, vol 2x            n  2008  win  48%  avg -0.373%  t -3.5  PF 0.82  net    -749  dd   803  hold   13h | 24: 767/-0.43  25: 642/-0.50  26: 599/-0.16
+S BRK  48h high, no vol rule       n 10857  win  49%  avg -0.270%  t -7.1  PF 0.84  net   -2929  dd  2979  hold   13h | 24:3960/-0.40  25:3827/-0.26  26:3070/-0.12
+B BRK  48h high, no vol rule       n  2305  win  49%  avg -0.300%  t -3.1  PF 0.85  net    -692  dd   758  hold   14h | 24: 853/-0.37  25: 765/-0.42  26: 687/-0.08
+S BRKD 20-day high                 n  4373  win  49%  avg -0.285%  t -4.1  PF 0.86  net   -1244  dd  1437  hold   14h | 24:1952/-0.46  25:1193/-0.15  26:1228/-0.13
+B BRKD 20-day high                 n  1481  win  48%  avg -0.392%  t -3.2  PF 0.82  net    -581  dd   672  hold   15h | 24: 605/-0.36  25: 414/-0.78  26: 462/-0.09
+S MACDX cross below zero, 4H up    n  6282  win  47%  avg -0.463%  t -9.8  PF 0.74  net   -2907  dd  3177  hold   18h | 24:2426/-0.53  25:1991/-0.33  26:1865/-0.51
+B MACDX cross below zero, 4H up    n  1342  win  46%  avg -0.614%  t -5.9  PF 0.68  net    -824  dd   884  hold   26h | 24: 595/-0.48  25: 478/-0.67  26: 269/-0.80
+S MACDX cross, any trend           n 18662  win  48%  avg -0.343%  t -13.2  PF 0.79  net   -6393  dd  6783  hold   18h | 24:5879/-0.47  25:7139/-0.27  26:5644/-0.30
+B MACDX cross, any trend           n  1862  win  46%  avg -0.547%  t -6.1  PF 0.70  net   -1019  dd  1019  hold   23h | 24: 732/-0.61  25: 700/-0.50  26: 430/-0.51
+
+=== exits wide 4.0/2.5/3.0 (TP x ATR on half / SL x ATR / trail x ATR) ===
+S DIP  live rule (approx)          n   713  win  46%  avg -0.604%  t -3.5  PF 0.73  net    -431  dd   439  hold   31h | 24: 207/-0.44  25: 247/-0.75  26: 259/-0.60
+B DIP  live rule (approx)          n   380  win  47%  avg -0.424%  t -1.8  PF 0.79  net    -161  dd   196  hold   30h | 24: 106/-0.35  25: 126/-0.71  26: 148/-0.23
+S DIP  same, any regime            n  3162  win  45%  avg -0.606%  t -6.2  PF 0.77  net   -1916  dd  2177  hold   30h | 24:1015/-0.81  25:1147/-0.27  26:1000/-0.79
+B DIP  same, any regime            n  1003  win  46%  avg -0.452%  t -2.8  PF 0.80  net    -453  dd   535  hold   31h | 24: 296/-0.75  25: 351/-0.10  26: 356/-0.55
+S TPB  pullback + EMA20 reclaim    n  4353  win  44%  avg -0.551%  t -7.7  PF 0.75  net   -2400  dd  2811  hold   24h | 24:1669/-0.25  25:1450/-0.71  26:1234/-0.78
+B TPB  pullback + EMA20 reclaim    n  1096  win  45%  avg -0.630%  t -4.3  PF 0.72  net    -691  dd   777  hold   25h | 24: 414/-0.07  25: 365/-0.88  26: 317/-1.08
+S TPB  + volume 1.5x               n  1362  win  47%  avg -0.381%  t -3.1  PF 0.82  net    -519  dd   690  hold   23h | 24: 536/-0.14  25: 440/-0.46  26: 386/-0.62
+B TPB  + volume 1.5x               n   665  win  46%  avg -0.600%  t -3.3  PF 0.73  net    -399  dd   429  hold   23h | 24: 259/-0.01  25: 209/-1.07  26: 197/-0.88
+S BRK  24h high, vol 2x            n  8027  win  48%  avg -0.216%  t -3.8  PF 0.90  net   -1733  dd  2132  hold   21h | 24:2901/-0.25  25:2671/-0.26  26:2455/-0.12
+B BRK  24h high, vol 2x            n  1676  win  47%  avg -0.388%  t -2.8  PF 0.85  net    -650  dd   759  hold   20h | 24: 597/-0.43  25: 568/-0.58  26: 511/-0.13
+S BRK  48h high, vol 2x            n  6875  win  48%  avg -0.204%  t -3.3  PF 0.91  net   -1405  dd  1668  hold   20h | 24:2514/-0.31  25:2296/-0.22  26:2065/-0.06
+B BRK  48h high, vol 2x            n  1561  win  46%  avg -0.498%  t -3.4  PF 0.81  net    -778  dd   805  hold   20h | 24: 569/-0.72  25: 525/-0.66  26: 467/-0.05
+S BRK  96h high, vol 2x            n  5990  win  48%  avg -0.159%  t -2.3  PF 0.93  net    -955  dd  1285  hold   20h | 24:2214/-0.31  25:1999/-0.11  26:1777/-0.03
+B BRK  96h high, vol 2x            n  1464  win  46%  avg -0.512%  t -3.3  PF 0.81  net    -749  dd   774  hold   20h | 24: 533/-0.81  25: 486/-0.64  26: 445/-0.02
+S BRK  48h high, no vol rule       n  9159  win  48%  avg -0.244%  t -4.6  PF 0.89  net   -2231  dd  2619  hold   22h | 24:3335/-0.36  25:3205/-0.29  26:2619/-0.03
+B BRK  48h high, no vol rule       n  1591  win  47%  avg -0.447%  t -3.2  PF 0.82  net    -711  dd   725  hold   23h | 24: 576/-0.67  25: 557/-0.58  26: 458/-0.00
+S BRKD 20-day high                 n  3769  win  49%  avg -0.183%  t -2.0  PF 0.93  net    -689  dd  1019  hold   23h | 24:1678/-0.47  25:1027/+0.04  26:1064/+0.06
+B BRKD 20-day high                 n  1100  win  48%  avg -0.343%  t -1.9  PF 0.87  net    -377  dd   491  hold   24h | 24: 433/-0.09  25: 317/-0.81  26: 350/-0.23
+S MACDX cross below zero, 4H up    n  5770  win  45%  avg -0.524%  t -8.5  PF 0.76  net   -3023  dd  3448  hold   27h | 24:2198/-0.49  25:1865/-0.48  26:1707/-0.61
+B MACDX cross below zero, 4H up    n  1017  win  46%  avg -0.563%  t -3.7  PF 0.75  net    -573  dd   674  hold   38h | 24: 444/-0.19  25: 372/-0.79  26: 201/-0.97
+S MACDX cross, any trend           n 16720  win  46%  avg -0.339%  t -9.6  PF 0.84  net   -5666  dd  6255  hold   29h | 24:5226/-0.34  25:6436/-0.31  26:5058/-0.37
+B MACDX cross, any trend           n  1358  win  46%  avg -0.578%  t -4.5  PF 0.74  net    -785  dd   815  hold   34h | 24: 522/-0.54  25: 524/-0.68  26: 312/-0.48
+
+14s

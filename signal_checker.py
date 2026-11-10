@@ -5,6 +5,11 @@ launched via infra/run-okx.ps1 — see infra/VPS-SETUP.md).
 Each invocation loops internally for ~4 minutes (one scan every 60 s), then
 self-exits and is relaunched immediately by the wrapper, so coverage is gap-free.
 
+STRATEGY MODES (2026-11-10): what is described below is the "dip" strategy, and whether
+it sends real orders is decided by STRATEGY_MODE. Since that date it is on PAPER: every
+step runs, and paper.py simulates the fills instead of place_option3_trade() sending
+them. Read the comment above STRATEGY_MODE, and docs/STRATEGIES.md, before changing it.
+
 Alert rules:
 - BUY and STRONG BUY are the same zone — oscillating between them produces NO extra alert.
 - SELL and STRONG SELL are the same zone — same rule.
@@ -164,6 +169,65 @@ REZONE_REMINDER = 4 * 60 * 60  # 4 hours
 # Delete C:\OKXAI\signal_cache.json first or the forced signal is suppressed as
 # already-alerted, then set this back to False.
 TEST_FORCE_SIGNAL = False
+
+# ── STRATEGY MODES — which strategies may spend real money ───────────────────
+# 'live'  = places real orders on OKX        (implemented for 'dip' only)
+# 'paper' = same signals, same exits, same fees, NO orders: fills are simulated against
+#           real OKX candles and recorded in the paper_trades table (see paper.py)
+# 'off'   = not evaluated at all
+#
+# ►►► 'dip' WENT FROM LIVE TO PAPER ON 2026-11-10. Read this before switching it back. ◄◄◄
+#
+# The dip strategy is this file's original rule: STRONG BUY (score >= 4.0) + 30m reversal
+# + 2x volume + BTC regime OK + the AI advisor. Three independent measurements say it
+# loses money, and none says it makes any:
+#
+#   live record, 46 closed trades              -0.56% per trade   (22 won; net -$43.73)
+#   minute replay of the live rule, 13 months  -0.07% to -0.35% per trade, by setting
+#   hourly test, 34 months, 77 coins           -0.58% per trade, t = -3.7; negative in
+#                                              2024, 2025 and 2026 alike (lab_exp1.py)
+#
+# The last one also tested four other hourly entry families (trend pullback, breakouts,
+# MACD turn) and every one lost after the 0.30% a round trip costs. So this is not a
+# threshold that needs tuning: at this timeframe, on these coins, a ~2-4% target is too
+# small for the fees and the rule has no forecasting power to pay them with. Buying at
+# RANDOM moments with the same exits costs -0.37% per trade (lab_random.py); buying
+# heavy-volume hourly sell-offs did no better than that, if anything slightly worse.
+# The trade journal had been saying why in its own words: 13 of 23 stop-losses were
+# followed by a bounce within 24h (the fall continues, stops us out, then turns).
+#
+# In paper mode nothing about the strategy changes - the scan, the gates, the AI call,
+# the exits, the journal and the Telegram messages (marked PAPER) all run - except that
+# no order is sent. If it ever shows an edge there, that is the evidence it has lacked.
+# The bar for switching anything to 'live' is written down in docs/STRATEGIES.md.
+#
+# To trade the dip strategy with real money again: change 'paper' to 'live' on the next
+# line. Nothing else needs touching; RISK_PER_TRADE_PCT and MAX_30D_LOSS_PCT below then
+# cap what it can lose.
+STRATEGY_MODE = {
+    'dip':   'paper',
+    'flush': 'paper',   # liquidation-flush rebound  — paper only, no live order code yet
+    'trend': 'paper',   # daily trend on the majors  — paper only, no live order code yet
+}
+
+# What the AI is told it has to spend when 'dip' is on paper and the real balance cannot
+# be read (no OKX key on this machine). With a key, the real available balance is used,
+# so paper sizes are the sizes a live trade would have had.
+PAPER_BALANCE_USDT = 300.0
+
+# ── Risk limits for LIVE trades ──────────────────────────────────────────────
+# Position size used to be a share of the balance (45-60%), whatever the stop distance.
+# A professional desk sizes the other way round: decide how much of the account a single
+# stop-out may cost, and let the stop distance set the size. At 1% a trade with a 3.8%
+# stop is ~26% of the account; a 7% stop, ~14%. The 45-60% ladder still applies on top
+# (the smaller of the two wins), so this can only ever shrink a position.
+# The live record is why: July ran at ~$12 a trade, September and October at ~$130, and
+# the same -1.4% to -2.2% per trade that cost $2 in July cost $27 a month after.
+RISK_PER_TRADE_PCT = 1.0
+# Monthly loss limit: when the closed LIVE trades of the last 30 days have lost more than
+# this share of the account, new live trades stop (open ones are still managed, paper
+# strategies carry on). It lifts by itself as old losses age out of the window.
+MAX_30D_LOSS_PCT = 6.0
 
 # ── TEST MODE ─────────────────────────────────────────────────────────────────
 # Makes Option 3 trades trigger EASILY with a tiny fixed size — purely to test the
@@ -554,11 +618,13 @@ def fetch_candles_window(symbol, start_ms, hours=24, bar='15m'):
         return None
 
 
-def fetch_spot_volumes():
+def fetch_spot_tickers():
     """
-    instId -> 24h volume in quote currency (USDT for every pair here) for all OKX
-    spot pairs, from one /market/tickers call. None if OKX cannot be reached, which
-    the caller treats as "scan everything" (fail open).
+    instId -> {'last', 'open24h', 'vol'} for all OKX spot pairs, from one /market/tickers
+    call ('vol' = 24h volume in quote currency, USDT for every pair here; 'open24h' = the
+    price 24 hours ago). None if OKX cannot be reached, which the caller treats as "scan
+    everything" (fail open). The liquidity floor reads 'vol'; the flush strategy reads the
+    24h change of every coin from the same response, at no extra request.
     """
     try:
         r = requests.get(f'{OKX_BASE}/api/v5/market/tickers?instType=SPOT', timeout=15)
@@ -566,10 +632,17 @@ def fetch_spot_volumes():
         d = r.json()
         if d.get('code') != '0' or not d.get('data'):
             raise ValueError(f"code {d.get('code')}")
-        return {t['instId']: float(t.get('volCcy24h') or 0) for t in d['data']}
+        return {t['instId']: {'last': float(t.get('last') or 0), 'open24h': float(t.get('open24h') or 0),
+                              'vol': float(t.get('volCcy24h') or 0)} for t in d['data']}
     except Exception as e:
         print(f'  [Liquidity] OKX tickers unavailable ({e}) — scanning every symbol this run')
         return None
+
+
+def fetch_spot_volumes():
+    """instId -> 24h volume in USDT, or None (see fetch_spot_tickers)."""
+    t = fetch_spot_tickers()
+    return None if t is None else {k: v['vol'] for k, v in t.items()}
 
 
 def fetch_ticker(symbol):
@@ -740,6 +813,57 @@ def fetch_orderbook_imbalance(symbol, depth=20):
     except Exception:
         pass
     return None
+
+
+def _rubik(path, coin):
+    """Rows of one OKX trading-statistics series for a coin, newest first, hourly. [] on failure."""
+    try:
+        d = requests.get(f'{OKX_BASE}/api/v5/rubik/stat/{path}{"&" if "?" in path else "?"}ccy={coin}&period=1H',
+                         timeout=10).json()
+        return d.get('data') or [] if d.get('code') == '0' else []
+    except Exception:
+        return []
+
+
+def fetch_derivs_context(symbol, change_24h_pct):
+    """
+    What the futures market did over the last 24 hours, from OKX's public statistics:
+
+      oi_chg_24h  change in open interest, in COINS (%). OKX reports dollars, and dollars
+                  fall with the price even when nobody closed a contract, so the price move
+                  is divided back out. This is the one figure here with evidence behind it
+                  (research/lab_exp5.py, lab_exp6.py): after a fall of 8%+ in a day, the
+                  next 48h averaged +0.3% over all such falls, +2.9% where open interest
+                  had dropped 10% or more, +5.5% at 20% or more (after costs, 2024-2026;
+                  weaker and not significant on 2022-2023). The few falls that came with
+                  open interest RISING tended to keep falling (79 cases, not significant).
+                  It replaces the bare "open interest: N coins" line the
+                  prompt used to carry, which told the model nothing: a level without a
+                  change is not information.
+      ls_ratio    accounts net long / accounts net short, now. No measured edge either way;
+                  recorded so the journal can test it.
+      taker_buy   share of the last 24h of futures taker volume that was buying (0-1).
+                  Same status: context, not a rule.
+
+    Three public requests, made only for the one candidate the AI is about to be asked
+    about. Every value is None when OKX has no data; nothing here can block a trade.
+    """
+    coin = symbol.replace('-USDT', '')
+    out = {'oi_chg_24h': None, 'ls_ratio': None, 'taker_buy': None}
+    try:
+        rows = _rubik('contracts/open-interest-volume', coin)
+        if len(rows) >= 25 and float(rows[24][1]) > 0 and change_24h_pct is not None and change_24h_pct > -99:
+            out['oi_chg_24h'] = ((float(rows[0][1]) / float(rows[24][1])) / (1 + change_24h_pct / 100) - 1) * 100
+        rows = _rubik('contracts/long-short-account-ratio', coin)
+        if rows:
+            out['ls_ratio'] = float(rows[0][1])
+        rows = _rubik('taker-volume?instType=CONTRACTS', coin)[:24]
+        sell, buy = sum(float(r[1]) for r in rows), sum(float(r[2]) for r in rows)
+        if sell + buy > 0:
+            out['taker_buy'] = buy / (sell + buy)
+    except Exception as e:
+        print(f'  [Derivs] {symbol}: {e}')
+    return out
 
 
 def fetch_fear_greed():
@@ -1343,8 +1467,15 @@ def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data
                             f"SL −{e['sl']}%  ·  trail {e['trail']}%")
     if extra.get('funding_pct') is not None:
         struct_lines.append(f"Funding rate (8h): {extra['funding_pct']:+.4f}%")
-    if extra.get('oi') is not None:
-        struct_lines.append(f"Open interest: {extra['oi']:,.0f} coins")
+    if extra.get('oi_chg_24h') is not None:
+        struct_lines.append(f"Futures open interest, 24h change (in coins): {extra['oi_chg_24h']:+.1f}%")
+    if extra.get('ls_ratio') is not None:
+        struct_lines.append(f"Futures accounts long/short ratio: {extra['ls_ratio']:.2f}")
+    if extra.get('taker_buy') is not None:
+        struct_lines.append(f"Futures taker volume, last 24h: {extra['taker_buy']:.0%} buying")
+    if extra.get('breadth_os') is not None:
+        struct_lines.append(f"Market breadth: {extra['breadth_os']:.0%} of scanned coins are oversold "
+                            f"(1H RSI <= 30) right now")
     if extra.get('book_ratio') is not None:
         struct_lines.append(f"Order book bid/ask ratio (top 20 levels): {extra['book_ratio']:.2f}")
     if extra.get('regime'):
@@ -1355,6 +1486,17 @@ def ai_trade_params(symbol, sig, ticker, usdt_balance, rsi_1h, rsi_4h, macd_data
     struct_s = ('\n\nMARKET STRUCTURE & DERIVATIVES:\n' + '\n'.join(struct_lines)) if struct_lines else ''
 
     news_s = f"\n\nRECENT NEWS for {coin} (newest first):\n{extra['news']}" if extra.get('news') else ''
+
+    # Told to the model so it does not spend its reasoning on a size the code will cut:
+    # the stop it chooses also sets the largest position it can have (_risk_cap_usdt).
+    equity_ = extra.get('equity') or usdt_balance
+    risk_s = ''
+    if RISK_PER_TRADE_PCT and equity_ > 0:
+        risk_s = (f"\nRISK CAP: on top of that, a stop-out may cost at most {RISK_PER_TRADE_PCT:g}% of the whole "
+                  f"account (${equity_:.2f}), so the stop you choose sets your largest size: "
+                  f"${_risk_cap_usdt(equity_, 3.0):.0f} at a 3% stop, ${_risk_cap_usdt(equity_, 5.0):.0f} at 5%, "
+                  f"${_risk_cap_usdt(equity_, 8.0):.0f} at 8%. Anything larger is cut to fit. Choose the stop "
+                  f"the market structure calls for and let it set the size; never move a stop to fit a size.")
 
     system = f"""You are an expert crypto trading advisor for OKX spot markets (no leverage, no futures).
 A STRONG BUY signal has been confirmed with reversal on 30-minute candle. Decide if this trade is worth placing and output the optimal Option 3 parameters.
@@ -1374,7 +1516,7 @@ confluence, not on a setup that merely cleared the bar.
 PERFORMANCE-WEIGHTED CAP: the hard cap for THIS trade is {cap_pct * 100:.0f}% of capital
 ({CAP_PF_STRONG * 100:.0f}% at profit factor ≥ 2.0, {CAP_PF_GOOD * 100:.0f}% at 1.5–2.0, {CAP_PF_FAIR * 100:.0f}% at 1.0–1.5,
 {CAP_PF_POOR * 100:.0f}% below 1.0 — losing streaks get smaller bets, and an UNKNOWN profit
-factor is treated as a weak one, not a good one). Never exceed it. Minimum $10 USDT.
+factor is treated as a weak one, not a good one). Never exceed it. Minimum $10 USDT.{risk_s}
 
 EXIT PARAMETERS — volatility-adaptive (ATR) + market structure:
 The market data includes SUGGESTED EXITS computed from the coin's live ATR(14) and
@@ -1390,6 +1532,13 @@ DERIVATIVES & ORDER BOOK RULES:
 - Funding negative: short-squeeze fuel — TP may go up to 1% higher
 - Order-book bid/ask ratio > 1.3: buy-side support; < 0.7: weak book — halve size or SKIP
 (Funding above +{FUNDING_HARD_SKIP_PCT}% is auto-skipped before you are consulted.)
+- Futures open interest, 24h change: the only derivatives figure here with a measured effect.
+  A sharp fall while open interest DROPPED 10% or more is forced selling (liquidations), and
+  in 2024-2026 data those falls rebounded far more over the next two days than falls where
+  open interest held. A fall with open interest RISING means sellers are still adding — a
+  reason for caution, not confluence. Weigh it; it is one input, not a trigger.
+- Long/short ratio, taker buying share and market breadth are context with no measured edge.
+  Do not size up or skip on them alone.
 
 NEWS RULES (RECENT NEWS section, when provided):
 - Hack, exploit, lawsuit, SEC enforcement, delisting, or insolvency headlines → SKIP
@@ -1497,6 +1646,19 @@ Place this trade?"""
             sl    = min(max(float(p.get('slPct', 7)),               SL_BOUNDS[0]),    SL_BOUNDS[1])
             trail = max(TRAIL_BOUNDS[0],
                         min(float(p.get('trailingCallbackPct', 3)), TRAIL_BOUNDS[1], round(tp - 0.5, 2)))
+            # Risk cap (RISK_PER_TRADE_PCT): size so that hitting the stop costs at most
+            # that share of the whole account. Applied after the stop is final, because
+            # the stop distance is what sets it. Can only shrink the position.
+            risk_cap = _risk_cap_usdt(extra.get('equity') or usdt_balance, sl)
+            if risk_cap is not None and amount > risk_cap:
+                print(f'  [Claude] Amount ${amount:.2f} would risk more than {RISK_PER_TRADE_PCT:g}% of the '
+                      f'account at a −{sl}% stop — capped at ${risk_cap:.2f}')
+                amount = risk_cap
+                if evidence_out is not None:
+                    evidence_out['risk_capped'] = True
+                if amount < 10:
+                    return None, (f'risk cap ${amount:.2f} is below the $10 minimum '
+                                  f'({RISK_PER_TRADE_PCT:g}% of the account at a −{sl}% stop)')
             return {
                 'amount_usdt':    round(amount, 2),
                 'partial_tp_pct': round(tp, 2),
@@ -1519,29 +1681,47 @@ Place this trade?"""
         return None, f'AI call failed: {e}'
 
 
+def _risk_cap_usdt(equity, sl_pct):
+    """Largest position (USDT) whose stop-out costs RISK_PER_TRADE_PCT of `equity`.
+    None when the limit is switched off (0) or the inputs are unusable."""
+    if not RISK_PER_TRADE_PCT or not equity or equity <= 0 or not sl_pct or sl_pct <= 0:
+        return None
+    return round(equity * (RISK_PER_TRADE_PCT / 100) / (sl_pct / 100), 2)
+
+
+def _light_context(cand, regime_msg):
+    """The part of the decision context that needs no extra request: ATR, support and
+    resistance, the suggested exits, the regime. Enough to grade a signal that a gate
+    stopped before the AI was asked (the grader needs the suggested target and stop)."""
+    price = cand['ticker']['price']
+    highs, lows, closes = cand.get('highs', []), cand.get('lows', []), cand.get('closes', [])
+    atr_pct             = calc_atr_pct(highs, lows, closes)
+    support, resistance = find_support_resistance(highs, lows, closes)
+    return {
+        'atr_pct':    atr_pct,
+        'support':    support,
+        'resistance': resistance,
+        'exits':      suggest_exit_params(atr_pct, support, resistance, price),
+        'regime':     regime_msg,
+    }
+
+
 def _build_trade_context(cand, regime_msg):
     """
     Rich decision context for one trade candidate (called only for the top
     candidates, so the extra API calls stay tiny): ATR, support/resistance,
-    suggested exits, funding rate, open interest, order-book imbalance,
-    BTC regime, and the coin's latest headlines.
+    suggested exits, funding rate, what futures open interest did over 24h,
+    long/short ratio, taker flow, order-book imbalance, BTC regime, and the
+    coin's latest headlines.
     """
     symbol = cand['symbol']
-    price  = cand['ticker']['price']
-    highs, lows, closes = cand.get('highs', []), cand.get('lows', []), cand.get('closes', [])
-    atr_pct             = calc_atr_pct(highs, lows, closes)
-    support, resistance = find_support_resistance(highs, lows, closes)
-    funding, oi         = fetch_funding_oi(symbol)
-    book                = fetch_orderbook_imbalance(symbol)
+    funding, oi = fetch_funding_oi(symbol)
     return {
-        'atr_pct':     atr_pct,
-        'support':     support,
-        'resistance':  resistance,
-        'exits':       suggest_exit_params(atr_pct, support, resistance, price),
+        **_light_context(cand, regime_msg),
         'funding_pct': funding,
         'oi':          oi,
-        'book_ratio':  book,
-        'regime':      regime_msg,
+        **fetch_derivs_context(symbol, cand['ticker'].get('change_pct')),
+        'book_ratio':  fetch_orderbook_imbalance(symbol),
         'news':        fetch_coin_news(symbol),
         'fear_greed':  fetch_fear_greed(),
     }
@@ -1649,7 +1829,13 @@ def _build_entry_snapshot(cand, extra=None, params=None, evidence=None):
             'fg_label':    fg_label or None,
             'btc_regime':  extra.get('regime'),
             'suggested':   extra.get('exits'),
-            'had_news':    bool(extra.get('news')),
+            'had_news':    bool(extra.get('news')) if 'news' in extra else None,
+            # Futures picture (fetch_derivs_context) and breadth, so the journal can
+            # test over time whether any of them separates winners from losers.
+            'oi_chg_24h':  _rnd(extra.get('oi_chg_24h'), 1),
+            'ls_ratio':    _rnd(extra.get('ls_ratio'), 2),
+            'taker_buy':   _rnd(extra.get('taker_buy'), 3),
+            'breadth_os':  _rnd(extra.get('breadth_os'), 3),
         })
     if params:
         snap['chosen'] = {
@@ -1663,24 +1849,45 @@ def _build_entry_snapshot(cand, extra=None, params=None, evidence=None):
     return {k: v for k, v in snap.items() if v is not None and v != [] and v != ''}
 
 
-def _log_skipped_setup(symbol, price, reason, snapshot):
+def _log_skipped_setup(symbol, price, reason, snapshot, gate='ai'):
     """
-    Record a setup the AI declined. Mistakes come in two kinds — trades that lost,
-    and trades never taken that would have won. A skip otherwise vanishes without
-    a trace, so the AI can never learn it is being too cautious (or rightly careful).
+    Record a setup that qualified and was not traded. Mistakes come in two kinds — trades
+    that lost, and trades never taken that would have won. A skip otherwise vanishes
+    without a trace, so nobody can learn whether the caution was right.
+
+    `gate` says who refused: 'ai' (the advisor's own judgment — the only kind shown back to
+    the advisor as "your past skips"), 'funding', or one of the safety rails ('regime',
+    'max_open', 'breaker', 'loss_limit', 'correlation'). Since 2026-11-10 the rails are
+    journalled too: the BTC regime filter alone refused 165 of the 168 setups that
+    qualified between 30 Oct and 10 Nov, and until now there was no record of a single
+    one, let alone of whether refusing them saved money. Every row is graded the same way
+    24h later (_grade_skip), so each filter earns a track record like the AI's.
     """
-    if not SUPABASE_URL or not SUPABASE_KEY:
+    _log_skipped_rows([{'symbol': symbol, 'price': price, 'gate': gate,
+                        'reason': (reason or 'no reason given')[:300], 'entry_context': snapshot}])
+
+
+def _log_skipped_rows(rows):
+    """Insert journal rows in ONE request (a market-wide sell-off can refuse 40 at once)."""
+    if not SUPABASE_URL or not SUPABASE_KEY or not rows:
         return
     try:
-        r = requests.post(
-            f'{SUPABASE_URL}/rest/v1/skipped_setups',
-            headers=_sb_headers({'Content-Type': 'application/json', 'Prefer': 'return=minimal'}),
-            json={'symbol': symbol, 'price': price,
-                  'reason': (reason or 'no reason given')[:300], 'entry_context': snapshot},
-            timeout=10,
-        )
+        hdr = _sb_headers({'Content-Type': 'application/json', 'Prefer': 'return=minimal'})
+        r = requests.post(f'{SUPABASE_URL}/rest/v1/skipped_setups', headers=hdr, json=rows, timeout=10)
+        if r.status_code == 400 and any('gate' in x for x in rows):
+            # The `gate` column is missing (infra/supabase-3 not applied). Keep the AI's
+            # own skips, which the table could always hold; drop the rest rather than
+            # file a safety-rail refusal as if the AI had made it.
+            rows = [{k: v for k, v in x.items() if k != 'gate'} for x in rows if x.get('gate', 'ai') == 'ai']
+            if not rows:
+                print('  [Journal] gate column missing — run infra/supabase-3-paper-and-status.sql '
+                      'to journal signals stopped by the safety rails')
+                return
+            r = requests.post(f'{SUPABASE_URL}/rest/v1/skipped_setups', headers=hdr, json=rows, timeout=10)
         if r.status_code in (200, 201, 204):
-            print(f'  [Journal] {symbol}: skip logged for grading in {JOURNAL_FOLLOWUP_HOURS}h ✓')
+            who = ', '.join(sorted({x.get('gate', 'ai') for x in rows}))
+            print(f'  [Journal] {len(rows)} refused setup(s) logged for grading in '
+                  f'{JOURNAL_FOLLOWUP_HOURS}h ({who}) ✓')
         else:
             print(f'  [Journal] skip log failed (HTTP {r.status_code}) — is the '
                   f'skipped_setups table created? See docs/ARCHITECTURE.md')
@@ -1800,6 +2007,34 @@ def grade_journal_followups():
             print(f'  [Journal] trade grading inactive (HTTP {r.status_code}) — run the SQL migration')
     except Exception as e:
         print(f'  [Journal] trade grading error: {e}')
+
+    # ── Closed PAPER trades of the dip strategy ──────────────────────────────
+    # Same verdicts as live trades, so the advisor's journal keeps growing while the
+    # strategy is on paper. Other paper strategies have exits this grader does not model.
+    try:
+        r = requests.get(
+            f'{SUPABASE_URL}/rest/v1/paper_trades'
+            f'?strategy=eq.dip&followup_at=is.null&closed_at=lt.{cutoff}&limit={JOURNAL_GRADE_BATCH}'
+            f'&select=id,symbol,entry_price,exit_price,exit_reason,params,closed_at',
+            headers=_sb_headers(), timeout=10,
+        )
+        for t in r.json() if r.status_code == 200 else []:
+            entry_px, exit_px = float(t.get('entry_price') or 0), float(t.get('exit_price') or 0)
+            if entry_px <= 0 or exit_px <= 0:
+                _patch_journal('paper_trades', t['id'],
+                               {'followup': {'verdict': 'ungradable'}, 'followup_at': now_iso})
+                continue
+            closed_ms = int(datetime.fromisoformat(t['closed_at']).timestamp() * 1000)
+            c = fetch_candles_window(t['symbol'], closed_ms, JOURNAL_FOLLOWUP_HOURS)
+            if not c:
+                continue
+            tp_px = entry_px * (1 + float((t.get('params') or {}).get('tp') or 0) / 100)
+            v = _grade_exit(t['exit_reason'], exit_px, tp_px, c)
+            if v:
+                _patch_journal('paper_trades', t['id'], {'followup': v, 'followup_at': now_iso})
+                print(f"  [Journal] {t['symbol']} paper {t['exit_reason']} → {v['verdict']} ({v['note']})")
+    except Exception as e:
+        print(f'  [Journal] paper trade grading error: {e}')
 
     # ── Skipped setups ───────────────────────────────────────────────────────
     try:
@@ -2644,7 +2879,8 @@ def _fmt_journal_trade(t):
     ctx  = t.get('entry_context') or {}
     fu   = t.get('followup') or {}
     coin = t['symbol'].replace('-USDT', '')
-    parts = [f"{coin} {t.get('exit_reason')} {float(t.get('net_pnl_usdt') or 0):+.2f}"]
+    parts = [f"{coin}{' (paper)' if t.get('paper') else ''} {t.get('exit_reason')} "
+             f"{float(t.get('net_pnl_usdt') or 0):+.2f}"]
 
     ins = []
     if ctx.get('score')       is not None: ins.append(f"score {ctx['score']:+.1f}")
@@ -2702,6 +2938,24 @@ def _trade_history_context(symbol):
             if r.status_code != 200:
                 return '', None, {}
         rows = r.json()
+        # While the dip strategy is on paper its new results land in paper_trades. They
+        # are the same rule with the same exits and fees, so they belong in the same
+        # journal: without them the advisor's record would freeze on the day the
+        # strategy left real money. Marked "(paper)" line by line.
+        n_paper = 0
+        try:
+            rp = requests.get(
+                f'{SUPABASE_URL}/rest/v1/paper_trades'
+                f'?strategy=eq.dip&closed_at=not.is.null&order=closed_at.desc&limit=30'
+                f'&select=symbol,exit_reason,net_pnl_usdt,closed_at,entry_context,followup',
+                headers=_sb_headers(), timeout=10,
+            )
+            if rp.status_code == 200 and rp.json():
+                rows = sorted(rows + [{**t, 'paper': True} for t in rp.json()],
+                              key=lambda t: t.get('closed_at') or '', reverse=True)[:30]
+                n_paper = sum(1 for t in rows if t.get('paper'))
+        except Exception:
+            pass
         if not rows:
             return '', None, {}
 
@@ -2709,7 +2963,8 @@ def _trade_history_context(symbol):
         wins  = sum(1 for p in pnls if p > 0)
         total = sum(pnls)
         lines = [f'Overall: {len(rows)} closed trades, {wins} wins / {len(rows) - wins} losses, '
-                 f'net {total:+.2f} USDT']
+                 f'net {total:+.2f} USDT'
+                 + (f' ({n_paper} of them simulated paper trades of this same strategy)' if n_paper else '')]
 
         pf = None
         if len(rows) >= 30:
@@ -2831,12 +3086,15 @@ def _skip_history_context(symbol):
     if not SUPABASE_URL or not SUPABASE_KEY:
         return '', {}
     try:
-        r = requests.get(
-            f'{SUPABASE_URL}/rest/v1/skipped_setups'
-            f'?followup_at=not.is.null&order=created_at.desc&limit=20'
-            f'&select=symbol,reason,followup,created_at',
-            headers=_sb_headers(), timeout=10,
-        )
+        # gate=eq.ai: only the advisor's OWN refusals. The table also holds signals the
+        # safety rails stopped (regime, open-trade cap, ...), and showing those back as
+        # "your past skips" would teach the model about decisions it never made.
+        q = (f'{SUPABASE_URL}/rest/v1/skipped_setups'
+             f'?followup_at=not.is.null&order=created_at.desc&limit=20'
+             f'&select=symbol,reason,followup,created_at')
+        r = requests.get(q + '&gate=eq.ai', headers=_sb_headers(), timeout=10)
+        if r.status_code == 400:                 # `gate` column not there yet: every row is an AI skip
+            r = requests.get(q, headers=_sb_headers(), timeout=10)
         if r.status_code != 200:
             print(f'  [Journal] past skips unavailable to the AI (HTTP {r.status_code})')
             return '', {}
@@ -3033,11 +3291,34 @@ def maybe_send_daily_digest(cache):
     open_trades = _fetch_option3_trades()
     if open_trades:
         syms      = ', '.join(t['symbol'].replace('-USDT', '') for t in open_trades)
-        open_line = f'📈 Open trades: {len(open_trades)} ({syms})'
+        open_line = f'📈 Open live trades: {len(open_trades)} ({syms})'
     else:
-        open_line = '📈 Open trades: none'
+        open_line = '📈 Open live trades: none'
 
-    send_telegram(f'💓 <b>Daily Report — OKX Trading</b>\n{open_line}')
+    lines = [open_line]
+    # Yesterday in one line: how many setups qualified and what stopped them. Silence
+    # used to be indistinguishable from "nothing happened"; most quiet days are the
+    # regime filter refusing everything, and that is worth knowing each morning.
+    yday = (now_utc - timedelta(days=1)).strftime('%Y-%m-%d')
+    f = (cache.get('_funnel') or {}).get(yday) or {}
+    if f.get('scans'):
+        bear = f.get('bear_scans', 0) / f['scans']
+        stopped = ', '.join(f'{f[k]} by {label}' for k, label in (
+            ('regime', 'the BTC downtrend filter'), ('max_open', 'the open-trade cap'),
+            ('breaker', 'the stop-loss breaker'), ('loss_limit', 'the monthly loss limit'),
+            ('correlation', 'the correlation guard'), ('cap', 'ranking'),
+            ('funding', 'crowded funding'), ('ai_skip', 'the AI')) if f.get(k))
+        taken = f.get('traded', 0) + f.get('paper', 0)
+        lines.append(f"🧭 Yesterday: BTC downtrend {bear:.0%} of the day · {f.get('candidates', 0)} setup(s) "
+                     f"qualified · {taken} taken" + (f' · stopped: {stopped}' if stopped else ''))
+    modes = ', '.join(f'{k} {v}' for k, v in STRATEGY_MODE.items())
+    lines.append(f'⚙️ Strategies: {modes}')
+    try:
+        lines += _paper().digest_lines()
+    except Exception as e:
+        print(f'  [Digest] paper summary unavailable: {e}')
+
+    send_telegram('💓 <b>Daily Report — OKX Trading</b>\n' + '\n'.join(lines))
     cache['_daily_digest'] = {'date': today}
     print('  [Digest] Daily report sent ✓')
 
@@ -3356,7 +3637,21 @@ def run_scan(cache, warm_up=False):
     """
     now = time.time()
 
-    active_trades  = _fetch_option3_trades()
+    # Which book the dip strategy trades into (STRATEGY_MODE). TEST_MODE is a live
+    # pipeline test by definition. On paper, the open paper trades stand in for the open
+    # live ones everywhere a rail counts positions: the open-trade cap, the "already
+    # running" check, the correlation guard. The rules being tested must be the rules.
+    dip_mode      = 'live' if TEST_MODE else STRATEGY_MODE.get('dip', 'live')
+    live_trades   = _fetch_option3_trades()
+    paper_dip     = []
+    if dip_mode == 'paper':
+        # Guarded like every paper call in this function: the simulation is an observer
+        # and must never be able to stop the loop that manages real positions.
+        try:
+            paper_dip = _paper().open_trades('dip')
+        except Exception as e:
+            print(f'  [Paper] open paper trades unavailable ({e}) — counting none this scan')
+    active_trades = live_trades + paper_dip
     active_symbols = {t['symbol'] for t in active_trades}
 
     usdt_balance = 0.0
@@ -3366,6 +3661,19 @@ def run_scan(cache, warm_up=False):
             print(f'  [AutoTrade] Available USDT: ${usdt_balance:.2f}')
         else:
             print(f'  [AutoTrade] Balance unavailable — auto-trade disabled this run')
+    # The whole account, for the risk cap: what is free plus what is already in trades.
+    equity = usdt_balance + sum(float(t.get('amount_usdt') or 0) for t in live_trades)
+    if dip_mode == 'paper' and not warm_up:
+        # Paper sizes should be the sizes a live trade would have had: start from the real
+        # account when it can be read, and take off what open paper trades "hold".
+        if equity < MIN_TRADE_USDT:
+            equity = PAPER_BALANCE_USDT
+        usdt_balance = max(0.0, equity - sum(float(t.get('amount_usdt') or 0) for t in active_trades))
+        print(f'  [Paper] dip strategy is on PAPER — no orders will be sent '
+              f'(simulated balance ${usdt_balance:.2f})')
+
+    fun = _funnel_today(cache)
+    fun['scans'] = fun.get('scans', 0) + 1
 
     # ── Pass 1: scan all coins, collect signal data ──────────────────────────
     pending_alerts = []  # (symbol, sig, ticker, trade_result, cache_update)
@@ -3374,10 +3682,12 @@ def run_scan(cache, warm_up=False):
     # coin, not just candidates — the open positions we compare against are exactly
     # the ones that get filtered out of `candidates` further down.
     closes_by_symbol = {}
+    oversold = scored = 0   # market breadth: how many scanned coins sit at 1H RSI <= 30
 
     # Liquidity floor (see MIN_OKX_VOL_24H_USDT). Coins with an open trade are kept
     # so the correlation guard still has their candles.
-    vols  = fetch_spot_volumes()
+    tickers = fetch_spot_tickers()
+    vols  = None if tickers is None else {k: v['vol'] for k, v in tickers.items()}
     scan  = SYMBOLS
     if vols is not None:
         scan = [s for s in SYMBOLS if s in active_symbols or vols.get(s, 0) >= MIN_OKX_VOL_24H_USDT]
@@ -3417,6 +3727,9 @@ def run_scan(cache, warm_up=False):
             macd_data = calc_macd(closes)
             bb_data   = calc_bb(closes)
             sig       = generate_signal(rsi_1h, macd_data, bb_data, vol_ratio, rsi_4h)
+            if rsi_1h is not None:
+                scored   += 1
+                oversold += rsi_1h <= 30
 
             if TEST_FORCE_SIGNAL and symbol == 'BTC-USDT':
                 sig = {'label': 'STRONG BUY', 'score': 5.0, 'reasons': ['TEST — forced signal, not real']}
@@ -3446,8 +3759,15 @@ def run_scan(cache, warm_up=False):
                 time.sleep(0.3)
                 continue
 
+            # Funnel counters (_funnel_today): one tick per coin per scan at each gate, so
+            # the dashboard can show where signals die. From here down to `candidates`
+            # these count coin-scans, not distinct setups - the same hourly candle is
+            # seen ~60 times - which is fine for shares ("76% failed the reversal").
+            fun['strong_buy'] = fun.get('strong_buy', 0) + 1
+
             if not TEST_MODE and not reversal_confirmed(r_opens, r_closes, r_volumes, zone):
                 print(f'  {symbol}: STRONG BUY — no 30min reversal confirmation yet')
+                fun['no_reversal'] = fun.get('no_reversal', 0) + 1
                 time.sleep(0.3)
                 continue
 
@@ -3463,6 +3783,7 @@ def run_scan(cache, warm_up=False):
                 shown = f'{vol_ratio:.1f}x' if vol_ratio is not None else 'unknown'
                 print(f'  {symbol}: STRONG BUY — volume {shown} below '
                       f'{MIN_VOL_RATIO_TRADE:g}x average, not traded')
+                fun['low_volume'] = fun.get('low_volume', 0) + 1
                 time.sleep(0.3)
                 continue
 
@@ -3470,6 +3791,7 @@ def run_scan(cache, warm_up=False):
                 secs_in_zone = now - alerted_at
                 if secs_in_zone < REZONE_REMINDER:
                     print(f'  {symbol}: still in {zone} zone ({int(secs_in_zone/60)}m) — suppressed')
+                    fun['cooldown'] = fun.get('cooldown', 0) + 1
                     time.sleep(0.3)
                     continue
                 print(f'  {symbol}: still in {zone} zone for {int(secs_in_zone/3600)}h — reminder alert')
@@ -3480,8 +3802,10 @@ def run_scan(cache, warm_up=False):
                 time.sleep(0.3)
                 continue
 
-            # Coin passed all filters — build cache update once
+            # Coin passed all filters — build cache update once. From here on the counts
+            # are distinct setups: the 4h suppression above lets each coin through once.
             cache_update = {**cache[symbol], 'alerted_zone': zone, 'alerted_at': now}
+            fun['candidates'] = fun.get('candidates', 0) + 1
 
             if symbol in active_symbols:
                 # Already has a running trade — signal alert only, no new trade
@@ -3524,20 +3848,42 @@ def run_scan(cache, warm_up=False):
     # ── Safety rails: BTC regime, open-trade cap, daily SL circuit breaker ────
     # Enforced in production; in TEST_MODE they are evaluated and logged only,
     # so the test pipeline keeps producing trades regardless of market regime.
-    regime_msg = ''
-    if candidates:
+    # The regime is read on EVERY scan since 2026-11-10 (one public request), not only
+    # when something qualified: the status row and the funnel need to say "the market was
+    # bearish for 78% of the week" on exactly the weeks when nothing qualified.
+    breadth = oversold / scored if scored else None
+    regime_ok, regime_msg = True, ''
+    if not warm_up:
         regime_ok, regime_msg = btc_regime_ok()
-        print(f'  [Regime] {regime_msg}')
-
-        block_reason = None
         if not regime_ok:
-            block_reason = 'bearish BTC regime'
+            fun['bear_scans'] = fun.get('bear_scans', 0) + 1
+        # One line per scan in the log, so a quiet stretch explains itself there too.
+        print(f'  [Regime] {regime_msg}' + (f' · {breadth:.0%} of scanned coins oversold' if breadth is not None else ''))
+    _SCAN_INFO.update({'at': now, 'coins': len(scan), 'thin': len(SYMBOLS) - len(scan),
+                       'regime_ok': regime_ok, 'regime': regime_msg, 'breadth_os': breadth,
+                       'dip_mode': dip_mode, 'open_live': len(live_trades)})
+
+    if candidates and dip_mode == 'off':
+        print(f'  [AutoTrade] dip strategy is OFF — {len(candidates)} signal(s) noted, nothing traded')
+        for cand in candidates:
+            pending_alerts.append((cand['symbol'], cand['sig'], cand['ticker'], None, cand['cache_update']))
+        candidates = []
+
+    if candidates:
+        block_reason = gate = None
+        if not regime_ok:
+            gate, block_reason = 'regime', 'bearish BTC regime'
         elif len(active_trades) >= MAX_OPEN_TRADES:
-            block_reason = f'{len(active_trades)} trades already open (cap: {MAX_OPEN_TRADES})'
+            gate, block_reason = 'max_open', f'{len(active_trades)} trades already open (cap: {MAX_OPEN_TRADES})'
         else:
             recent_sl = _count_recent_sl(24)
+            if dip_mode == 'paper':
+                try:
+                    recent_sl += _paper().recent_stop_count('dip', 24)
+                except Exception as e:
+                    print(f'  [Paper] paper stop count unavailable ({e})')
             if recent_sl >= MAX_SL_PER_DAY:
-                block_reason = f'{recent_sl} stop-losses in the last 24h (circuit breaker)'
+                gate, block_reason = 'breaker', f'{recent_sl} stop-losses in the last 24h (circuit breaker)'
                 cb = cache.get('_circuit_breaker', {})
                 if not TEST_MODE and now - cb.get('alerted_at', 0) > 24 * 3600:
                     send_telegram(
@@ -3546,12 +3892,28 @@ def run_scan(cache, warm_up=False):
                         f"▶️ New trades resume automatically once the 24h window clears"
                     )
                     cache['_circuit_breaker'] = {'alerted_at': now}
+            elif dip_mode == 'live' and not TEST_MODE:
+                lost = _loss_30d()
+                if MAX_30D_LOSS_PCT and equity > 0 and lost <= -equity * MAX_30D_LOSS_PCT / 100:
+                    gate, block_reason = 'loss_limit', (f'live trades lost ${-lost:.2f} in the last 30 days, '
+                                                        f'over {MAX_30D_LOSS_PCT:g}% of the account')
+                    ll = cache.get('_loss_limit', {})
+                    if now - ll.get('alerted_at', 0) > 24 * 3600:
+                        send_telegram(
+                            f"⏸️ <b>Live Trading Paused — monthly loss limit</b>\n"
+                            f"🔴 Closed live trades lost ${-lost:.2f} over the last 30 days "
+                            f"(limit: {MAX_30D_LOSS_PCT:g}% of the account)\n"
+                            f"▶️ Resumes by itself as those losses age past 30 days. Open trades are still managed."
+                        )
+                        cache['_loss_limit'] = {'alerted_at': now}
 
         if block_reason:
             if TEST_MODE:
                 print(f'  [Safety] {block_reason} — TEST MODE: logged only, trading anyway')
             else:
                 print(f'  [Safety] No new trades this scan: {block_reason}')
+                fun[gate] = fun.get(gate, 0) + len(candidates)
+                _log_refused(candidates, gate, block_reason, regime_msg, breadth)
                 for cand in candidates:
                     pending_alerts.append((cand['symbol'], cand['sig'], cand['ticker'], None, cand['cache_update']))
                 candidates = []
@@ -3571,6 +3933,9 @@ def run_scan(cache, warm_up=False):
             elif blocker:
                 print(f'  [Corr] {cand["symbol"]}: r={r:.2f} vs open {blocker} '
                       f'(cap {CORRELATION_MAX}) — same bet, not a new one')
+                fun['correlation'] = fun.get('correlation', 0) + 1
+                _log_refused([cand], 'correlation', f'r={r:.2f} vs open {blocker} (cap {CORRELATION_MAX})',
+                             regime_msg, breadth)
                 pending_alerts.append((cand['symbol'], cand['sig'], cand['ticker'], None, cand['cache_update']))
             else:
                 if r is not None:
@@ -3614,16 +3979,19 @@ def run_scan(cache, warm_up=False):
                 except Exception as e:
                     print(f'  {symbol}: trade placement failed — {e}')
                     trade_result = 'error'
-            elif not TEST_MODE and OKX_API_KEY and CLAUDE_API_KEY and usdt_balance >= MIN_TRADE_USDT:
-                # Rich decision context: ATR, S/R, suggested exits, funding, OI, order book
+            elif (not TEST_MODE and CLAUDE_API_KEY and usdt_balance >= MIN_TRADE_USDT
+                  and (OKX_API_KEY or dip_mode == 'paper')):
+                # Rich decision context: ATR, S/R, suggested exits, funding, futures flow, order book
                 extra = _build_trade_context(cand, regime_msg)
+                extra['equity'], extra['breadth_os'] = equity, breadth
                 if extra.get('funding_pct') is not None and extra['funding_pct'] > FUNDING_HARD_SKIP_PCT:
                     reason = (f'funding {extra["funding_pct"]:+.3f}% above '
                               f'+{FUNDING_HARD_SKIP_PCT}% — longs dangerously crowded')
                     print(f'  {symbol}: {reason}, auto-skip')
                     trade_result = 'skip'
+                    fun['funding'] = fun.get('funding', 0) + 1
                     _log_skipped_setup(symbol, cand['ticker']['price'], reason,
-                                       _build_entry_snapshot(cand, extra))
+                                       _build_entry_snapshot(cand, extra), gate='funding')
                 else:
                     print(f'  {symbol}: asking Claude for trade params '
                           f'(rank #{rank_i + 1}/{len(top_candidates)}, score={cand["rank_score"]:.2f})...')
@@ -3635,11 +4003,30 @@ def run_scan(cache, warm_up=False):
                         cand['rsi_1h'], cand['rsi_4h'], cand['macd_data'], cand['bb_data'], cand['vol_ratio'],
                         extra=extra, evidence_out=evidence,
                     )
-                    if params:
+                    if params and dip_mode == 'paper':
+                        # PAPER: the decision is final and identical to a live one; only
+                        # the order is missing. paper.py simulates the fills from here.
+                        sig_ = cand['sig']
+                        saved = None
+                        try:
+                            saved = _paper().open_trade(
+                                'dip', symbol, cand['ticker']['price'], params['amount_usdt'], 'option3',
+                                {'tp': params['partial_tp_pct'], 'sl': params['sl_pct'],
+                                 'trail': params['trailing_pct']},
+                                _build_entry_snapshot(cand, extra, params, evidence),
+                                plan=(f"🟢 STRONG BUY [{sig_['score']:+.1f}] · {' · '.join(sig_['reasons'][:4])}\n"
+                                      f"🎯 TP +{params['partial_tp_pct']}%  ·  🛡️ SL −{params['sl_pct']}%  ·  "
+                                      f"🔄 Trail {params['trailing_pct']}%"))
+                        except Exception as e:
+                            print(f'  {symbol}: paper trade could not be recorded — {e}')
+                        trade_result = 'paper' if saved else 'skip'
+                        fun['paper'] = fun.get('paper', 0) + bool(saved)
+                    elif params:
                         try:
                             trade_result = place_option3_trade(symbol, params, cand['ticker'],
                                                                _build_entry_snapshot(cand, extra, params, evidence))
                             print(f'  {symbol}: Option 3 trade placed ✓  (rank #{rank_i + 1})')
+                            fun['traded'] = fun.get('traded', 0) + 1
                         except Option3Preflight as e:
                             # A mechanical size limit, not a judgment call — keep it out
                             # of the skip ledger so the AI's record stays honest.
@@ -3650,6 +4037,7 @@ def run_scan(cache, warm_up=False):
                             trade_result = 'error'
                     else:
                         trade_result = 'skip'
+                        fun['ai_skip'] = fun.get('ai_skip', 0) + 1
                         _log_skipped_setup(symbol, cand['ticker']['price'], skip_reason,
                                            _build_entry_snapshot(cand, extra, None, evidence))
 
@@ -3659,6 +4047,11 @@ def run_scan(cache, warm_up=False):
             rank_num = len(top_candidates) + i + 1
             print(f'  {cand["symbol"]}: STRONG BUY ranked #{rank_num} — skipped (cap={MAX_TRADES_PER_SCAN})')
             pending_alerts.append((cand['symbol'], cand['sig'], cand['ticker'], 'cap', cand['cache_update']))
+        if skipped_candidates and not TEST_MODE:
+            fun['cap'] = fun.get('cap', 0) + len(skipped_candidates)
+            _log_refused(skipped_candidates, 'cap',
+                         f'qualified, but another coin ranked higher this scan (cap={MAX_TRADES_PER_SCAN})',
+                         regime_msg, breadth)
 
     # ── Pass 3: notify ────────────────────────────────────────────────────────
     # Placed trades and FAILED placements are both reported. skip, cap, and
@@ -3670,6 +4063,131 @@ def run_scan(cache, warm_up=False):
             send_telegram(format_alert(symbol, sig, ticker, trade_result))
         cache[symbol] = cache_update
         time.sleep(0.3)
+
+    # ── Paper-only strategies (paper.py) ─────────────────────────────────────
+    # Each is wrapped on its own: a fault in an experiment must never reach the code
+    # above, which can hold real positions.
+    if not warm_up and not TEST_MODE:
+        for name, call in (('flush', lambda: _paper().flush_scan(tickers, cache)),
+                           ('trend', lambda: _paper().trend_scan(cache))):
+            try:
+                call()
+            except Exception as e:
+                print(f'  [Paper] {name} scan errored (non-fatal): {e}')
+
+
+# ── Strategy plumbing: paper module, funnel, refused-signal journal, status row ──
+_SCAN_INFO = {}            # what the last scan saw; written to the bot_status row by main()
+
+
+def _paper():
+    """paper.py, imported on first use (it imports this module back)."""
+    import paper
+    return paper
+
+
+def _funnel_today(cache):
+    """
+    Today's gate counters (UTC), kept in the cache file so they survive the worker's
+    restart every few minutes; the last 14 days are kept. Read by the dashboard through
+    the bot_status row: it is the answer to "why has nothing been traded?".
+    """
+    days  = cache.setdefault('_funnel', {})
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    for old in sorted(days)[:-14]:
+        if old != today:
+            del days[old]
+    return days.setdefault(today, {})
+
+
+def _log_refused(cands, gate, reason, regime_msg, breadth):
+    """Journal candidates that a safety rail (not the AI) stopped. One request for all."""
+    try:
+        rows = []
+        for cand in cands:
+            extra = {**_light_context(cand, regime_msg), 'breadth_os': breadth}
+            rows.append({'symbol': cand['symbol'], 'price': cand['ticker']['price'], 'gate': gate,
+                         'reason': reason[:300], 'entry_context': _build_entry_snapshot(cand, extra)})
+        _log_skipped_rows(rows)
+    except Exception as e:                      # a journal entry is never worth a crashed scan
+        print(f'  [Journal] refused-signal log error ({gate}): {e}')
+
+
+def _loss_30d():
+    """Net result (USDT) of the LIVE trades closed in the last 30 days. 0.0 if unreadable -
+    the loss limit then stays open, like every other rail here when its data is missing."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return 0.0
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    try:
+        r = requests.get(f'{SUPABASE_URL}/rest/v1/option3_trades'
+                         f'?select=net_pnl_usdt&phase=eq.3&closed_at=gte.{since}',
+                         headers=_sb_headers(), timeout=10)
+        if r.status_code == 200:
+            return sum(float(t.get('net_pnl_usdt') or 0) for t in r.json())
+        print(f'  [Safety] 30-day loss query failed (HTTP {r.status_code}) — loss limit inactive')
+    except Exception as e:
+        print(f'  [Safety] 30-day loss query error: {e} — loss limit inactive')
+    return 0.0
+
+
+def _code_version():
+    """Short git commit of the running code, read from .git without spawning git."""
+    try:
+        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.git')
+        head = open(os.path.join(base, 'HEAD')).read().strip()
+        if head.startswith('ref:'):
+            ref = head.split(' ', 1)[1]
+            p = os.path.join(base, *ref.split('/'))
+            if os.path.exists(p):
+                return open(p).read().strip()[:7]
+            for line in open(os.path.join(base, 'packed-refs')):
+                if line.strip().endswith(ref):
+                    return line.split()[0][:7]
+            return ''
+        return head[:7]
+    except Exception:
+        return ''
+
+
+def write_bot_status(cache, started):
+    """
+    One small row the dashboard reads to answer three questions without a login to the
+    VPS: is the bot alive, what does it think of the market, and where did today's
+    signals stop. Rewritten once per run (every ~5 minutes), never per scan.
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    try:
+        p = _paper()
+        open_paper = {}
+        for t in p.open_trades():
+            open_paper[t['strategy']] = open_paper.get(t['strategy'], 0) + 1
+        data = {
+            'version':   _code_version(),
+            'test_mode': TEST_MODE,
+            'modes':     STRATEGY_MODE,
+            'scan':      {k: _SCAN_INFO.get(k) for k in ('at', 'coins', 'thin')},
+            'regime':    {'ok': _SCAN_INFO.get('regime_ok'), 'msg': _SCAN_INFO.get('regime')},
+            'breadth_os': _rnd(_SCAN_INFO.get('breadth_os'), 3),
+            'open':      {'live': _SCAN_INFO.get('open_live', 0), 'paper': open_paper},
+            'keys':      {'okx': bool(OKX_API_KEY), 'claude': bool(CLAUDE_API_KEY),
+                          'telegram': bool(TELEGRAM_BOT_TOKEN), 'db_role': _supabase_key_role()},
+            'limits':    {'risk_pct': RISK_PER_TRADE_PCT, 'loss_30d_pct': MAX_30D_LOSS_PCT,
+                          'max_open': MAX_OPEN_TRADES, 'score': STRONG_BUY_SCORE},
+            'funnel':    cache.get('_funnel', {}),
+            'run_secs':  round(time.time() - started),
+        }
+        r = requests.post(
+            f'{SUPABASE_URL}/rest/v1/bot_status',
+            headers=_sb_headers({'Content-Type': 'application/json',
+                                 'Prefer': 'resolution=merge-duplicates,return=minimal'}),
+            json={'id': 'worker', 'updated_at': datetime.now(timezone.utc).isoformat(), 'data': data},
+            timeout=10)
+        if r.status_code not in (200, 201, 204):
+            print(f'  [Status] not written (HTTP {r.status_code}) — run infra/supabase-3-paper-and-status.sql')
+    except Exception as e:
+        print(f'  [Status] write error: {e}')
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -3691,6 +4209,12 @@ def main():
             _check_db_key(cache)        # once per run; Telegram at most once a day
         run_scan(cache, warm_up=(fresh and scan_num == 1))
         monitor_option3_trades()
+        try:
+            _paper().monitor(cache)     # step open paper trades against real candles
+        except Exception as e:
+            print(f'  [Paper] monitor errored (non-fatal): {e}')
+        if scan_num == 1:
+            write_bot_status(cache, start)   # early, so a fresh start shows on the dashboard at once
         if scan_num == 1:
             grade_journal_followups()   # once per run is plenty — nothing here is urgent
             # Long-horizon learning pass: reads the FULL graded history, not just the
@@ -3709,6 +4233,7 @@ def main():
         remaining = LOOP_DURATION - elapsed
 
         if remaining <= CHECK_INTERVAL:
+            write_bot_status(cache, start)
             print(f'\nLoop complete — {scan_num} scan(s) in {elapsed:.0f}s.')
             break
 
