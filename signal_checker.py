@@ -171,12 +171,19 @@ REZONE_REMINDER = 4 * 60 * 60  # 4 hours
 TEST_FORCE_SIGNAL = False
 
 # ── STRATEGY MODES — which strategies may spend real money ───────────────────
-# 'live'  = places real orders on OKX        (implemented for 'dip' only)
-# 'paper' = same signals, same exits, same fees, NO orders: fills are simulated against
-#           real OKX candles and recorded in the paper_trades table (see paper.py)
+# 'auto'  = the strategy climbs and falls a ladder by itself, from its own record:
+#           paper (no money) -> trial ($20 a trade) -> full size, and back down to paper
+#           if it loses. The rules are in strategies.py; the start rung in STRATEGY_START.
+# 'paper' = held on paper by hand: same signals, same exits, same fees, NO orders. Fills
+#           are simulated against real OKX candles (paper_trades table, paper.py)
+# 'live'  = held at full size by hand - no automatic demotion. Owner's responsibility.
 # 'off'   = not evaluated at all
 #
-# ►►► 'dip' WENT FROM LIVE TO PAPER ON 2026-11-10. Read this before switching it back. ◄◄◄
+# Since 2026-11-11 every strategy is on 'auto'. At the owner's choice, flush (the crash
+# rebound) STARTS on a trial with real money; dip and trend start on paper and move up
+# only if their own results pass the bar in docs/STRATEGIES.md.
+#
+# ►►► 'dip' WENT FROM LIVE TO PAPER ON 2026-11-10. Read this before forcing it back. ◄◄◄
 #
 # The dip strategy is this file's original rule: STRONG BUY (score >= 4.0) + 30m reversal
 # + 2x volume + BTC regime OK + the AI advisor. Three independent measurements say it
@@ -196,18 +203,22 @@ TEST_FORCE_SIGNAL = False
 # The trade journal had been saying why in its own words: 13 of 23 stop-losses were
 # followed by a bounce within 24h (the fall continues, stops us out, then turns).
 #
-# In paper mode nothing about the strategy changes - the scan, the gates, the AI call,
-# the exits, the journal and the Telegram messages (marked PAPER) all run - except that
-# no order is sent. If it ever shows an edge there, that is the evidence it has lacked.
-# The bar for switching anything to 'live' is written down in docs/STRATEGIES.md.
+# On paper nothing about the strategy changes - the scan, the gates, the AI call, the
+# exits, the journal and the Telegram messages (marked PAPER) all run - except that no
+# order is sent. If it shows an edge there, the ladder gives it a real-money trial by
+# itself; its 46 old live trades do not count against it (the record starts 2026-11-10).
 #
-# To trade the dip strategy with real money again: change 'paper' to 'live' on the next
-# line. Nothing else needs touching; RISK_PER_TRADE_PCT and MAX_30D_LOSS_PCT below then
-# cap what it can lose.
+# To force the dip strategy back onto real money regardless: 'dip': 'live' below.
+# RISK_PER_TRADE_PCT and MAX_30D_LOSS_PCT then cap what it can lose.
 STRATEGY_MODE = {
+    'dip':   'auto',
+    'flush': 'auto',    # crash rebound: buy a fall with collapsing open interest, hold 48h
+    'trend': 'auto',    # daily trend on the 12 largest coins
+}
+STRATEGY_START = {      # the rung an 'auto' strategy stands on until its record moves it
     'dip':   'paper',
-    'flush': 'paper',   # liquidation-flush rebound  — paper only, no live order code yet
-    'trend': 'paper',   # daily trend on the majors  — paper only, no live order code yet
+    'flush': 'trial',   # owner's choice, 2026-11-11: real money now, $20 a trade
+    'trend': 'paper',
 }
 
 # What the AI is told it has to spend when 'dip' is on paper and the real balance cannot
@@ -1980,7 +1991,7 @@ def grade_journal_followups():
     try:
         r = requests.get(
             f'{SUPABASE_URL}/rest/v1/option3_trades'
-            f'?phase=eq.3&followup_at=is.null&exit_reason=not.is.null'
+            f'?phase=eq.3&followup_at=is.null&exit_reason=not.is.null&strategy=eq.dip'
             f'&closed_at=not.is.null&closed_at=lt.{cutoff}&limit={JOURNAL_GRADE_BATCH}'
             f'&select=id,symbol,entry_price,exit_price,exit_reason,partial_tp_pct,closed_at',
             headers=_sb_headers(), timeout=10,
@@ -2861,7 +2872,7 @@ def _count_recent_sl(hours=24):
     try:
         r = requests.get(
             f'{SUPABASE_URL}/rest/v1/option3_trades'
-            f'?select=id&exit_reason=eq.sl&closed_at=gte.{since}',
+            f'?select=id&exit_reason=eq.sl&strategy=eq.dip&closed_at=gte.{since}',
             headers=_sb_headers(),
             timeout=10,
         )
@@ -2923,7 +2934,7 @@ def _trade_history_context(symbol):
     try:
         r = requests.get(
             f'{SUPABASE_URL}/rest/v1/option3_trades'
-            f'?phase=eq.3&exit_reason=not.is.null&order=closed_at.desc&limit=30'
+            f'?phase=eq.3&exit_reason=not.is.null&strategy=eq.dip&order=closed_at.desc&limit=30'
             f'&select=symbol,exit_reason,net_pnl_usdt,closed_at,entry_context,followup',
             headers=_sb_headers(), timeout=10,
         )
@@ -2931,7 +2942,7 @@ def _trade_history_context(symbol):
             # Journal columns missing (migration not run) — fall back to bare outcomes
             r = requests.get(
                 f'{SUPABASE_URL}/rest/v1/option3_trades'
-                f'?phase=eq.3&exit_reason=not.is.null&order=closed_at.desc&limit=30'
+                f'?phase=eq.3&exit_reason=not.is.null&strategy=eq.dip&order=closed_at.desc&limit=30'
                 f'&select=symbol,exit_reason,net_pnl_usdt,closed_at',
                 headers=_sb_headers(), timeout=10,
             )
@@ -3290,10 +3301,12 @@ def maybe_send_daily_digest(cache):
 
     open_trades = _fetch_option3_trades()
     if open_trades:
-        syms      = ', '.join(t['symbol'].replace('-USDT', '') for t in open_trades)
-        open_line = f'📈 Open live trades: {len(open_trades)} ({syms})'
+        syms      = ', '.join(f"{t['symbol'].replace('-USDT', '')}"
+                              f"{'' if _is_option3(t) else ' (' + STRATEGY_LABEL.get(t.get('strategy'), '') + ')'}"
+                              for t in open_trades)
+        open_line = f'📈 Open REAL trades: {len(open_trades)} ({syms})'
     else:
-        open_line = '📈 Open live trades: none'
+        open_line = '📈 Open REAL trades: none'
 
     lines = [open_line]
     # Yesterday in one line: how many setups qualified and what stopped them. Silence
@@ -3311,12 +3324,11 @@ def maybe_send_daily_digest(cache):
         taken = f.get('traded', 0) + f.get('paper', 0)
         lines.append(f"🧭 Yesterday: BTC downtrend {bear:.0%} of the day · {f.get('candidates', 0)} setup(s) "
                      f"qualified · {taken} taken" + (f' · stopped: {stopped}' if stopped else ''))
-    modes = ', '.join(f'{k} {v}' for k, v in STRATEGY_MODE.items())
-    lines.append(f'⚙️ Strategies: {modes}')
     try:
-        lines += _paper().digest_lines()
+        lines.append('⚙️ <b>Strategies</b> (each moves up or down by itself from its results)')
+        lines += _strategies().digest_lines()
     except Exception as e:
-        print(f'  [Digest] paper summary unavailable: {e}')
+        print(f'  [Digest] strategy summary unavailable: {e}')
 
     send_telegram('💓 <b>Daily Report — OKX Trading</b>\n' + '\n'.join(lines))
     cache['_daily_digest'] = {'date': today}
@@ -3324,7 +3336,7 @@ def maybe_send_daily_digest(cache):
 
 
 # ── Option 3 exit monitor ─────────────────────────────────────────────────────
-def monitor_option3_trades():
+def monitor_option3_trades(rows=None):
     """
     Poll all active Option 3 trades and send Telegram on every exit event.
 
@@ -3332,11 +3344,14 @@ def monitor_option3_trades():
              SL hit (OCO)    → sell remaining 50%, report full loss, close trade.
     Phase 2: trailing stop   → report profit with exact USDT gain, close trade.
              break-even SL   → report zero-loss exit, close trade.
+
+    Only rows of the dip strategy: flush and trend positions share the table but have
+    one stop and no OCO, and monitor_simple_trades manages them.
     """
     if not OKX_API_KEY or not OKX_SECRET_KEY or not OKX_PASSPHRASE:
         return
 
-    trades = _fetch_option3_trades()
+    trades = [t for t in (_fetch_option3_trades() if rows is None else rows) if _is_option3(t)]
     if not trades:
         return
 
@@ -3637,13 +3652,44 @@ def run_scan(cache, warm_up=False):
     """
     now = time.time()
 
-    # Which book the dip strategy trades into (STRATEGY_MODE). TEST_MODE is a live
-    # pipeline test by definition. On paper, the open paper trades stand in for the open
-    # live ones everywhere a rail counts positions: the open-trade cap, the "already
-    # running" check, the correlation guard. The rules being tested must be the rules.
-    dip_mode      = 'live' if TEST_MODE else STRATEGY_MODE.get('dip', 'live')
-    live_trades   = _fetch_option3_trades()
-    paper_dip     = []
+    # Every open REAL position, whatever the strategy; the dip strategy's own are the
+    # Option 3 rows. Flush and trend positions count toward the account and the coins
+    # it already holds, never toward the dip strategy's rails.
+    all_live    = _fetch_option3_trades()
+    live_trades = [t for t in all_live if _is_option3(t)]
+    other_live  = {t['symbol'] for t in all_live if not _is_option3(t)}
+
+    usdt_balance = 0.0
+    if OKX_API_KEY and not warm_up:
+        usdt_balance = _fetch_usdt_balance()
+        if usdt_balance > 0:
+            print(f'  [AutoTrade] Available USDT: ${usdt_balance:.2f}')
+        else:
+            print(f'  [AutoTrade] Balance unavailable — no real trades this run')
+    # The whole account, for the risk cap and the ladder: free USDT plus real positions.
+    equity = usdt_balance + sum(float(t.get('amount_usdt') or 0) for t in all_live)
+    equity_known = equity if usdt_balance > 0 else None
+
+    # Which book the dip strategy trades into: its rung on the strategy ladder
+    # (strategies.py) - paper, trial or full - unless set by hand in STRATEGY_MODE.
+    # TEST_MODE is a live pipeline test by definition. A ladder error means paper:
+    # never real money on missing evidence. On paper, the open paper trades stand in
+    # for live ones wherever a rail counts positions (open-trade cap, "already running",
+    # correlation guard): the rules being tested must be the rules.
+    dip_cap = None
+    if TEST_MODE:
+        dip_mode = 'live'
+    elif warm_up:
+        dip_mode = STRATEGY_MODE.get('dip', 'off') if STRATEGY_MODE.get('dip') in ('off', 'paper') else 'paper'
+    else:
+        try:
+            info = _strategies().level('dip', equity_known)
+            dip_mode = 'live' if info['level'] in ('trial', 'full') else info['level']
+            dip_cap = info['stake'] if info['level'] == 'trial' else None
+        except Exception as e:
+            print(f'  [Levels] dip level unavailable ({e}) — paper this scan')
+            dip_mode = 'paper'
+    paper_dip = []
     if dip_mode == 'paper':
         # Guarded like every paper call in this function: the simulation is an observer
         # and must never be able to stop the loop that manages real positions.
@@ -3651,24 +3697,18 @@ def run_scan(cache, warm_up=False):
             paper_dip = _paper().open_trades('dip')
         except Exception as e:
             print(f'  [Paper] open paper trades unavailable ({e}) — counting none this scan')
-    active_trades = live_trades + paper_dip
+    active_trades  = live_trades + paper_dip
     active_symbols = {t['symbol'] for t in active_trades}
+    if dip_mode == 'live':
+        active_symbols |= other_live          # never two real strategies in one coin
 
-    usdt_balance = 0.0
-    if OKX_API_KEY and (CLAUDE_API_KEY or TEST_MODE) and not warm_up:
-        usdt_balance = _fetch_usdt_balance()
-        if usdt_balance > 0:
-            print(f'  [AutoTrade] Available USDT: ${usdt_balance:.2f}')
-        else:
-            print(f'  [AutoTrade] Balance unavailable — auto-trade disabled this run')
-    # The whole account, for the risk cap: what is free plus what is already in trades.
-    equity = usdt_balance + sum(float(t.get('amount_usdt') or 0) for t in live_trades)
     if dip_mode == 'paper' and not warm_up:
-        # Paper sizes should be the sizes a live trade would have had: start from the real
-        # account when it can be read, and take off what open paper trades "hold".
+        # Paper sizes should be the sizes a real trade would have had: start from the real
+        # free balance when it can be read, and take off what open paper trades "hold".
+        base = usdt_balance if usdt_balance >= MIN_TRADE_USDT else PAPER_BALANCE_USDT
+        usdt_balance = max(0.0, base - sum(float(t.get('amount_usdt') or 0) for t in paper_dip))
         if equity < MIN_TRADE_USDT:
             equity = PAPER_BALANCE_USDT
-        usdt_balance = max(0.0, equity - sum(float(t.get('amount_usdt') or 0) for t in active_trades))
         print(f'  [Paper] dip strategy is on PAPER — no orders will be sent '
               f'(simulated balance ${usdt_balance:.2f})')
 
@@ -3861,7 +3901,9 @@ def run_scan(cache, warm_up=False):
         print(f'  [Regime] {regime_msg}' + (f' · {breadth:.0%} of scanned coins oversold' if breadth is not None else ''))
     _SCAN_INFO.update({'at': now, 'coins': len(scan), 'thin': len(SYMBOLS) - len(scan),
                        'regime_ok': regime_ok, 'regime': regime_msg, 'breadth_os': breadth,
-                       'dip_mode': dip_mode, 'open_live': len(live_trades)})
+                       'dip_mode': dip_mode, 'open_live': len(all_live),
+                       'open_live_by': {k: sum(1 for t in all_live if (t.get('strategy') or 'dip') == k)
+                                        for k in {t.get('strategy') or 'dip' for t in all_live}}})
 
     if candidates and dip_mode == 'off':
         print(f'  [AutoTrade] dip strategy is OFF — {len(candidates)} signal(s) noted, nothing traded')
@@ -3893,16 +3935,14 @@ def run_scan(cache, warm_up=False):
                     )
                     cache['_circuit_breaker'] = {'alerted_at': now}
             elif dip_mode == 'live' and not TEST_MODE:
-                lost = _loss_30d()
-                if MAX_30D_LOSS_PCT and equity > 0 and lost <= -equity * MAX_30D_LOSS_PCT / 100:
-                    gate, block_reason = 'loss_limit', (f'live trades lost ${-lost:.2f} in the last 30 days, '
-                                                        f'over {MAX_30D_LOSS_PCT:g}% of the account')
+                paused = live_paused(equity)
+                if paused:
+                    gate, block_reason = 'loss_limit', paused
                     ll = cache.get('_loss_limit', {})
                     if now - ll.get('alerted_at', 0) > 24 * 3600:
                         send_telegram(
                             f"⏸️ <b>Live Trading Paused — monthly loss limit</b>\n"
-                            f"🔴 Closed live trades lost ${-lost:.2f} over the last 30 days "
-                            f"(limit: {MAX_30D_LOSS_PCT:g}% of the account)\n"
+                            f"🔴 Closed {paused}\n"
                             f"▶️ Resumes by itself as those losses age past 30 days. Open trades are still managed."
                         )
                         cache['_loss_limit'] = {'alerted_at': now}
@@ -4022,6 +4062,11 @@ def run_scan(cache, warm_up=False):
                         trade_result = 'paper' if saved else 'skip'
                         fun['paper'] = fun.get('paper', 0) + bool(saved)
                     elif params:
+                        if dip_cap and params['amount_usdt'] > dip_cap:
+                            # Trial rung of the strategy ladder: real money, but a fixed
+                            # small stake until the strategy's record earns full size.
+                            print(f'  {symbol}: trial size — ${params["amount_usdt"]:.2f} capped at ${dip_cap:.2f}')
+                            params['amount_usdt'] = dip_cap
                         try:
                             trade_result = place_option3_trade(symbol, params, cand['ticker'],
                                                                _build_entry_snapshot(cand, extra, params, evidence))
@@ -4064,16 +4109,17 @@ def run_scan(cache, warm_up=False):
         cache[symbol] = cache_update
         time.sleep(0.3)
 
-    # ── Paper-only strategies (paper.py) ─────────────────────────────────────
-    # Each is wrapped on its own: a fault in an experiment must never reach the code
-    # above, which can hold real positions.
+    # ── The other strategies (strategies.py): real or paper, by their rung ─────
+    # Each is wrapped on its own: a fault in one must never reach the code above, which
+    # can hold real positions. all_live is passed so each new real trade is seen by the
+    # next decision in the same scan (caps, one coin per strategy).
     if not warm_up and not TEST_MODE:
-        for name, call in (('flush', lambda: _paper().flush_scan(tickers, cache)),
-                           ('trend', lambda: _paper().trend_scan(cache))):
+        for name, call in (('flush', lambda: _strategies().flush_scan(tickers, cache, equity_known, all_live)),
+                           ('trend', lambda: _strategies().trend_scan(cache, equity_known, all_live))):
             try:
                 call()
             except Exception as e:
-                print(f'  [Paper] {name} scan errored (non-fatal): {e}')
+                print(f'  [Strategies] {name} scan errored (non-fatal): {e}')
 
 
 # ── Strategy plumbing: paper module, funnel, refused-signal journal, status row ──
@@ -4084,6 +4130,13 @@ def _paper():
     """paper.py, imported on first use (it imports this module back)."""
     import paper
     return paper
+
+
+def _strategies():
+    """strategies.py (the ladder, flush, trend), imported on first use - it imports this
+    module back."""
+    import strategies
+    return strategies
 
 
 def _funnel_today(cache):
@@ -4170,7 +4223,8 @@ def write_bot_status(cache, started):
             'scan':      {k: _SCAN_INFO.get(k) for k in ('at', 'coins', 'thin')},
             'regime':    {'ok': _SCAN_INFO.get('regime_ok'), 'msg': _SCAN_INFO.get('regime')},
             'breadth_os': _rnd(_SCAN_INFO.get('breadth_os'), 3),
-            'open':      {'live': _SCAN_INFO.get('open_live', 0), 'paper': open_paper},
+            'open':      {'live': _SCAN_INFO.get('open_live', 0), 'live_by': _SCAN_INFO.get('open_live_by', {}),
+                          'paper': open_paper},
             'keys':      {'okx': bool(OKX_API_KEY), 'claude': bool(CLAUDE_API_KEY),
                           'telegram': bool(TELEGRAM_BOT_TOKEN), 'db_role': _supabase_key_role()},
             'limits':    {'risk_pct': RISK_PER_TRADE_PCT, 'loss_30d_pct': MAX_30D_LOSS_PCT,
@@ -4178,6 +4232,10 @@ def write_bot_status(cache, started):
             'funnel':    cache.get('_funnel', {}),
             'run_secs':  round(time.time() - started),
         }
+        try:
+            data['ladder'] = _strategies().status()      # each strategy's rung, stake and record
+        except Exception as e:
+            print(f'  [Status] ladder unavailable: {e}')
         r = requests.post(
             f'{SUPABASE_URL}/rest/v1/bot_status',
             headers=_sb_headers({'Content-Type': 'application/json',
@@ -4188,6 +4246,357 @@ def write_bot_status(cache, started):
             print(f'  [Status] not written (HTTP {r.status_code}) — run infra/supabase-3-paper-and-status.sql')
     except Exception as e:
         print(f'  [Status] write error: {e}')
+
+
+# ── Simple live positions: flush and trend ───────────────────────────────────
+# A market buy, ONE protective stop on OKX for the whole position, and an exit the bot
+# makes itself: after a fixed time (flush) or when a daily rule says so (trend). Stored
+# in option3_trades with strategy='flush' / 'trend', so every real-money trade sits in
+# one table and the dashboard's live record and the monthly loss limit see them all.
+# The Option 3 machinery (monitor_option3_trades, the AI journal, grading, learn.py)
+# reads strategy='dip' rows only: see _is_option3.
+#
+# Where the protective stop sits (research/lab_exp7.txt). It must exist - a hack or a
+# delisting can take a coin down 60% in an hour - but a close one ruins these trades:
+# after a flush the price whips around before it recovers, so a -15% stop cut the
+# average from +3.7% to +1.4% per trade and -20% to +1.9%. At -30% it fired on 3 of 205
+# flushes in 2024-26 and 7 of 201 in 2022-23 and cost almost nothing (+3.2%). Risk is
+# held by SIZE instead: a trial trade is $20, so the worst the stop allows is about $6.
+SIMPLE_STRATEGIES = ('flush', 'trend')
+DISASTER_STOP_PCT = 30.0
+SIMPLE_DEFAULT_HOLD_H = 48          # flush rows carry their own hold time; this is the fallback
+SIMPLE_RETRY_SECS = 10 * 60         # after a failed exit, wait this long before trying again
+STRATEGY_LABEL = {'dip': 'Dip buy', 'flush': 'Crash rebound', 'trend': 'Trend (majors)'}
+
+
+def _is_option3(t):
+    """True for rows the Option 3 machinery owns. Rows from before 2026-11-10 carry
+    strategy='dip' through the column default; a row without the field is a dip row."""
+    return (t.get('strategy') or 'dip') == 'dip'
+
+
+def _order_detail(symbol, ord_id, attempts=4):
+    """
+    The fill of a regular order once OKX has finished with it: {'sz', 'px', 'fee',
+    'fee_ccy', 'state'}. `fee` is OKX's signed figure (negative = charged). A market
+    order is filled by the time OKX answers, but its record can lag a moment, hence the
+    short retry. None if the record never came back.
+    """
+    for i in range(attempts):
+        try:
+            o = (_okx_get(f'/api/v5/trade/order?instId={symbol}&ordId={ord_id}').get('data') or [{}])[0]
+            sz, px = float(o.get('accFillSz') or 0), float(o.get('avgPx') or 0)
+            if o.get('state') in ('filled', 'canceled', 'mmp_canceled') or (sz > 0 and px > 0 and i >= 1):
+                return {'sz': sz, 'px': px, 'fee': float(o.get('fee') or 0),
+                        'fee_ccy': o.get('feeCcy') or '', 'state': o.get('state')}
+        except Exception as e:
+            print(f'  [Simple] {symbol}: order {ord_id} lookup failed ({e})')
+        time.sleep(1 + i)
+    return None
+
+
+def _coin_available(ccy):
+    """Free balance of one coin in the trading account (raises if OKX cannot be read)."""
+    d = _okx_get(f'/api/v5/account/balance?ccy={ccy}')
+    for item in (d.get('data') or [{}])[0].get('details', []):
+        if item.get('ccy') == ccy:
+            return float(item.get('availBal') or 0)
+    return 0.0
+
+
+def _protect(symbol, coins_s, entry_px, tick=None):
+    """The disaster stop for a whole simple position. Returns its algo id, or raises."""
+    stop_px = entry_px * (1 - DISASTER_STOP_PCT / 100)
+    return _place_algo({'instId': symbol, 'tdMode': 'cash', 'side': 'sell', 'ordType': 'conditional',
+                        'sz': coins_s,
+                        'slTriggerPx': _fmt_step(stop_px, tick) if tick else f'{stop_px:.8f}',
+                        'slOrdPx': '-1', 'slTriggerPxType': 'last'})
+
+
+def _unwind_simple(symbol, coins, algo_ids, why):
+    """A position the bot cannot manage: cancel what was placed, sell it straight back,
+    and say so either way. Same rule as _abort_unprotected, worded for this case."""
+    coin = symbol.replace('-USDT', '')
+    for aid in [a for a in algo_ids if a]:
+        _cancel_algo(symbol, aid)
+    try:
+        _okx_post('/api/v5/trade/order', {'instId': symbol, 'tdMode': 'cash', 'side': 'sell',
+                                          'ordType': 'market', 'sz': f'{coins:.8f}'})
+        send_telegram(f"🚨 <b>Trade undone — {coin}</b>\n⚠️ {why}\n"
+                      f"↩️ The coins were sold straight back, so you are flat (cost ≈ fees only).")
+        return 'position sold back'
+    except Exception as e:
+        send_telegram(f"🚨 <b>URGENT — {coin} position needs you</b>\n⚠️ {why}\n"
+                      f"❌ Selling it back failed too ({e}).\n"
+                      f"👉 You hold ~{coins:.8f} {coin} the bot is not managing — close it on OKX now.")
+        return 'SELL-BACK FAILED — manual action needed'
+
+
+def place_simple_trade(strategy, symbol, stake_usdt, exit_plan, snapshot=None, level='trial', why=''):
+    """
+    Open a REAL position for a simple-exit strategy: a market buy for `stake_usdt`, the
+    disaster stop on every coin received, then the row the monitor manages it from.
+    Returns the saved row. Raises Option3Preflight when nothing was bought (too small,
+    not enough USDT, no price), or Exception after a buy that could not be protected or
+    saved - the coins have then been sold back (_unwind_simple, which also Telegrams).
+    """
+    coin = symbol.replace('-USDT', '')
+    tick, lot, min_sz = _fetch_instrument_spec(symbol)
+    if not lot or not min_sz:
+        raise Option3Preflight(f'{symbol}: OKX instrument details unavailable — no order placed')
+    tk = fetch_ticker(symbol)
+    if not tk or not tk.get('price'):
+        raise Option3Preflight(f'{symbol}: no price from OKX — no order placed')
+    if stake_usdt / tk['price'] * (1 - 2 * OKX_FEE_RATE) < float(min_sz) * 1.02:
+        raise Option3Preflight(f"${stake_usdt:.2f} buys less than OKX's minimum of {min_sz} {coin} — no order placed")
+    avail = _fetch_usdt_balance()
+    if avail < stake_usdt * 1.01 + 0.5:
+        raise Option3Preflight(f'only ${avail:.2f} USDT free for a ${stake_usdt:.2f} trade — no order placed')
+
+    # 1. Market buy, sized in USDT. The fill is read back from OKX: the coins received are
+    #    the filled amount less the fee, which OKX takes in the coin bought.
+    resp = _okx_post('/api/v5/trade/order', {'instId': symbol, 'tdMode': 'cash', 'side': 'buy',
+                                             'ordType': 'market', 'sz': f'{stake_usdt:.2f}', 'tgtCcy': 'quote_ccy'})
+    ord_id = (resp.get('data') or [{}])[0].get('ordId', '')
+    time.sleep(1.0)
+    fill = _order_detail(symbol, ord_id) if ord_id else None
+    if fill and fill['sz'] > 0 and fill['px'] > 0:
+        coins = fill['sz'] + (fill['fee'] if fill['fee_ccy'] == coin else 0.0)
+        cost = fill['sz'] * fill['px'] - (fill['fee'] if fill['fee_ccy'] == 'USDT' else 0.0)
+        entry = fill['px']
+    elif fill and fill['sz'] <= 0 and fill['state'] in ('canceled', 'mmp_canceled'):
+        raise Option3Preflight(f'{symbol}: OKX cancelled the market buy unfilled — nothing bought')
+    else:
+        # The buy went out but its record never came back. Assume it filled at the ticker
+        # price, and never protect more coins than the account actually holds.
+        try:
+            held = _coin_available(coin)
+        except Exception:
+            held = 0.0
+        coins = min(stake_usdt / tk['price'] * (1 - OKX_FEE_RATE), held)
+        cost, entry = stake_usdt, tk['price']
+        if coins < float(min_sz):
+            send_telegram(f"🚨 <b>Check OKX — {coin}</b>\n⚠️ A ${stake_usdt:.2f} market buy was sent but OKX "
+                          f"returned no fill, and no {coin} shows in the account.\n"
+                          f"👉 If a {coin} purchase appears in your OKX history, it is not managed by the bot.")
+            raise Exception(f'{symbol}: buy sent, fill unconfirmed, no coins found')
+    coins_s = _fmt_step(coins, lot)
+    if float(coins_s) < float(min_sz):
+        raise Exception(f'{symbol}: received {coins} {coin}, under the {min_sz} minimum a stop can cover')
+
+    # 2. The disaster stop, on OKX, for every coin. From here the coins are real: a
+    #    failure must never leave them unprotected or unmanaged.
+    try:
+        sl_id = _protect(symbol, coins_s, entry, tick)
+    except Exception as e:
+        note = _unwind_simple(symbol, float(coins_s), [], f'OKX rejected the protective stop ({e}).')
+        raise Exception(f'protective stop failed ({e}) — {note}')
+
+    # 3. The row the monitor manages it from. Without it nobody would ever sell these
+    #    coins, so a failed save undoes the trade.
+    row = {
+        'id': f'{strategy}-{ord_id or int(time.time())}', 'symbol': symbol, 'strategy': strategy,
+        'entry_price': entry, 'amount_usdt': round(cost, 4), 'sz_half': coins_s,
+        'partial_tp_id': '', 'sl_id': sl_id, 'sl2_id': '', 'trailing_id': '',
+        'partial_tp_pct': 0, 'sl_pct': DISASTER_STOP_PCT, 'trailing_pct': 0, 'phase': 1,
+        'entry_context': {**(snapshot or {}), 'exit': exit_plan, 'coins': coins_s,
+                          'buy_ord_id': ord_id, 'level': level},
+    }
+    if not _save_option3_trade(row):
+        note = _unwind_simple(symbol, float(coins_s), [sl_id],
+                              'The trade could not be saved to the database, so the bot could not have sold it later.')
+        raise Exception(f'trade not saved — {note}')
+
+    label = STRATEGY_LABEL.get(strategy, strategy)
+    plan = (f"sell after {exit_plan.get('hold_hours', SIMPLE_DEFAULT_HOLD_H):g} hours" if exit_plan.get('kind') == 'hold'
+            else 'hold until the daily trend ends')
+    print(f'  [Simple] {strategy}: bought {coins_s} {coin} @ {entry:.8g} for ${cost:.2f}, stop {sl_id} ✓')
+    send_telegram(
+        f"✅ <b>REAL trade placed — {coin}</b>  [{label} · {level} size]\n"
+        f"💵 ${cost:.2f} at {fmt_price(entry)}\n"
+        f"🛑 Protective stop −{DISASTER_STOP_PCT:g}% on OKX, 24/7\n"
+        f"⏱ Plan: {plan}" + (f"\n📋 {why}" if why else ''))
+    return row
+
+
+def _simple_result(trade, exit_px, sold, reason, fee_usdt=None, estimated=False):
+    """Record a finished simple trade and report it. Net P&L is exact: what the sale
+    brought in after its fee, minus what the buy cost."""
+    coin = trade['symbol'].replace('-USDT', '')
+    cost = float(trade.get('amount_usdt') or 0)
+    proceeds = sold * exit_px + (fee_usdt if fee_usdt is not None else -sold * exit_px * OKX_FEE_RATE)
+    net = proceeds - cost
+    pct = net / cost * 100 if cost else 0.0
+    _mark_trade_closed(trade['id'], reason, exit_px, net)
+    label = STRATEGY_LABEL.get(trade.get('strategy'), trade.get('strategy'))
+    why = {'time': 'sold after its planned hold time', 'rule': 'sold: the daily trend ended',
+           'stop': f'protective stop (−{DISASTER_STOP_PCT:g}%) on OKX'}.get(reason, reason)
+    send_telegram(
+        f"{'🟢' if net > 0 else '🔴'} <b>REAL trade closed — {coin}</b>  [{label}]\n"
+        f"💸 Result: {'~' if estimated else ''}{fmt_usdt(net)} USDT ({pct:+.2f}%) after fees\n"
+        f"📋 {why}")
+    print(f'  [Simple] {trade["symbol"]}: closed ({reason}) {fmt_usdt(net)}')
+    return net
+
+
+def _finish_stop(trade):
+    """The protective stop fired on OKX: record what it sold for."""
+    entry = float(trade.get('entry_price') or 0)
+    px = _get_fill_price(trade['sl_id'], 'conditional', trade['symbol'])
+    est = not px
+    if est:
+        px = entry * (1 - DISASTER_STOP_PCT / 100)
+    _simple_result(trade, px, float(trade.get('sz_half') or 0), 'stop', estimated=est)
+    return True
+
+
+def close_simple_trade(trade, reason, cache=None):
+    """
+    Sell a simple position at market: cancel its stop, sell the coins, record the result.
+    Crash-safe: the row is marked 'exiting:<reason>' BEFORE the stop is cancelled, so a
+    run that dies between the cancel and the sale finishes the job on its next pass
+    instead of leaving coins without a stop. Returns True once the trade is closed (by
+    this sale, or because the stop fired first), False when it is still open.
+    """
+    symbol, coin = trade['symbol'], trade['symbol'].replace('-USDT', '')
+    marker = f'exiting:{reason}'
+    if trade.get('trailing_id') != marker:
+        if not _update_trade(trade['id'], {'trailing_id': marker}):
+            print(f'  [Simple] {symbol}: could not record the exit — orders left untouched, retried next pass')
+            return False
+        trade['trailing_id'] = marker
+    sl_id = trade.get('sl_id') or ''
+    if sl_id:
+        try:
+            _okx_post('/api/v5/trade/cancel-algos', [{'algoId': sl_id, 'instId': symbol}])
+        except Exception as e:
+            # A timeout can hide a cancel that went through, and the stop may have fired
+            # a moment ago. Ask OKX before deciding.
+            states = {o.get('state') for o in _algo_history(sl_id, 'conditional')}
+            if 'effective' in states:
+                return _finish_stop(trade)
+            if not states & {'canceled', 'order_failed'}:
+                print(f'  [Simple] {symbol}: stop cancel refused ({e}) — exit retried next pass')
+                return False
+        _update_trade(trade['id'], {'sl_id': ''})
+        trade['sl_id'] = ''
+
+    tick, lot, min_sz = _fetch_instrument_spec(symbol)
+    held = float(trade.get('sz_half') or 0)
+    try:
+        avail = _coin_available(coin)
+        if avail < held * 0.5:
+            time.sleep(1.5)                      # a just-cancelled stop can take a moment to release the coins
+            avail = _coin_available(coin)
+    except Exception as e:
+        print(f'  [Simple] {symbol}: balance unavailable ({e}) — exit retried next pass')
+        return False
+    sz = min(held, avail)
+    sz_s = _fmt_step(sz, lot) if lot else f'{sz:.8f}'
+    if float(sz_s) <= 0 or (min_sz and float(sz_s) < float(min_sz)):
+        _mark_trade_closed(trade['id'], 'cancelled')
+        send_telegram(f"⚠️ <b>{coin} position already gone</b>\n"
+                      f"The coins were sold outside the bot, so this trade is marked closed without a result.")
+        return True
+    try:
+        resp = _okx_post('/api/v5/trade/order', {'instId': symbol, 'tdMode': 'cash', 'side': 'sell',
+                                                 'ordType': 'market', 'sz': sz_s})
+    except Exception as e:
+        # Unsold and, for the moment, unprotected: put the stop straight back.
+        warn = cache is None or time.time() - cache.setdefault('_simple_warn', {}).get(trade['id'], 0) > 3600
+        try:
+            new_id = _protect(symbol, sz_s, float(trade.get('entry_price') or 0), tick)
+            _update_trade(trade['id'], {'sl_id': new_id, 'trailing_id': ''})
+            if warn:
+                send_telegram(f"⚠️ <b>Exit delayed — {coin}</b>\nOKX rejected the sale ({e}). The protective stop "
+                              f"is back in place and the bot will try again in {SIMPLE_RETRY_SECS // 60} minutes.")
+        except Exception as e2:
+            _update_trade(trade['id'], {'trailing_id': ''})
+            send_telegram(f"🚨 <b>URGENT — Unprotected {coin} position</b>\n⚠️ OKX rejected the sale ({e}) "
+                          f"AND the protective stop ({e2}).\n👉 You hold ~{sz_s} {coin} with no stop — "
+                          f"close it on OKX now. The bot keeps retrying.")
+        if cache is not None:
+            cache.setdefault('_simple_warn', {})[trade['id']] = time.time()
+            cache.setdefault('_simple_retry', {})[trade['id']] = time.time()
+        return False
+    ord_id = (resp.get('data') or [{}])[0].get('ordId', '')
+    time.sleep(1.0)
+    fill = _order_detail(symbol, ord_id) if ord_id else None
+    if fill and fill['sz'] > 0 and fill['px'] > 0:
+        _simple_result(trade, fill['px'], fill['sz'], reason,
+                       fee_usdt=fill['fee'] if fill['fee_ccy'] == 'USDT' else None)
+    else:
+        px = (fetch_ticker(symbol) or {}).get('price') or float(trade.get('entry_price') or 0)
+        _simple_result(trade, px, float(sz_s), reason, estimated=True)
+    return True
+
+
+def monitor_simple_trades(rows, cache):
+    """
+    Every scan, for each open flush / trend position: did the stop fire, was an exit
+    interrupted, did someone cancel the stop on OKX, is the stop missing, is the hold
+    time up. One OKX request per position (its stop's history) when nothing is due.
+    """
+    if not OKX_API_KEY or not OKX_SECRET_KEY or not OKX_PASSPHRASE:
+        return
+    mine = [t for t in rows or [] if t.get('strategy') in SIMPLE_STRATEGIES]
+    if not mine:
+        return
+    print(f'\n  [Simple] Monitoring {len(mine)} open position(s)...')
+    now = datetime.now(timezone.utc)
+    retry = cache.setdefault('_simple_retry', {})
+    for k in [k for k in retry if k not in {t['id'] for t in mine}]:
+        del retry[k]
+    for t in mine:
+        symbol, coin = t['symbol'], t['symbol'].replace('-USDT', '')
+        try:
+            sl_id, marker = t.get('sl_id') or '', t.get('trailing_id') or ''
+            states = {o.get('state') for o in _algo_history(sl_id, 'conditional')} if sl_id else set()
+            if 'effective' in states:
+                _finish_stop(t)                 # checked first, and never delayed by the retry wait
+                continue
+            if time.time() - retry.get(t['id'], 0) < SIMPLE_RETRY_SECS:
+                continue                        # an exit failed a moment ago; the stop is in place
+            if marker.startswith('exiting:'):
+                close_simple_trade(t, marker.split(':', 1)[1], cache)      # finish an interrupted exit
+                continue
+            if states & {'canceled', 'order_failed'}:
+                # The bot only cancels a stop behind an 'exiting' marker, so this was
+                # someone else - the owner on OKX. Same rule as Option 3: stop managing it.
+                _mark_trade_closed(t['id'], 'cancelled')
+                send_telegram(f"⚠️ <b>Orders cancelled — {coin}</b>\nThe protective stop was cancelled on OKX, "
+                              f"so the bot stopped managing this {STRATEGY_LABEL.get(t['strategy'], '')} trade.\n"
+                              f"📌 Any {coin} still held is yours to manage.")
+                continue
+            if not sl_id:
+                # Protection missing after a failed restore: put it back before anything else.
+                tick, lot, _ = _fetch_instrument_spec(symbol)
+                sz_s = _fmt_step(min(float(t.get('sz_half') or 0), _coin_available(coin)), lot) if lot else ''
+                if sz_s and float(sz_s) > 0:
+                    new_id = _protect(symbol, sz_s, float(t.get('entry_price') or 0), tick)
+                    _update_trade(t['id'], {'sl_id': new_id})
+                    t['sl_id'] = new_id
+                    send_telegram(f"✅ <b>{coin} protected again</b>\nThe protective stop is back on OKX.")
+            if t['strategy'] == 'flush':
+                plan = (t.get('entry_context') or {}).get('exit') or {}
+                hours = float(plan.get('hold_hours') or SIMPLE_DEFAULT_HOLD_H)
+                opened = datetime.fromisoformat(str(t['created_at']).replace('Z', '+00:00'))
+                if now >= opened + timedelta(hours=hours):
+                    close_simple_trade(t, 'time', cache)
+        except Exception as e:
+            print(f'  [Simple] monitor error on {symbol}: {e}')
+
+
+def live_paused(equity):
+    """Why new LIVE trades are paused by the monthly loss limit (MAX_30D_LOSS_PCT), or
+    None. Account-wide: every strategy's live trades count."""
+    if not MAX_30D_LOSS_PCT or not equity or equity <= 0:
+        return None
+    lost = _loss_30d()
+    if lost <= -equity * MAX_30D_LOSS_PCT / 100:
+        return (f'live trades lost ${-lost:.2f} in the last 30 days, '
+                f'over {MAX_30D_LOSS_PCT:g}% of the account')
+    return None
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -4208,12 +4617,18 @@ def main():
         if scan_num == 1:
             _check_db_key(cache)        # once per run; Telegram at most once a day
         run_scan(cache, warm_up=(fresh and scan_num == 1))
-        monitor_option3_trades()
+        open_rows = _fetch_option3_trades()      # one read for both monitors of REAL positions
+        monitor_option3_trades(open_rows)        # dip: Option 3 trades
+        monitor_simple_trades(open_rows, cache)  # flush / trend: one stop each, timed or rule exits
         try:
             _paper().monitor(cache)     # step open paper trades against real candles
         except Exception as e:
             print(f'  [Paper] monitor errored (non-fatal): {e}')
         if scan_num == 1:
+            try:
+                _strategies().announce(cache)   # Telegram when a strategy moves up or down the ladder
+            except Exception as e:
+                print(f'  [Levels] announce errored (non-fatal): {e}')
             write_bot_status(cache, start)   # early, so a fresh start shows on the dashboard at once
         if scan_num == 1:
             grade_journal_followups()   # once per run is plenty — nothing here is urgent

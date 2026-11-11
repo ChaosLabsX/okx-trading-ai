@@ -3,6 +3,82 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-11-11 — The strategy ladder: crash rebound trades real money now, every strategy moves up or down by itself
+
+The owner did not want to wait weeks or months for paper results: "something I can use now
+and it will get better over time". Asked to choose, they picked: the crash-rebound (flush)
+strategy trades real money now at a small size, and every strategy's size adjusts itself
+from its own record.
+
+**The ladder (`strategies.py`, new).** Every strategy stands on one rung — `paper`, `trial`
+($20 a trade, real money) or `full` (10% of the account a trade for crash rebound, 8% for
+trend, the AI's own sizing for dip) — recomputed every few minutes from its record: every
+closed trade since 2026-11-10, real and paper together. Paper → trial when the record
+passes the bar; trial → full when it still passes with 10+ real trades in it; back to paper
+when it has lost on average over 30+ trades or its real trades lost more than 5% of the
+account in 30 days. Every move is announced on Telegram; the first run after the update
+sends the whole line-up. `STRATEGY_MODE` is now `'auto'` for all three, starting from
+`STRATEGY_START`: crash rebound on `trial`, dip and trend on `paper`. The dip strategy's
+46 old live trades are not in its record — it starts fresh and has to earn its way up.
+
+**The "not luck" check now uses daily averages.** Trades opened on the same day are
+averaged into one result before the standard error is taken. Found by its own test: 20
+winners on one crash day plus 10 losing days averaged +3.0% a trade but −0.45% a day,
+and the old check (trade average against a per-day error) would have promoted it.
+
+**Real orders for crash rebound and trend (`signal_checker.py`).** `place_simple_trade`:
+market buy for the stake, the coins received read back from OKX, a protective stop for
+every coin 30% below entry (on OKX, 24/7), then the row in `option3_trades` with
+`strategy='flush'` / `'trend'`. A rejected stop or a failed save undoes the trade (sold
+straight back, Telegram). `monitor_simple_trades` / `close_simple_trade`: stop fired →
+exact result recorded; the owner cancelled the stop on OKX → the bot stops managing it;
+hold time up → mark the row `exiting`, cancel the stop, sell, record. An exit interrupted
+between cancel and sale is finished on the next pass; a refused sale puts the stop straight
+back and retries in 10 minutes; if the stop cannot be restored either, an URGENT message
+and the stop is re-placed on the next pass. Only the position's own coins are ever sold.
+
+Why −30% (`research/lab_exp7.py`, `lab_exp7.txt`): a close stop ruins this trade — after a
+crash the price whips before it recovers (−15% took the average from +3.7% to +1.4% a
+trade). At −30% it fired on 3 of 205 trades (2024–26) and 7 of 201 (2022–23) and cost
+almost nothing. Risk is held by size: the worst a $20 trial trade can lose to the stop is
+about $6. Same test: the strategy fires 6–9 times a month on 2–5 days; at most 4 real
+positions at once, the rest paper-traded.
+
+**Keeping the dip machinery to its own rows.** `monitor_option3_trades`, the AI's journal
+(`_trade_history_context`), grading, the circuit breaker and `learn.py` read
+`strategy=dip` only. The dip strategy's open-trade cap counts its own trades; it never buys
+a coin another strategy holds for real. The monthly loss limit and the dashboard's live
+record count every real trade.
+
+**Dashboard.** The status strip shows each strategy's rung ("Crash rebound: REAL · trial
+$20"). The Strategies tab (was "Paper strategies") shows each card from the worker's own
+numbers: rung, record (real + paper), the four checks, and what moves it next. The Live
+trades tab adds a by-strategy table and labels for the new exits.
+
+**Paper trades of crash rebound** now carry the same −30% stop as real ones, so the two
+are the same trade. `paper.py` is a pure simulator again; the flush and trend rules moved
+to `strategies.py`.
+
+**Tests:** `tests/test_live_simple.py` (27 checks against a simulated OKX that refuses what
+the real one refuses — selling frozen coins, a stop larger than the free balance —
+including the recorded P&L equal to the account's real balance change to the cent),
+`tests/test_strategies.py` (35), `tests/test_paper.py` (40), `tests/test_dashboard_bot.js`
+(26); every older suite and the parity check unchanged and passing. A full worker cycle
+ran against live OKX data with no keys.
+
+No database change: the `strategy` column on `option3_trades` came with
+`infra/supabase-3-paper-and-status.sql`.
+
+### On the VPS
+
+```powershell
+Stop-ScheduledTask -TaskName "OKX-SignalChecker"; Get-Process python -EA SilentlyContinue | ? Path -like 'C:\OKXAI\*' | Stop-Process -Force
+cd C:\OKXAI; git pull
+Start-ScheduledTask -TaskName "OKX-SignalChecker"
+```
+
+Within ~5 minutes Telegram shows "⚙️ Strategy line-up" with crash rebound on a $20 trial.
+
 ## 2026-11-10 — Full audit: the dip strategy goes to paper; paper trading, a journal of every "no", risk limits, a bot panel
 
 Asked for: find out why nothing has traded for 11 days, audit everything, and upgrade the

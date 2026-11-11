@@ -105,7 +105,8 @@ eval(fs.readFileSync(path.join(ROOT, 'bot.js'), 'utf8').replace("'use strict';",
   ok(/No strategy is trading real money/.test(el('liveModeNote').innerHTML), 'live tab says plainly that nothing trades real money');
   await renderPaper();
   let h = el('paperBody').innerHTML;
-  ok(/Liquidation flush/.test(h) && /Not enough evidence yet/.test(h) && /SOL/.test(h) && /hold 48h/.test(h), 'paper tab: strategy cards, verdicts, open trades with their plan');
+  ok(/Crash rebound/.test(h) && /not enough evidence yet/.test(h) && /SOL/.test(h) && /hold 48h/.test(h),
+     'strategies tab (old status row, no ladder yet): cards from the paper trades, verdicts, open trades with their plan');
   ok(!/<img src=x/.test(h) && /&lt;img/.test(h), 'a hostile symbol is escaped, not rendered');
   await renderWhy();
   h = el('whyBody').innerHTML;
@@ -118,6 +119,30 @@ eval(fs.readFileSync(path.join(ROOT, 'bot.js'), 'utf8').replace("'use strict';",
   await renderPaper(); await renderWhy();
   ok(reads.length === before, 'switching back to a tab does not fetch again');
 
+  // the worker's ladder in the status row: rungs, stakes, the record of real + paper trades
+  DB.bot_status[0].data.modes = { dip: 'auto', flush: 'auto', trend: 'auto' };
+  DB.bot_status[0].data.open = { live: 2, live_by: { flush: 2 }, paper: {} };
+  DB.bot_status[0].data.ladder = {
+    since: '2026-11-10T00:00:00Z', trial_stake: 20, loss_budget_pct: 5,
+    bar: { min_trades: 30, min_pf: 1.3, se_mult: 1.3, full_min_live: 10 },
+    strategies: {
+      dip:   { level: 'paper', stake: 0, n: 3, wins: 1, n_live: 0, n_paper: 3, days: 3, mean: -0.8, day_mean: -0.8, pf: 0.4, se: 1.1 },
+      flush: { level: 'trial', stake: 20, n: 7, wins: 5, n_live: 4, n_paper: 3, days: 3, mean: 2.1, day_mean: 1.4, pf: 2.6, se: 1.9 },
+      trend: { level: 'paper', stake: 0, n: 0, wins: 0, n_live: 0, n_paper: 0, days: 0, mean: 0, day_mean: 0, pf: null, se: null },
+    } };
+  await loadBotStatus(true);
+  ok(/Crash rebound: REAL · trial \$20/.test(el('botStrip').innerHTML) && /Dip buy: paper/.test(el('botStrip').innerHTML),
+     'status strip: crash rebound on a REAL $20 trial, dip on paper');
+  ok(/Trading real money now: <strong>Crash rebound \(trial, \$20 a trade\)/.test(el('liveModeNote').innerHTML),
+     'live tab says which strategy trades real money, and how much');
+  await renderPaper(true);
+  h = el('paperBody').innerHTML;
+  ok(/Trading real money on a trial: \$20 a trade/.test(h) && /7 <small>\(5 won\)<\/small>/.test(h) && /4 real, 3 paper/.test(h)
+     && /Moves to full size once all four checks pass with 10\+ real trades in its record \(has 4\)/.test(h),
+     "strategy card from the ladder: its rung, its record (real + paper), and what moves it next");
+  const v = lib.ladderView({ n: 31, wins: 10, n_live: 2, n_paper: 29, days: 20, mean: -0.4, day_mean: -0.5, pf: 0.8, se: 0.3 }, 'paper', {});
+  ok(v.cls === 'bad' && /lost money on average/.test(v.verdict) && !v.passes, 'a strategy that lost over 30+ trades is shown as failing, in red');
+
   DB.bot_status = []; DB.paper_trades = []; DB.skipped_setups = [];
   bot.paper = bot.refused = null;
   await loadBotStatus(true); await renderPaper(); await renderWhy(); await renderSystem();
@@ -126,9 +151,13 @@ eval(fs.readFileSync(path.join(ROOT, 'bot.js'), 'utf8').replace("'use strict';",
 
   if (process.argv.includes('--preview')) {
     DB.bot_status = [{ updated_at: new Date(Date.now() - 3 * 60000).toISOString(), data: {
-      version: 'abc1234', modes: { dip: 'paper', flush: 'paper', trend: 'paper' }, scan: { at: Date.now() / 1000 - 90, coins: 55, thin: 12 },
-      regime: { ok: false, msg: 'BTC bearish' }, breadth_os: 0.2, open: { live: 0, paper: { flush: 2, trend: 1 } },
-      keys: { okx: true, claude: true, telegram: true, db_role: 'service_role' }, limits: { risk_pct: 1, loss_30d_pct: 6, max_open: 3, score: 4 }, funnel } }];
+      version: 'abc1234', modes: { dip: 'auto', flush: 'auto', trend: 'auto' }, scan: { at: Date.now() / 1000 - 90, coins: 55, thin: 12 },
+      regime: { ok: false, msg: 'BTC bearish' }, breadth_os: 0.2, open: { live: 1, live_by: { flush: 1 }, paper: { flush: 1, trend: 1 } },
+      keys: { okx: true, claude: true, telegram: true, db_role: 'service_role' }, limits: { risk_pct: 1, loss_30d_pct: 6, max_open: 3, score: 4 }, funnel,
+      ladder: { bar: { min_trades: 30, min_pf: 1.3, se_mult: 1.3, full_min_live: 10 }, strategies: {
+        dip:   { level: 'paper', stake: 0, n: 1, wins: 1, n_live: 0, n_paper: 1, days: 1, mean: 2.6, day_mean: 2.6, pf: 999, se: null },
+        flush: { level: 'trial', stake: 20, n: 2, wins: 1, n_live: 1, n_paper: 1, days: 2, mean: 0.75, day_mean: 0.75, pf: 1.29, se: 5.9 },
+        trend: { level: 'paper', stake: 0, n: 0, wins: 0, n_live: 0, n_paper: 0, days: 0, mean: 0, day_mean: 0, pf: null, se: null } } } } }];
     DB.paper_trades = [
       { id: 9, strategy: 'flush', symbol: 'SOL-USDT', kind: 'hold', opened_at: iso(9, 16), entry_price: 141.2, amount_usdt: 100, params: { hold_hours: 48 }, closed_at: null },
       { id: 7, strategy: 'trend', symbol: 'TRX-USDT', kind: 'rule', opened_at: iso(8), entry_price: 0.3312, amount_usdt: 100, params: {}, closed_at: null },
@@ -148,9 +177,9 @@ eval(fs.readFileSync(path.join(ROOT, 'bot.js'), 'utf8').replace("'use strict';",
 <body style="padding:14px"><section class="card perf-card open" style="max-width:1100px;margin:0 auto">
 <div class="card-header"><h2 class="card-title">Bot Performance</h2></div>
 <div class="bot-strip">${el('botStrip').innerHTML}</div>
-<div class="bot-tabs"><button class="bot-tab active">Live trades</button><button class="bot-tab">Paper strategies</button><button class="bot-tab">Why no trade?</button><button class="bot-tab">System</button></div>
+<div class="bot-tabs"><button class="bot-tab active">Live trades</button><button class="bot-tab">Strategies</button><button class="bot-tab">Why no trade?</button><button class="bot-tab">System</button></div>
 <div class="bot-pane"><div class="bot-note ${el("liveModeNote").className.replace("bot-note", "")}">${el("liveModeNote").innerHTML}</div></div>
-${pane('Paper strategies', 'paperBody')}${pane('Why no trade?', 'whyBody')}${pane('System', 'systemBody')}</section></body>`;
+${pane("Strategies", "paperBody")}${pane('Why no trade?', 'whyBody')}${pane('System', 'systemBody')}</section></body>`;
     fs.mkdirSync(path.join(__dirname, '_preview'), { recursive: true });
     fs.writeFileSync(path.join(__dirname, '_preview', 'bot.html'), html);
     console.log('preview written: tests/_preview/bot.html');

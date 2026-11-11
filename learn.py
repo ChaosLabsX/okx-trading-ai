@@ -130,7 +130,7 @@ def _count_new_graded(headers, base, since_ts):
     # gt.<ts> already implies non-null, so no duplicate followup_at condition is
     # needed. requests URL-encodes the '+' in the timestamp — a literal '+' in a
     # query string would otherwise decode to a space.
-    params = [('phase', 'eq.3'), ('exit_reason', 'not.is.null'), ('select', 'id')]
+    params = [('phase', 'eq.3'), ('exit_reason', 'not.is.null'), ('strategy', 'eq.dip'), ('select', 'id')]
     params.append(('followup_at', f'gt.{since_ts}') if since_ts else ('followup_at', 'not.is.null'))
     try:
         r = requests.get(f'{base}/rest/v1/option3_trades', headers=headers, params=params, timeout=15)
@@ -145,6 +145,7 @@ def _fetch_graded_trades(headers, base):
         r = requests.get(
             f'{base}/rest/v1/option3_trades', headers=headers,
             params=[('phase', 'eq.3'), ('followup_at', 'not.is.null'), ('exit_reason', 'not.is.null'),
+                    ('strategy', 'eq.dip'),   # the dip advisor's journal: flush/trend trades share the table
                     ('select', 'symbol,net_pnl_usdt,exit_reason,entry_context,followup'),
                     ('order', 'closed_at.desc'), ('limit', '1000')],
             timeout=20,

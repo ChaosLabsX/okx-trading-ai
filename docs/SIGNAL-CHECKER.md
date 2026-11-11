@@ -22,15 +22,22 @@ main()
      └─ save_cache(cache)          # alert-dedup state, gate counters, paper-trade progress
 ```
 
-## Strategy modes (2026-11-10)
+## Strategies and the ladder (2026-11-10, ladder 2026-11-11)
 
-`STRATEGY_MODE = {'dip': 'paper', 'flush': 'paper', 'trend': 'paper'}` — `live`, `paper`
-or `off` per strategy. **Everything below describes the `dip` strategy.** On `paper` it
-runs unchanged up to the moment an order would be sent; then `paper.open_trade()` records
-a simulated trade instead of `place_option3_trade()`, and the open paper trades stand in
-for open live ones wherever a rail counts positions (open-trade cap, correlation guard,
-circuit breaker). The evidence behind the mode, and the bar for `live`:
-[STRATEGIES.md](STRATEGIES.md).
+Three strategies, each on a rung — `paper`, `trial` ($20 real trades) or `full` — set by
+its own record every few minutes (`strategies.levels`; rules in
+[STRATEGIES.md](STRATEGIES.md)). `STRATEGY_MODE` is `'auto'` for all three; it can hold one
+on `'paper'`, `'off'` or `'live'` by hand. **Everything below describes the `dip`
+strategy.** On `paper` it runs unchanged up to the moment an order would be sent; then
+`paper.open_trade()` records a simulated trade instead of `place_option3_trade()`, and the
+open paper trades stand in for open live ones wherever a rail counts positions (open-trade
+cap, correlation guard, circuit breaker). On `trial` the AI's size is capped at $20.
+
+The crash-rebound (`flush`) and `trend` strategies run after the dip scan
+(`strategies.flush_scan`, `strategies.trend_scan`). On a live rung they open real
+positions through `place_simple_trade` — market buy, a −30% protective stop on OKX, a row
+in `option3_trades` with their `strategy` — and `monitor_simple_trades` exits them (after
+48h, or when the daily trend ends). Otherwise they paper-trade.
 
 Also new in the scan:
 

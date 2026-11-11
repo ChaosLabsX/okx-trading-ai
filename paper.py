@@ -1,36 +1,26 @@
 r"""
-Paper trading: strategies that run on LIVE OKX prices with SIMULATED fills.
+Paper trading: trades on LIVE OKX prices with SIMULATED fills.
 
-Why this exists (2026-11-10). A 34-month test of the live dip-buy rule, and of every other
-hourly entry style tried beside it, came out negative after fees (research/lab_exp1.py;
-the live record agrees: 46 trades, -0.56% each). The honest answer to "trade more" was
-therefore not another threshold. It was a way to find out whether a rule makes money
-BEFORE it is given any: every strategy now has a mode (signal_checker.STRATEGY_MODE) -
-'live', 'paper' or 'off' - and a paper strategy does everything a live one does except
-send orders. Its trades are stepped minute by minute against real candles, charged the
-same fees plus slippage, stored in `paper_trades`, reported on Telegram marked PAPER and
-shown on the dashboard beside the live record.
+Why this exists (2026-11-10). A 34-month test of the original dip-buy rule, and of every
+other hourly entry style tried beside it, came out negative after fees (research/
+lab_exp1.py; the live record agrees: 46 trades, -0.56% each). So a rule now has to show
+it makes money before it is given any. A strategy on paper does everything a live one
+does except send orders: its trades are stepped minute by minute against real candles,
+charged the same fees plus slippage, stored in `paper_trades`, reported on Telegram
+marked PAPER and shown on the dashboard beside the real record.
+
+Which strategies are on paper, and when one moves to real money, is decided by the
+strategy ladder in strategies.py (and its rules in docs/STRATEGIES.md). The strategy
+rules themselves live there too (flush, trend) or in signal_checker.run_scan (dip).
 
 Real money lives in `option3_trades` and nowhere else. Nothing in this file can place,
 change or cancel an order: it never calls an OKX private endpoint.
 
-Three strategies report here:
-  dip    the existing STRONG BUY rule + AI advisor. Entries come from run_scan, which calls
-         open_trade() instead of place_option3_trade() while the mode is 'paper'.
-  flush  buy a "liquidation flush": a coin down >= 8% in 24h while its futures open
-         interest (in coins) fell >= 15%. That is forced selling, and forced selling ends.
-         Hold 48 hours, no stop. Measured in research/lab_exp6.py: +3.7% per trade over
-         2024-2026 (every year positive), but only +1.2% and not significant on 2022-2023
-         data that played no part in choosing the thresholds. Promising, unproven: exactly
-         what paper trading is for. A stop gives the edge away - after a flush the price
-         whips before it recovers (a -5% stop took the average to zero) - so risk is held
-         by small size, not by a stop.
-  trend  the 12 largest coins of January 2023, each held while its daily close is 2% above
-         its 50-day EMA and sold 2% below (research/lab_exp4.py: over 2018-2026 roughly
-         the return of holding with about half the drawdown; it lost in 2025 and 2026).
-
-To promote a strategy to real money, read docs/STRATEGIES.md first. The bar is written
-there on purpose, before any result is in.
+Exit models:
+  option3  the dip strategy's: stop on everything, half sold at the target, stop to
+           break-even at 70% of the way, trailing stop on the rest (step_option3)
+  hold     buy, sell after N hours; optional far stop (step_hold) - the flush strategy
+  rule     held until a daily rule says sell (strategies.trend_scan closes it)
 """
 import time
 from datetime import datetime, timezone
@@ -45,18 +35,6 @@ import signal_checker as sc
 PAPER_SLIP = 0.0005
 STAKE_USDT = 100.0            # notional of a flush / trend paper trade: results read as % and per $100
 
-# ── flush ─────────────────────────────────────────────────────────────────────
-FLUSH_FALL_PCT    = 8.0       # coin down at least this much over 24h ...
-FLUSH_OI_DROP_PCT = 15.0      # ... while its futures open interest, in coins, fell at least this much
-FLUSH_HOLD_HOURS  = 48        # then hold this long and sell, whatever the price
-FLUSH_COOLDOWN_H  = 72        # one flush trade per coin per this many hours
-FLUSH_MAX_OPEN    = 4         # a market-wide flush hits every coin at once; this caps the pile-up
-FLUSH_OI_LOOKUPS  = 10        # open-interest lookups per scan (OKX allows 5 per 2s on that endpoint)
-
-# ── trend ─────────────────────────────────────────────────────────────────────
-TREND_COINS = ['BTC', 'ETH', 'BNB', 'XRP', 'ADA', 'DOGE', 'SOL', 'LTC', 'TRX', 'DOT', 'AVAX', 'LINK']
-TREND_EMA   = 50
-TREND_BAND  = 0.02
 
 _OPEN = None                  # open paper trades, loaded once per process and kept current in memory
 
@@ -312,136 +290,6 @@ def monitor(cache):
             print(f'  [Paper] monitor error on {t.get("symbol")}: {e}')
 
 
-# ── flush ─────────────────────────────────────────────────────────────────────
-def oi_change_24h(coin, price_chg_pct):
-    """
-    24h change of a coin's futures open interest on OKX, in COINS, as a percentage.
-    OKX reports it in dollars (all contracts on that coin, hourly); dollars fall with the
-    price even when nobody closed a contract, so the price move is divided back out.
-    None when OKX has no data for the coin.
-    """
-    r = requests.get(f'{sc.OKX_BASE}/api/v5/rubik/stat/contracts/open-interest-volume?ccy={coin}&period=1H', timeout=10)
-    r.raise_for_status()
-    rows = r.json().get('data') or []
-    if len(rows) < 25:
-        return None
-    now_usd, then_usd = float(rows[0][1]), float(rows[24][1])
-    if now_usd <= 0 or then_usd <= 0:
-        return None
-    return ((now_usd / then_usd) / (1 + price_chg_pct / 100) - 1) * 100
-
-
-def flush_scan(tickers, cache):
-    """
-    `tickers`: instId -> {'last', 'open24h', 'vol'} for every OKX spot pair (one call the
-    scan already makes). Only coins already down FLUSH_FALL_PCT are looked up for open
-    interest, and each at most once per hour, since that figure only changes hourly.
-    """
-    if sc.STRATEGY_MODE.get('flush', 'off') == 'off' or not tickers or not _on():
-        return
-    now = time.time()
-    mem = cache.setdefault('_flush', {})
-    held = open_trades('flush')
-    open_syms = {t['symbol'] for t in held}
-    fallers = []
-    for sym in sc.SYMBOLS:
-        t = tickers.get(sym)
-        if not t or not t.get('open24h') or t.get('vol', 0) < sc.MIN_OKX_VOL_24H_USDT:
-            continue
-        chg = (t['last'] / t['open24h'] - 1) * 100
-        if chg <= -FLUSH_FALL_PCT:
-            fallers.append((chg, sym, t['last']))
-    lookups = 0
-    hour = int(now // 3600)
-    for chg, sym, last in sorted(fallers):                       # hardest hit first
-        if len(open_syms) >= FLUSH_MAX_OPEN or lookups >= FLUSH_OI_LOOKUPS:
-            break
-        m = mem.setdefault(sym, {})
-        if sym in open_syms or now - m.get('opened', 0) < FLUSH_COOLDOWN_H * 3600 or m.get('hour') == hour:
-            continue
-        m['hour'] = hour
-        lookups += 1
-        try:
-            oi = oi_change_24h(sym.replace('-USDT', ''), chg)
-        except Exception as e:
-            print(f'  [Flush] {sym}: open-interest lookup failed: {e}')
-            continue
-        time.sleep(0.45)
-        if oi is None:
-            print(f'  [Flush] {sym}: {chg:+.1f}% in 24h, no open-interest data')
-            continue
-        print(f'  [Flush] {sym}: {chg:+.1f}% in 24h, open interest {oi:+.1f}% '
-              f'({"FLUSH" if oi <= -FLUSH_OI_DROP_PCT else "not a flush"})')
-        if oi > -FLUSH_OI_DROP_PCT:
-            continue
-        ctx = {'chg_24h': round(chg, 2), 'oi_chg_24h': round(oi, 2),
-               'fallers': len(fallers), 'btc_chg_24h': _chg(tickers.get('BTC-USDT'))}
-        saved = open_trade('flush', sym, last, STAKE_USDT, 'hold', {'hold_hours': FLUSH_HOLD_HOURS}, ctx,
-                           plan=f'📉 {chg:+.1f}% in 24h with open interest {oi:+.1f}% (forced selling)\n'
-                                f'⏱ Plan: hold {FLUSH_HOLD_HOURS}h, then sell. No stop.')
-        if saved:
-            m['opened'] = now
-            open_syms.add(sym)
-
-
-def _chg(t):
-    return round((t['last'] / t['open24h'] - 1) * 100, 2) if t and t.get('open24h') else None
-
-
-# ── trend ─────────────────────────────────────────────────────────────────────
-def trend_scan(cache):
-    """Once per UTC day, a few minutes after the daily candle closes: for each coin, in
-    above the upper band, out below the lower one. Decided on FINISHED daily candles."""
-    if sc.STRATEGY_MODE.get('trend', 'off') == 'off' or not _on():
-        return
-    now = datetime.now(timezone.utc)
-    if now.hour == 0 and now.minute < 5:
-        return
-    day = now.strftime('%Y-%m-%d')
-    mem = cache.setdefault('_trend', {})
-    if mem.get('day') == day:
-        return
-    held = {t['symbol']: t for t in open_trades('trend')}
-    done = True
-    bought, sold = [], []        # reported in ONE message: the first run can open several at once
-    for coin in TREND_COINS:
-        sym = f'{coin}-USDT'
-        try:
-            c = sc.fetch_candles(sym, bar='1Dutc', limit=299)
-            if not c or len(c['closes']) < 150:
-                continue
-            px, ema = c['closes'][-1], sc.ema_array(c['closes'], TREND_EMA)[-1]
-            gap = (px / ema - 1) * 100
-            if sym not in held and px > ema * (1 + TREND_BAND):
-                tk = sc.fetch_ticker(sym)
-                if open_trade('trend', sym, tk['price'] if tk else px, STAKE_USDT, 'rule',
-                              {'ema': TREND_EMA, 'band': TREND_BAND}, {'gap_pct': round(gap, 2)}, notify=False):
-                    bought.append(f'{coin} ({gap:+.1f}% vs its {TREND_EMA}-day average)')
-            elif sym in held and px < ema * (1 - TREND_BAND):
-                t = held[sym]
-                tk = sc.fetch_ticker(sym)
-                out_px = tk['price'] if tk else px
-                entry = float(t['entry_price'])
-                frac = _net(entry, out_px)
-                if close_trade(t, {'reason': 'rule', 'price': out_px, 'frac': frac,
-                                   'ts': time.time() * 1000}, dict(t.get('state') or {}), notify=False):
-                    sold.append(f'{coin} {frac * 100:+.2f}%')
-            time.sleep(0.2)
-        except Exception as e:
-            done = False                               # try this coin again on the next run today
-            print(f'  [Trend] {sym}: {e}')
-    if bought or sold:
-        sc.send_telegram(
-            '📝 <b>PAPER — trend strategy, daily check</b>\n'
-            + (f"📈 Bought: {', '.join(bought)}\n" if bought else '')
-            + (f"📉 Sold (trend ended): {', '.join(sold)}\n" if sold else '')
-            + f'Holding {len(open_trades("trend"))} of {len(TREND_COINS)}. '
-              '<i>Simulated. No real money is in these trades.</i>')
-    if done:
-        mem['day'] = day
-        print(f'  [Trend] daily check done ({len(open_trades("trend"))} held)')
-
-
 # ── Scoreboard ────────────────────────────────────────────────────────────────
 def scoreboard():
     """{strategy: {n, wins, avg_pct, pf, open}} over all closed paper trades."""
@@ -458,21 +306,3 @@ def scoreboard():
         s['avg_pct'] = s['sum'] / s['n'] if s['n'] else 0.0
         s['pf'] = s['gw'] / s['gl'] if s['gl'] > 0 else None
     return out
-
-
-def digest_lines():
-    """Lines for the daily Telegram report: one per strategy that has paper activity."""
-    try:
-        sb = scoreboard()
-    except Exception:
-        return []
-    lines = []
-    for name in sorted(sb):
-        s = sb[name]
-        if s['n']:
-            pf = f", PF {s['pf']:.2f}" if s['pf'] is not None else ''
-            lines.append(f"📝 {name}: {s['n']} paper trades, {s['wins']} won, "
-                         f"{s['avg_pct']:+.2f}% average{pf}" + (f", {s['open']} open" if s['open'] else ''))
-        elif s['open']:
-            lines.append(f"📝 {name}: {s['open']} paper trade(s) open, none closed yet")
-    return lines

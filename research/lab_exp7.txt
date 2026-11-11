@@ -1,0 +1,30 @@
+
+=== 2024-2026 (used to choose the rule): 30 coins, 205 trades over 33 months (6.2 a month, on 83 different days = 2.5 trading days a month)
+  stop  none: avg +3.70%  median +3.09%  win  62%  PF 2.77  worst  -19.7%  stopped out   0
+  stop  -50%: avg +3.30%  median +2.80%  win  61%  PF 2.41  worst  -50.2%  stopped out   1
+  stop  -40%: avg +3.35%  median +2.80%  win  61%  PF 2.47  worst  -40.2%  stopped out   1
+  stop  -30%: avg +3.20%  median +2.80%  win  61%  PF 2.31  worst  -30.2%  stopped out   3
+  stop  -25%: avg +2.33%  median +2.70%  win  60%  PF 1.71  worst  -25.2%  stopped out  13
+  stop  -20%: avg +1.86%  median +2.70%  win  59%  PF 1.50  worst  -20.2%  stopped out  23
+  stop  -15%: avg +1.35%  median +2.26%  win  56%  PF 1.34  worst  -15.2%  stopped out  39
+  deepest point reached while held (no stop): <= 10%: 76  <= 15%: 39  <= 20%: 24  <= 25%: 13  <= 30%: 3  <= 40%: 1
+  most positions open at once: 28; busiest day: 19 signals (2025-10-10)
+  cap 2 open (stop -30%): 92 trades, avg +1.08%, total +99% of one stake, 2.8 a month
+  cap 3 open (stop -30%): 109 trades, avg +1.24%, total +135% of one stake, 3.3 a month
+  cap 4 open (stop -30%): 119 trades, avg +1.91%, total +227% of one stake, 3.6 a month
+  cap 6 open (stop -30%): 137 trades, avg +2.33%, total +319% of one stake, 4.2 a month
+
+=== 2022-2023 (not used): 27 coins, 201 trades over 23 months (8.9 a month, on 116 different days = 5.1 trading days a month)
+  stop  none: avg +1.15%  median +0.73%  win  55%  PF 1.41  worst  -33.2%  stopped out   0
+  stop  -50%: avg +1.15%  median +0.73%  win  55%  PF 1.41  worst  -33.2%  stopped out   0
+  stop  -40%: avg +1.04%  median +0.73%  win  55%  PF 1.36  worst  -40.2%  stopped out   1
+  stop  -30%: avg +0.98%  median +0.73%  win  55%  PF 1.33  worst  -30.2%  stopped out   7
+  stop  -25%: avg +1.11%  median +0.73%  win  55%  PF 1.39  worst  -25.2%  stopped out   8
+  stop  -20%: avg +0.80%  median +0.48%  win  54%  PF 1.26  worst  -20.2%  stopped out  13
+  stop  -15%: avg +0.93%  median +0.48%  win  54%  PF 1.32  worst  -15.2%  stopped out  19
+  deepest point reached while held (no stop): <= 10%: 31  <= 15%: 19  <= 20%: 13  <= 25%: 8  <= 30%: 7  <= 40%: 1
+  most positions open at once: 15; busiest day: 15 signals (2023-06-10)
+  cap 2 open (stop -30%): 133 trades, avg +0.84%, total +111% of one stake, 5.9 a month
+  cap 3 open (stop -30%): 159 trades, avg +0.99%, total +158% of one stake, 7.1 a month
+  cap 4 open (stop -30%): 171 trades, avg +1.05%, total +179% of one stake, 7.6 a month
+  cap 6 open (stop -30%): 182 trades, avg +0.94%, total +172% of one stake, 8.1 a month

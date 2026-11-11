@@ -1922,7 +1922,7 @@ async function loadPerfData(force = false) {
     const url = `${getSupabaseCfg().url}/rest/v1/option3_trades` +
       `?phase=eq.3&exit_reason=not.is.null&net_pnl_usdt=not.is.null` +
       `&order=closed_at.asc&limit=1000` +
-      `&select=symbol,exit_reason,net_pnl_usdt,amount_usdt,closed_at`;
+      `&select=symbol,exit_reason,net_pnl_usdt,amount_usdt,closed_at,strategy`;
     const res = await fetch(url, { headers: sbHeaders() });
     if (!res.ok) throw new Error(`Supabase ${res.status}`);
     state.perfRows = await res.json();
@@ -2091,18 +2091,25 @@ function renderPerf() {
   let run = 0, peak = 0, maxDD = 0;
   for (const p of pnls) { run += p; peak = Math.max(peak, run); maxDD = Math.max(maxDD, peak - run); }
 
-  const byCoin = {}, byExit = {};
+  const byCoin = {}, byExit = {}, byStrat = {};
   for (const t of rows) {
     const c = t.symbol.replace('-USDT', '');
     if (!byCoin[c]) byCoin[c] = { pnl: 0, n: 0 };
     byCoin[c].pnl += +t.net_pnl_usdt || 0;
     byCoin[c].n += 1;
     byExit[t.exit_reason] = (byExit[t.exit_reason] || 0) + 1;
+    const st = t.strategy || 'dip';
+    if (!byStrat[st]) byStrat[st] = { pnl: 0, n: 0, pct: 0 };
+    byStrat[st].pnl += +t.net_pnl_usdt || 0;
+    byStrat[st].n += 1;
+    byStrat[st].pct += +t.amount_usdt > 0 ? (+t.net_pnl_usdt || 0) / +t.amount_usdt * 100 : 0;
   }
+  const stratNames = { dip: 'Dip buy', flush: 'Crash rebound', trend: 'Trend (majors)' };
   const exitLabels = {
     tp_trail: '🏁 TP + trailing', sl: '🔴 Stop loss', break_even: '⚪ Break-even',
     be_stop: '🛡️ Break-even stop',
     tp_then_sl: '🔄 Fast reversal', cancelled: '✖ Cancelled', error: '⚠ Error',
+    time: '⏱ Sold after its hold time', rule: '📉 Trend ended', stop: '🛑 Protective stop (−30%)',
   };
 
   body.innerHTML = `
@@ -2131,6 +2138,15 @@ function renderPerf() {
         <span class="ps-value ${maxDD > 0 ? 'neg' : ''}">${maxDD > 0 ? '−$' + maxDD.toFixed(2) : '$0.00'}</span></div>
     </div>
     ${equityCurveSvg(pnls)}
+    ${Object.keys(byStrat).length > 1 ? `
+    <table class="data-table perf-table" style="margin-bottom:12px">
+      <thead><tr><th>Strategy</th><th class="num">Trades</th><th class="num">Average per trade</th><th class="num">Net P&amp;L</th></tr></thead>
+      <tbody>${Object.entries(byStrat).sort((a, b) => b[1].n - a[1].n).map(([k, v]) =>
+        `<tr><td>${escHtml(stratNames[k] || k)}</td><td class="num">${v.n}</td>
+         <td class="num ${v.pct >= 0 ? 'pos' : 'neg'}">${v.pct / v.n >= 0 ? '+' : '−'}${Math.abs(v.pct / v.n).toFixed(2)}%</td>
+         <td class="num ${v.pnl >= 0 ? 'pos' : 'neg'}">${fmtSigned(v.pnl)}</td></tr>`).join('')}
+      </tbody>
+    </table>` : ''}
     <div class="perf-tables">
       <table class="data-table perf-table">
         <thead><tr><th>Coin</th><th class="num">Trades</th><th class="num">Net P&amp;L</th></tr></thead>

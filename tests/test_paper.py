@@ -15,6 +15,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, 'research'))
 import signal_checker as sc
 import paper
+import strategies
 import replay
 
 N = 0
@@ -226,51 +227,54 @@ tickers = {'AAA-USDT': tick(90, 100), 'BBB-USDT': tick(90, 100), 'CCC-USDT': tic
            'DDD-USDT': {'last': 80, 'open24h': 100, 'vol': 1e5}, 'BTC-USDT': tick(95, 100)}
 rows = lambda now, then: [[str(i), str(now if i == 0 else then), '0'] for i in range(30)]
 W.oi = {'AAA': rows(72, 100), 'BBB': rows(88, 100), 'CCC': rows(50, 100), 'DDD': rows(50, 100)}
-ok(abs(paper.oi_change_24h('AAA', -10.0) + 20.0) < 1e-9,
+ok(abs(strategies.oi_change_24h('AAA', -10.0) + 20.0) < 1e-9,
    'open interest -28% in dollars with price -10% = -20% in coins')
+sc.STRATEGY_MODE = {'dip': 'paper', 'flush': 'paper', 'trend': 'paper'}     # paper by hand: no real orders here
+strategies._CACHE['at'] = 0
 W.db['paper_trades'] = []; paper._OPEN = None; W.telegram.clear(); W.calls.clear()
 cache = {}
 with quiet():
-    paper.flush_scan(tickers, cache)
+    strategies.flush_scan(tickers, cache)
 opened_syms = [r['symbol'] for r in W.db['paper_trades']]
 ok(opened_syms == ['AAA-USDT'], f'only the coin with fall >= 8% AND open interest <= -15% is bought: {opened_syms}')
 r0 = W.db['paper_trades'][0]
-ok(r0['kind'] == 'hold' and r0['params'] == {'hold_hours': paper.FLUSH_HOLD_HOURS} and r0['strategy'] == 'flush'
-   and abs(r0['entry_price'] - 90 * (1 + paper.PAPER_SLIP)) < 1e-9, 'as a 48h hold, entered at the price plus slippage')
+ok(r0['kind'] == 'hold' and r0['params'] == {'hold_hours': strategies.FLUSH_HOLD_HOURS, 'stop_pct': sc.DISASTER_STOP_PCT}
+   and r0['strategy'] == 'flush' and abs(r0['entry_price'] - 90 * (1 + paper.PAPER_SLIP)) < 1e-9,
+   'as a 48h hold with the same -30% protective stop a real trade has, entered at the price plus slippage')
 ok(sum('open-interest-volume' in u for _, u in W.calls) == 2,
    'open interest is looked up only for liquid coins already down 8% (2 of 4)')
 W.calls.clear()
 with quiet():
-    paper.flush_scan(tickers, cache)
+    strategies.flush_scan(tickers, cache)
 ok(len(W.db['paper_trades']) == 1 and not any('open-interest-volume' in u for _, u in W.calls),
    'same hour, same coins: no second lookup, no second trade')
 
 # ── 5. trend: in above the band, out below it, once a day ─────────────────────
-class _Noon(paper.datetime):                    # the scan waits out the first 5 minutes of the UTC day;
+class _Noon(strategies.datetime):               # the scan waits out the first 5 minutes of the UTC day;
     @classmethod                                # pin the clock so this test passes at midnight too
     def now(cls, tz=None):
         return cls(2026, 11, 10, 12, 0, tzinfo=tz)
 
 
-paper.datetime = _Noon
+strategies.datetime = _Noon
 series = {}
 sc.fetch_candles = lambda sym, bar='1H', limit=100: {'closes': series[sym]}
 sc.fetch_ticker = lambda sym: {'price': series[sym][-1], 'change_pct': 0.0}
-paper.TREND_COINS = ['BTC', 'ETH']
+strategies.TREND_COINS = ['BTC', 'ETH']
 series['BTC-USDT'] = [100.0] * 200 + [110.0]          # 10% above its average
 series['ETH-USDT'] = [100.0] * 200 + [100.5]          # inside the band
 W.db['paper_trades'] = []; paper._OPEN = None; W.telegram.clear()
 cache = {}
 with quiet():
-    paper.trend_scan(cache); paper.trend_scan(cache)
+    strategies.trend_scan(cache); strategies.trend_scan(cache)
 ok([r['symbol'] for r in W.db['paper_trades']] == ['BTC-USDT'] and cache['_trend']['day'],
    'trend buys the coin that closed 2% above its 50-day average, once per day')
-ok(len(W.telegram) == 1 and 'Bought: BTC' in W.telegram[0] and 'Holding 1 of 2' in W.telegram[0]
-   and 'No real money' in W.telegram[0], 'and reports the whole daily check in ONE message')
+ok(len(W.telegram) == 1 and 'Bought: BTC' in W.telegram[0] and '(REAL)' not in W.telegram[0]
+   and 'Holding 1 of 2' in W.telegram[0] and 'no real money' in W.telegram[0], 'and reports the whole daily check in ONE message')
 series['BTC-USDT'] = [100.0] * 200 + [110.0] * 60 + [95.0]
 cache['_trend']['day'] = 'yesterday'
 with quiet():
-    paper.trend_scan(cache)
+    strategies.trend_scan(cache)
 ok(W.db['paper_trades'][0]['exit_reason'] == 'rule' and W.db['paper_trades'][0]['net_pct'] < 0
    and 'Sold (trend ended): BTC' in W.telegram[-1], 'and sells it after a daily close 2% below')
 
@@ -292,12 +296,14 @@ placed = []
 sc.place_option3_trade = lambda *a, **k: placed.append(a) or {'amount_usdt': 120, 'tp_pct': 2.5, 'sl_pct': 3.0, 'trail_pct': 1.2, 'saved': True}
 sc.CLAUDE_API_KEY, sc.OKX_API_KEY = 'k', ''
 sc.time.sleep = lambda s: None
-paper.flush_scan = lambda *a, **k: None
-paper.trend_scan = lambda *a, **k: None
+strategies.flush_scan = lambda *a, **k: None
+strategies.trend_scan = lambda *a, **k: None
 
 
-def scan(mode, regime_ok=True):
+def scan(mode, regime_ok=True, start='paper'):
     sc.STRATEGY_MODE = {'dip': mode, 'flush': 'off', 'trend': 'off'}
+    sc.STRATEGY_START = {'dip': start, 'flush': 'trial', 'trend': 'paper'}
+    strategies._CACHE.update(at=0, levels={})
     sc.btc_regime_ok = lambda: (regime_ok, 'BTC ok' if regime_ok else 'BTC bearish')
     W.db['paper_trades'] = []; W.db['skipped_setups'] = []; paper._OPEN = None; placed.clear(); W.telegram.clear()
     cache = {'AAA-USDT': {'alerted_zone': 'neutral', 'alerted_at': 0}}
@@ -331,6 +337,17 @@ sc._fetch_usdt_balance = lambda: 300.0
 sc._loss_30d = lambda: 0.0
 cache, log = scan('live')
 ok(len(placed) == 1 and not W.db['paper_trades'], 'dip on LIVE: the same decision goes to place_option3_trade')
+ok(placed[0][1]['amount_usdt'] == 120.0, "set live by hand: the AI's own size, no trial cap")
+cache, log = scan('auto', start='trial')
+ok(len(placed) == 1 and placed[0][1]['amount_usdt'] == strategies.TRIAL_STAKE_USDT and 'trial size' in log,
+   f'dip on the ladder at TRIAL: real order, the $120 the AI asked for capped at ${strategies.TRIAL_STAKE_USDT:g}')
+cache, log = scan('auto', start='paper')
+ok(not placed and len(W.db['paper_trades']) == 1, 'dip on the ladder at PAPER (no record yet): paper trade, no order')
+sc._fetch_option3_trades = lambda: [{'symbol': 'AAA-USDT', 'strategy': 'flush', 'amount_usdt': 20.0, 'phase': 1}]
+cache, log = scan('live')
+ok(len(placed) == 1 and placed[0][0] == 'BBB-USDT',
+   'a coin held by a real flush trade is not bought again by the dip strategy (it takes the next coin)')
+sc._fetch_option3_trades = lambda: []
 sc._loss_30d = lambda: -25.0
 cache, log = scan('live')
 ok(not placed and sorted(r['gate'] for r in W.db['skipped_setups']) == ['loss_limit', 'loss_limit']

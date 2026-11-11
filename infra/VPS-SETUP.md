@@ -166,13 +166,15 @@ cd C:\OKXAI; .venv\Scripts\python.exe db_check.py
 The worker section should list `read / open / close paper trades` and `read / write status
 row` as PASS, and the public-key section should end `locked down`. In the log, a healthy
 run now shows `[Paper] dip strategy is on PAPER — no orders will be sent`, a `[Regime]`
-line on every scan, and `[Flush]` / `[Trend]` lines when those strategies look at a coin.
+line on every scan, `[Flush]` / `[Trend]` lines when those strategies look at a coin, and
+`[Simple] Monitoring N open position(s)` while a real crash-rebound or trend trade is open.
 
-To put the dip strategy back on real money, edit one line in `C:\OKXAI\signal_checker.py`
-(`'dip':   'paper',` → `'dip':   'live',`) and restart the task. Read
-`docs/STRATEGIES.md` first. A later `git pull` will not undo that edit silently: it stops
-and says the file differs from the repository, and the change has to be made in the
-repository itself to stick.
+Since 2026-11-11 the strategies move between paper and real money by themselves (the
+ladder in `strategies.py`; every move is announced on Telegram). To override one by hand,
+edit `STRATEGY_MODE` in `C:\OKXAI\signal_checker.py` (`'auto'` → `'paper'`, `'off'` or
+`'live'`) and restart the task. Read `docs/STRATEGIES.md` first. A later `git pull` will
+not undo that edit silently: it stops and says the file differs from the repository, and
+the change has to be made in the repository itself to stick.
 
 **Going back to GitHub Actions** is no longer a toggle - the workflow file was
 deleted. Recover it with

@@ -4,29 +4,65 @@ Written 2026-11-10, after an audit that asked one question of every rule in this
 **does it make money after fees, measured on data that was not used to design it?**
 
 The short answer: the original strategy does not, nothing at its timeframe does, and two
-candidates that might are now being tested without money. This file is the record of
-that, and the rulebook for what happens next.
+candidates that might are now being tested. This file is the record of that, and the
+rulebook for what happens next.
 
-## 1. Modes
+## 1. The ladder (since 2026-11-11)
 
-`STRATEGY_MODE` in `signal_checker.py` gives every strategy one of three modes:
+Every strategy stands on one rung, recomputed from its own record every few minutes
+(`strategies.py`):
 
-| Mode | What it does |
+| Rung | What it does |
 |---|---|
-| `live` | Places real orders on OKX. Implemented for `dip` only. |
-| `paper` | The same signals, gates, AI call, exits, fees and Telegram messages (marked PAPER) — but **no order is sent**. Fills are simulated minute by minute against real OKX candles and stored in the `paper_trades` table. |
-| `off` | Not evaluated. |
+| `paper` | Same signals, gates, AI call, exits, fees and Telegram messages (marked PAPER) — but **no order is sent**. Fills are simulated minute by minute against real OKX candles (`paper_trades`). |
+| `trial` | **Real money, $20 a trade.** |
+| `full` | Real money at full size: 10% of the account a trade (crash rebound), 8% (trend), the AI's own sizing under the risk limits (dip). |
 
-```python
-STRATEGY_MODE = {
-    'dip':   'paper',
-    'flush': 'paper',
-    'trend': 'paper',
-}
-```
+How a strategy moves, with nobody touching anything:
 
-Real money lives in `option3_trades` and nowhere else. `paper.py` never calls an OKX
-private endpoint; `tests/test_paper.py` fails if it ever does.
+| Move | When |
+|---|---|
+| paper → trial | its record passes the bar (section 4) |
+| trial → full | it still passes, with at least 10 real trades in that record |
+| any → paper | it has lost money on average over 30+ trades, **or** its real trades lost more than 5% of the account in 30 days |
+
+The record is every closed trade of that strategy **since 2026-11-10**, real and paper
+together (same rule, same exits, same costs). Every move is announced on Telegram, and the
+first run after an update sends the whole line-up.
+
+**Starting rungs (owner's choice, 2026-11-11):** crash rebound starts on a **trial** —
+real money now. Dip and trend start on paper and must earn their way up.
+
+`STRATEGY_MODE` in `signal_checker.py` can override any strategy by hand: `'auto'` (the
+ladder, the default), `'paper'`, `'off'`, or `'live'` (full size, no automatic demotion —
+the owner's responsibility). `STRATEGY_START` sets where an `'auto'` strategy starts.
+
+Real money lives in `option3_trades` and nowhere else; `paper.py` never calls an OKX
+private endpoint and `tests/test_paper.py` fails if it ever does. Crash-rebound and trend
+positions share that table with the dip strategy's (`strategy` column), so the dashboard's
+live record and the monthly loss limit see every real trade.
+
+### How a real crash-rebound or trend trade works
+
+1. Market buy for the stake (in USDT). The coins received are read back from OKX (the fee
+   is taken in coins).
+2. **A protective stop on OKX for every coin, 30% below entry**, live 24/7 whether or not
+   the bot is running. If OKX refuses it, the coins are sold straight back. If the trade
+   cannot be saved to the database, it is undone too — nobody would ever sell it.
+3. The bot exits by itself: crash rebound after 48 hours, trend when the daily rule says
+   so. It marks the row before cancelling the stop, so a crash between cancel and sale is
+   finished on the next pass. If the sale is refused, the stop goes straight back on.
+4. The result is exact: what the sale brought in after its fee, minus what the buy cost.
+
+Why −30%: it must exist (a hack or a delisting can take a coin down 60% in an hour), but a
+close stop ruins this trade — after a crash the price whips around before it recovers. In
+testing, −15% cut the average from +3.7% to +1.4% a trade; −30% fired on 3 of 205 trades
+(2024–26) and 7 of 201 (2022–23) and cost almost nothing (`research/lab_exp7.txt`). The risk
+is held by size: at $20, the worst the stop allows is about $6.
+
+Tested against a simulated OKX that refuses what the real one refuses
+(`tests/test_live_simple.py`, 27 checks): every failure above, the owner's own coins never
+sold, and the recorded P&L equal to the account's real balance change.
 
 ## 2. The three strategies and their evidence
 
@@ -57,11 +93,13 @@ in every window tested. The rule underneath it is what does not pay.
 On paper the strategy keeps running exactly as before — including the AI's decisions —
 so if it ever does show an edge, there will finally be evidence of it.
 
-### `flush` — liquidation-flush rebound → PAPER (new)
+### `flush` — crash rebound (liquidation flush) → REAL MONEY, $20 trial, since 2026-11-11
 
 **Rule:** a coin is down 8%+ over 24h **and** its futures open interest, counted in coins,
-fell 15%+ over the same 24h → buy; sell 48 hours later, whatever the price. No stop, no
-target. One trade per coin per 72h, at most 4 open.
+fell 15%+ over the same 24h → buy; sell 48 hours later, whatever the price. No target;
+a protective stop 30% below entry only for disasters. One trade per coin per 72h. At most
+4 real positions at once; signals beyond that are paper-traded, so none is wasted as
+evidence. Fires about 6–9 times a month, on 2–5 different days (`lab_exp7.txt`).
 
 **Why it might work:** a fall that comes with collapsing open interest is forced selling —
 leveraged longs being liquidated — and forced selling ends. A fall where open interest
@@ -79,7 +117,8 @@ holds or grows is sellers adding, which need not end.
 On the data used to find it the effect is large and grows steadily with the size of the
 collapse — the shape a real effect has. On the earlier, untouched data it is positive but
 small and statistically indistinguishable from zero, and the steady growth is gone. So:
-**promising, unproven.** That is exactly the case for paper trading.
+**promising, unproven.** The owner chose to test it with real money at $20 a trade rather
+than wait for paper results; the ladder takes it back to paper by itself if it loses.
 
 **What weakens it:** a stop, and a target. After a flush the price whips around before it
 recovers. On the hardest flushes (open interest down 20%+, 2024–26) the average was +5.5%
@@ -92,7 +131,7 @@ worst single trade at the 15% setting was −20% (2024–26) and −33% (2022–
 dollars converted to coins by dividing out the price move. The research used Binance's
 archive, so paper trading is also the test of whether OKX's figure behaves the same.
 
-### `trend` — daily trend on the 12 largest coins → PAPER (new)
+### `trend` — daily trend on the 12 largest coins → PAPER, until it earns a trial
 
 **Rule:** for each of BTC, ETH, BNB, XRP, ADA, DOGE, SOL, LTC, TRX, DOT, AVAX, LINK (the
 largest coins of January 2023, so the list is not picked with hindsight): buy when the
@@ -125,28 +164,31 @@ the honest basket lost 85%.
 ## 4. The bar for real money
 
 Set on 2026-11-10, before a single paper trade existed, so it cannot drift toward
-whatever the results turn out to be. The dashboard (Paper strategies tab) checks the
-first four automatically.
+whatever the results turn out to be. Since 2026-11-11 the worker applies it by itself
+(`strategies.decide`); the dashboard's Strategies tab shows each check.
 
-A paper strategy is **eligible for a small live trial** when all of these hold:
+A strategy **passes** when all of these hold over its record (real and paper trades since
+2026-11-10):
 
-1. **30 or more closed paper trades.**
+1. **30 or more closed trades.**
 2. **Average result per trade above zero**, after fees and slippage.
 3. **Profit factor 1.3 or better** (gains ÷ losses).
-4. **The average clears its margin of error**: average − 1.3 × standard error > 0
-   (roughly 9-in-10 confidence the true average is not zero or worse).
-5. **The paper results look like the backtest** — same order of size, no surprise in how
-   they were earned (not one outlier carrying the rest). A person reads the trades.
+4. **Not luck**: trades opened on the same day are first averaged into one result (a
+   market-wide crash moves every coin together, so twenty trades from one day are one
+   result, not twenty); the average of those daily results must clear 1.3 standard
+   errors (roughly 9-in-10 confidence the true average is not zero or worse).
 
-Passing is permission to *try*, not proof. The live trial then runs under the limits in
-section 5, and is judged again after 30 live trades.
+Passing moves a paper strategy to a **$20 trial**, and a trial strategy with 10+ real
+trades in its record to **full size**. It is permission to keep going, not proof.
 
-`flush` and `trend` have no live order code yet. Their exits are simpler than Option 3
-(a market buy, then a market sell on a timer or a daily rule), but the code is not
-written and must be tested against the simulated OKX in `tests/` before it touches money.
+**Demotion, also automatic:** back to paper when the record has lost money on average
+over 30+ trades, or when the strategy's real trades lost more than 5% of the account in
+the last 30 days. The account-wide monthly loss limit (section 5) stops every strategy's
+new real trades on top of that.
 
-**Demotion:** a live strategy goes back to `paper` when its 30 most recent live trades
-average below zero, or when the monthly loss limit stops it twice within 90 days.
+One check stays human: **do the results look like the backtest** — same order of size,
+earned the same way, not one outlier carrying the rest? The Strategies tab and the daily
+Telegram report are there so someone looks.
 
 ## 5. Risk limits for live trades
 
@@ -155,7 +197,11 @@ average below zero, or when the monthly loss limit stops it twice within 90 days
 | `RISK_PER_TRADE_PCT` | 1.0 | A stop-out may cost at most 1% of the whole account, so the stop distance sets the size: ~26% of the account at a 3.8% stop, ~14% at 7%. Applied on top of the 45–60% ladder; it can only shrink a position. |
 | `MAX_30D_LOSS_PCT` | 6.0 | When closed live trades of the last 30 days have lost more than 6% of the account, new live trades stop until the losses age out. Open trades are still managed. |
 | `MAX_OPEN_TRADES` | 3 | Unchanged. |
-| `MAX_SL_PER_DAY` | 3 | Unchanged (circuit breaker). |
+| `MAX_SL_PER_DAY` | 3 | Unchanged (circuit breaker, dip only). |
+| `TRIAL_STAKE_USDT` | 20 | Size of every trade on a trial rung. |
+| `LOSS_BUDGET_PCT` | 5.0 | A strategy whose real trades lost more than this share of the account in 30 days goes back to paper. |
+| `DISASTER_STOP_PCT` | 30 | The protective stop under every crash-rebound and trend position, on OKX. |
+| `LIVE_MAX_OPEN` | flush 4, trend 12 | Real positions per strategy at once. Never two real strategies in one coin. |
 
 Why the first one exists: July ran at about $12 a trade, September and October at about
 $130. The same −1.4% to −2.2% per trade that cost $2 in July cost $27 a month later.

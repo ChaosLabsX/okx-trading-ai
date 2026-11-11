@@ -30,13 +30,12 @@ The two halves share the same signal engine (identical scoring logic implemented
 >
 > The VPS is the only thing that trades. See [infra/VPS-SETUP.md](infra/VPS-SETUP.md).
 >
-> **Since 2026-11-10 no strategy trades real money.** `STRATEGY_MODE` in
-> `signal_checker.py` has every strategy on `paper`: the scan, the gates, the AI
-> advisor and the exits all run, fills are simulated on live OKX candles, and no
-> order is sent. The original dip strategy lost money over 46 live trades and over
-> 34 months of tests, so it has to earn its way back. What is being tested, on what
-> evidence, and the bar for switching anything to `live`:
-> [docs/STRATEGIES.md](docs/STRATEGIES.md). (`TEST_MODE = True` is a separate
+> **Since 2026-11-11 every strategy moves between paper and real money by itself.**
+> Each stands on a rung — paper, a $20 real-money trial, or full size — set every few
+> minutes by its own record (`strategies.py`). The **crash-rebound** strategy trades real
+> money now on a $20 trial; the original **dip** strategy (it lost money over 46 live
+> trades and 34 months of tests) and **trend** are on paper until their results earn a
+> trial. Rules, evidence and the bar: [docs/STRATEGIES.md](docs/STRATEGIES.md). (`TEST_MODE = True` is a separate
 > thing — a $5 live pipeline test, see
 > [docs/SIGNAL-CHECKER.md](docs/SIGNAL-CHECKER.md#test-mode).)
 
@@ -67,7 +66,8 @@ okx-trading-ai/  (repo root)
 ├── site.webmanifest        # PWA manifest (linked from index.html)
 ├── bot.js                  # Dashboard: status strip + paper strategies / why-no-trade / system tabs
 ├── signal_checker.py       # 24/7 background worker (signals + auto-trade + monitor + Telegram)
-├── paper.py                # paper trading: simulated fills on live candles; the flush and trend strategies
+├── strategies.py           # the strategy ladder (paper / $20 trial / full) + the crash-rebound and trend rules
+├── paper.py                # paper trading: simulated fills on live candles (never sends an order)
 ├── db_check.py             # pre-flight: the worker's database key and the public key's limits
 ├── backtest.py             # local backtesting harness — replays the worker's rules over history
 ├── ai_check.py             # pre-flight: proves the worker's AI calls work with the VPS key
@@ -98,9 +98,10 @@ okx-trading-ai/  (repo root)
 
 ## Quick "how it trades" summary
 
-*(The dip strategy, described below, is on **paper** since 2026-11-10: step 6 records a
-simulated trade instead of placing one. Two more strategies run on paper beside it —
-see [docs/STRATEGIES.md](docs/STRATEGIES.md).)*
+*(The dip strategy, described below, is on **paper** since 2026-11-10 — step 6 records a
+simulated trade instead of placing one — until its record earns a trial. The crash-rebound
+strategy trades real money on a $20 trial, and trend is on paper; see
+[docs/STRATEGIES.md](docs/STRATEGIES.md).)*
 
 1. On the VPS, a wrapper keeps `signal_checker.py` running continuously — the script scans every 60 s, self-exits after ~4 min, and is relaunched immediately, so coverage is gap-free.
 2. Each coin gets a score from RSI(1H), MACD, Bollinger %B, volume ratio, and RSI(4H), all read from **finished** candles (the one still forming is ignored). Score ≥ 4.0 → STRONG BUY (≥ 1 in test mode). Scores land on half-points, so each half-point is a whole step on the scale, not a fractional nudge.

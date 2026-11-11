@@ -1,6 +1,6 @@
 'use strict';
 // ═══════════════════════════════════════════════════════════
-//  BOT PANEL — status strip, paper strategies, "why no trade?", system
+//  BOT PANEL — status strip, strategies, "why no trade?", system
 //
 //  Everything here is read-only: three small Supabase reads with the public key.
 //    bot_status      one row the worker rewrites every ~5 minutes (alive? market? funnel)
@@ -10,14 +10,15 @@
 //  Uses el / escHtml / sbHeaders / getSupabaseCfg / fmtSigned / state from app.js.
 // ═══════════════════════════════════════════════════════════
 
-// The bar a paper strategy has to clear before it is worth a small live trial. Written
-// down in docs/STRATEGIES.md BEFORE any result existed, so it cannot drift toward
-// whatever the results turn out to be. Keep the two in step.
-const PROMO = { minTrades: 30, minPF: 1.3, seMult: 1.3 };
+// The bar a strategy has to clear to move up the ladder (paper -> $20 trial -> full size).
+// Written down in docs/STRATEGIES.md BEFORE any result existed, so it cannot drift toward
+// whatever the results turn out to be. The worker applies it (strategies.py) and reports
+// its numbers in the status row; this copy is only the fallback when that row is missing.
+const PROMO = { minTrades: 30, minPF: 1.3, seMult: 1.3, fullMinLive: 10 };
 
 const STRATEGY_INFO = {
   dip:   { name: 'Dip buy', what: 'STRONG BUY signal + 30m reversal + AI advisor. The original strategy.' },
-  flush: { name: 'Liquidation flush', what: 'Coin down 8%+ in a day while futures open interest collapses 15%+. Buy, hold 48h.' },
+  flush: { name: 'Crash rebound', what: 'Coin down 8%+ in a day while futures open interest collapses 15%+ (forced selling). Buy, hold 48h, protective stop −30%.' },
   trend: { name: 'Trend (majors)', what: 'The 12 largest coins, each held while 2% above its 50-day average.' },
 };
 
@@ -63,6 +64,35 @@ function paperStats(rows) {
 }
 
 function fmtPct(v, digits = 2) { return `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(digits)}%`; }
+
+// One strategy as the worker's ladder sees it (status row -> ladder.strategies[name]):
+// the four checks, a verdict, and what would move it up or down from here.
+function ladderView(s, level, bar = {}, stake = null) {
+  const minT = bar.min_trades ?? PROMO.minTrades, minPF = bar.min_pf ?? PROMO.minPF;
+  const k = bar.se_mult ?? PROMO.seMult, fullLive = bar.full_min_live ?? PROMO.fullMinLive;
+  const pf = s.pf === null || s.pf === undefined ? null : (s.pf >= 999 ? Infinity : s.pf);
+  const checks = [
+    { ok: s.n >= minT, text: `${minT}+ closed trades (has ${s.n}${s.n ? `: ${s.n_live} real, ${s.n_paper} paper` : ''})` },
+    { ok: s.n > 0 && s.mean > 0, text: `average result above zero (${s.n ? fmtPct(s.mean) : 'n/a'})` },
+    { ok: pf !== null && pf >= minPF, text: `profit factor ${minPF}+ (${pf === null ? 'n/a' : pf === Infinity ? 'no losses' : pf.toFixed(2)})` },
+    { ok: s.se !== null && s.se !== undefined && s.day_mean - k * s.se > 0,
+      text: `not luck: the daily average clears its margin of error${s.days ? ` (${s.days} trading day${s.days === 1 ? '' : 's'})` : ''}` },
+  ];
+  const passes = checks.every(c => c.ok);
+  const live = level === 'trial' || level === 'full';
+  let cls, verdict;
+  if (level === 'full') { cls = 'good'; verdict = 'Proven — trading real money at full size'; }
+  else if (level === 'trial') { cls = 'good'; verdict = `Trading real money on a trial: $${stake ?? 20} a trade`; }
+  else if (level === 'off') { cls = ''; verdict = 'Switched off'; }
+  else if (s.n >= minT && s.mean <= 0) { cls = 'bad'; verdict = 'Paper — it lost money on average'; }
+  else { cls = 'warn'; verdict = 'Paper — not enough evidence yet'; }
+  const next = level === 'paper' ? 'Moves to a $20 real-money trial by itself once all four checks pass.'
+    : level === 'trial' ? `Moves to full size once all four checks pass with ${fullLive}+ real trades in its record (has ${s.n_live}). `
+      + 'Back to paper if it loses on average over 30 trades, or its real trades lose more than 5% of the account in 30 days.'
+    : level === 'full' ? 'Back to paper if it starts losing on average, or loses more than 5% of the account in 30 days.'
+    : '';
+  return { checks, passes, live, cls, verdict, next };
+}
 
 function funnelTotals(funnel, days = 14, todayIso = new Date().toISOString().slice(0, 10)) {
   const keys = Object.keys(funnel || {}).sort().filter(d => d <= todayIso).slice(-days);
@@ -117,7 +147,7 @@ function statusHealth(updatedAt, now = Date.now()) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { paperStats, funnelTotals, gateScore, ageText, statusHealth, fmtPct, PROMO };
+  module.exports = { paperStats, funnelTotals, gateScore, ageText, statusHealth, fmtPct, ladderView, PROMO };
 }
 
 // ── data ──────────────────────────────────────────────────────────────────────
@@ -177,24 +207,33 @@ function renderBotStrip() {
     chips.push(`<span class="bot-chip ${d.regime.ok ? 'good' : 'warn'}" title="${escHtml(d.regime.msg)}">` +
       `${d.regime.ok ? 'Market OK for dip buys' : 'BTC downtrend — dip buys blocked'}</span>`);
   }
-  for (const [k, mode] of Object.entries(d.modes || {})) {
+  // Each strategy's rung on the ladder (worker's status row); older rows only have modes.
+  const lad = (d.ladder || {}).strategies || null;
+  const rungs = lad ? Object.fromEntries(Object.entries(lad).map(([k, v]) => [k, { level: v.level, stake: v.stake }]))
+                    : Object.fromEntries(Object.entries(d.modes || {}).map(([k, m]) => [k, { level: m === 'live' ? 'full' : m }]));
+  for (const [k, r] of Object.entries(rungs)) {
     const info = STRATEGY_INFO[k] || { name: k };
-    chips.push(`<span class="bot-chip mode-${escHtml(mode)}" title="${escHtml(info.what || '')}">` +
-      `${escHtml(info.name)}: ${mode === 'live' ? 'LIVE' : mode === 'paper' ? 'paper' : 'off'}</span>`);
+    const txt = r.level === 'trial' ? `REAL · trial $${r.stake ?? 20}` : r.level === 'full' ? 'REAL · full size'
+      : r.level === 'paper' ? 'paper' : 'off';
+    const cls = r.level === 'trial' || r.level === 'full' ? 'live' : r.level;
+    chips.push(`<span class="bot-chip mode-${escHtml(cls)}" title="${escHtml(info.what || '')}">` +
+      `${escHtml(info.name)}: ${txt}</span>`);
   }
   if (d.test_mode) chips.push('<span class="bot-chip bad">TEST MODE</span>');
   box.innerHTML = chips.join('');
 
   const note = el('liveModeNote');
   if (note) {
-    const live = Object.entries(d.modes || {}).filter(([, m]) => m === 'live').map(([k]) => (STRATEGY_INFO[k] || { name: k }).name);
-    note.style.display = d.modes ? '' : 'none';
+    const live = Object.entries(rungs).filter(([, r]) => r.level === 'trial' || r.level === 'full')
+      .map(([k, r]) => `${(STRATEGY_INFO[k] || { name: k }).name} (${r.level === 'trial' ? `trial, $${r.stake ?? 20} a trade` : 'full size'})`);
+    note.style.display = Object.keys(rungs).length ? '' : 'none';
     note.className = `bot-note ${live.length ? 'good' : 'warn'}`;
-    note.innerHTML = live.length
-      ? `Trading real money: <strong>${escHtml(live.join(', '))}</strong>.`
-      : '<strong>No strategy is trading real money right now.</strong> The dip strategy lost money over 46 live trades ' +
-        'and over three years of tests, so it now runs on paper (same signals, same exits, no orders). ' +
-        'This panel shows the real trades made before that. See the <a href="#" data-goto="paper">Paper strategies</a> tab for what is being tested.';
+    note.innerHTML = (live.length
+      ? `Trading real money now: <strong>${escHtml(live.join(', '))}</strong>. `
+      : '<strong>No strategy is trading real money right now.</strong> ') +
+      'Each strategy moves between paper and real money by itself, from its own results. ' +
+      'The table below holds every real trade; the dip strategy\'s 46 trades from before 10 Nov 2026 are its old record. ' +
+      'See the <a href="#" data-goto="paper">Strategies</a> tab for where each one stands.';
     note.querySelectorAll('[data-goto]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); setBotTab(a.dataset.goto); }));
   }
 }
@@ -222,29 +261,37 @@ async function renderPaper(force = false) {
   let rows;
   try { rows = await loadPaper(force); } catch (e) { body.innerHTML = errorRow(e); return; }
   const stats = paperStats(rows);
-  const modes = ((bot.status || {}).data || {}).modes || {};
-  const names = [...new Set([...Object.keys(STRATEGY_INFO), ...Object.keys(stats), ...Object.keys(modes)])];
+  const data = (bot.status || {}).data || {};
+  const lad = data.ladder || null;
+  const modes = data.modes || {};
+  const names = [...new Set([...Object.keys(STRATEGY_INFO), ...Object.keys(stats),
+                             ...Object.keys((lad || {}).strategies || modes)])];
+  const openLive = ((data.open || {}).live_by || {});
 
   const cards = names.map(k => {
     const info = STRATEGY_INFO[k] || { name: k, what: '' };
-    const s = stats[k] || paperStats([{ strategy: k, closed_at: null }])[k];
-    if (!stats[k]) s.open = 0;
-    const mode = modes[k] || '—';
-    const verdict = { pass: ['good', 'Passes every check — eligible for a small live trial'],
-                      fail: ['bad', 'Failing — enough trades, and they lose on average'],
-                      wait: ['warn', 'Not enough evidence yet'] }[s.verdict];
+    const p = stats[k] || paperStats([{ strategy: k, closed_at: null }])[k];
+    const openPaper = stats[k] ? p.open : 0;
+    // The worker's ladder numbers when it has reported them (real + paper trades since the
+    // record began); otherwise this page's own count of the paper trades.
+    const L = lad && lad.strategies && lad.strategies[k];
+    const s = L ? L : { n: p.n, wins: p.wins, mean: p.avg, pf: p.pf, se: p.se, day_mean: p.avg, days: p.n,
+                        n_live: 0, n_paper: p.n };
+    const level = L ? L.level : (modes[k] === 'live' ? 'full' : modes[k] || 'paper');
+    const v = ladderView(s, level, (lad || {}).bar || {}, L ? L.stake : null);
+    const chip = v.live ? `REAL · ${level === 'trial' ? `trial $${L ? L.stake : 20}` : 'full'}` : level;
     return `<div class="strat-card">
       <div class="strat-head"><strong>${escHtml(info.name)}</strong>
-        <span class="bot-chip mode-${escHtml(mode)}">${escHtml(mode === 'live' ? 'LIVE' : mode)}</span></div>
+        <span class="bot-chip mode-${v.live ? 'live' : escHtml(level)}">${escHtml(chip)}</span></div>
       <div class="strat-what">${escHtml(info.what)}</div>
       <div class="perf-stats">
         <div class="perf-stat"><span class="ps-label">Closed trades</span><span class="ps-value">${s.n}${s.n ? ` <small>(${s.wins} won)</small>` : ''}</span></div>
-        <div class="perf-stat"><span class="ps-label">Average per trade</span><span class="ps-value ${s.avg > 0 ? 'pos' : s.avg < 0 ? 'neg' : ''}">${s.n ? fmtPct(s.avg) : '—'}</span></div>
-        <div class="perf-stat"><span class="ps-label">Profit factor</span><span class="ps-value">${s.pf === null ? '—' : s.pf === Infinity ? '∞' : s.pf.toFixed(2)}</span></div>
-        <div class="perf-stat"><span class="ps-label">Open now</span><span class="ps-value">${s.open}</span></div>
+        <div class="perf-stat"><span class="ps-label">Average per trade</span><span class="ps-value ${s.mean > 0 ? 'pos' : s.mean < 0 ? 'neg' : ''}">${s.n ? fmtPct(s.mean) : '—'}</span></div>
+        <div class="perf-stat"><span class="ps-label">Profit factor</span><span class="ps-value">${s.pf === null || s.pf === undefined ? '—' : (s.pf === Infinity || s.pf >= 999) ? '∞' : s.pf.toFixed(2)}</span></div>
+        <div class="perf-stat"><span class="ps-label">Open now</span><span class="ps-value">${openPaper + (+openLive[k] || 0)}</span></div>
       </div>
-      <ul class="checks">${s.checks.map(c => `<li class="${c.ok ? 'ok' : 'no'}">${c.ok ? '✓' : '○'} ${escHtml(c.text)}</li>`).join('')}</ul>
-      <div class="bot-note ${verdict[0]}">${verdict[1]}</div>
+      <ul class="checks">${v.checks.map(c => `<li class="${c.ok ? 'ok' : 'no'}">${c.ok ? '✓' : '○'} ${escHtml(c.text)}</li>`).join('')}</ul>
+      <div class="bot-note ${v.cls}"><strong>${escHtml(v.verdict)}</strong>${v.next ? `<br>${escHtml(v.next)}` : ''}</div>
     </div>`;
   }).join('');
 
@@ -255,8 +302,10 @@ async function renderPaper(force = false) {
   const exitNames = { sl: 'Stop loss', be_stop: 'Break-even stop', tp_trail: 'Target + trailing', time: 'Held full time', rule: 'Trend ended', stop: 'Far stop' };
 
   body.innerHTML = `
-    <p class="bot-intro">Paper trades run on live OKX prices and pay the same fees plus slippage, but <strong>no money is involved</strong>.
-      A strategy is worth a small live trial only after it passes all four checks below — the bar was set before any result existed.</p>
+    <p class="bot-intro">Every strategy stands on one rung: <strong>paper</strong> (live prices, same fees and slippage, no money),
+      a <strong>$20 real-money trial</strong>, or <strong>full size</strong>. It moves up or down by itself as its own record —
+      real and paper trades together, since 10 Nov 2026 — passes or fails the four checks below. The bar was set before any result existed.
+      Real trades appear in the Live trades tab; paper trades are listed below.</p>
     <div class="strat-grid">${cards}</div>
     <h4 class="bot-h">Open paper trades</h4>
     ${open.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Coin</th><th>Strategy</th><th>Opened</th><th class="num">Entry</th><th class="num">Stake</th><th>Plan</th></tr></thead>
