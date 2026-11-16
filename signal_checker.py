@@ -239,6 +239,15 @@ RISK_PER_TRADE_PCT = 1.0
 # this share of the account, new live trades stop (open ones are still managed, paper
 # strategies carry on). It lifts by itself as old losses age out of the window.
 MAX_30D_LOSS_PCT = 6.0
+# Real trades closed before this moment do not count toward that limit. Added 2026-11-16:
+# the limit was written on 2026-11-10 and, unnoticed, was already tripped by the dip
+# strategy's October losses (-$29.61 in the window). So when the owner put the crash
+# rebound on a real-money trial the next day, its first four signals (14-15 Nov) were
+# paper-traded instead - the limit was punishing a new strategy for the losses of one
+# that had already been taken off real money. The owner's decision, asked directly: the
+# limit guards the strategies trading NOW, from the day the ladder began. Everything real
+# from that day on still counts, for every strategy.
+LOSS_LIMIT_SINCE = '2026-11-11T00:00:00Z'
 
 # ── TEST MODE ─────────────────────────────────────────────────────────────────
 # Makes Option 3 trades trigger EASILY with a tiny fixed size — purely to test the
@@ -3325,6 +3334,14 @@ def maybe_send_daily_digest(cache):
         lines.append(f"🧭 Yesterday: BTC downtrend {bear:.0%} of the day · {f.get('candidates', 0)} setup(s) "
                      f"qualified · {taken} taken" + (f' · stopped: {stopped}' if stopped else ''))
     try:
+        # Said out loud since 2026-11-16: a tripped limit used to turn real trades into
+        # paper ones without a word anywhere the owner would see it.
+        paused = live_paused(_SCAN_INFO.get('equity'))
+        if paused:
+            lines.append(f'⏸ <b>Real trades are paused</b>: {paused}. Signals are paper-traded until it clears.')
+    except Exception as e:
+        print(f'  [Digest] loss-limit check unavailable: {e}')
+    try:
         lines.append('⚙️ <b>Strategies</b> (each moves up or down by itself from its results)')
         lines += _strategies().digest_lines()
     except Exception as e:
@@ -3902,6 +3919,7 @@ def run_scan(cache, warm_up=False):
     _SCAN_INFO.update({'at': now, 'coins': len(scan), 'thin': len(SYMBOLS) - len(scan),
                        'regime_ok': regime_ok, 'regime': regime_msg, 'breadth_os': breadth,
                        'dip_mode': dip_mode, 'open_live': len(all_live),
+                       'equity': equity_known,      # in memory only: never written to the status row
                        'open_live_by': {k: sum(1 for t in all_live if (t.get('strategy') or 'dip') == k)
                                         for k in {t.get('strategy') or 'dip' for t in all_live}}})
 
@@ -4167,11 +4185,14 @@ def _log_refused(cands, gate, reason, regime_msg, breadth):
 
 
 def _loss_30d():
-    """Net result (USDT) of the LIVE trades closed in the last 30 days. 0.0 if unreadable -
-    the loss limit then stays open, like every other rail here when its data is missing."""
+    """Net result (USDT) of the LIVE trades closed in the last 30 days, and not before
+    LOSS_LIMIT_SINCE. 0.0 if unreadable - the loss limit then stays open, like every other
+    rail here when its data is missing."""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return 0.0
-    since = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    start = max(datetime.now(timezone.utc) - timedelta(days=30),
+                datetime.fromisoformat(LOSS_LIMIT_SINCE.replace('Z', '+00:00')))
+    since = start.strftime('%Y-%m-%dT%H:%M:%SZ')
     try:
         r = requests.get(f'{SUPABASE_URL}/rest/v1/option3_trades'
                          f'?select=net_pnl_usdt&phase=eq.3&closed_at=gte.{since}',

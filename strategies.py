@@ -268,24 +268,34 @@ def _live_slot(name, symbol, live_rows, equity):
 def _open(name, symbol, price, live_rows, equity, exit_plan, paper_params, ctx, why, paper_cap=None):
     """Open a real trade when the ladder and the limits allow it, else a paper one.
     Returns 'live', 'paper' or None (nothing opened)."""
+    info = level(name, equity)
+    on_live_rung = info['level'] in ('trial', 'full')
     blocked = _live_slot(name, symbol, live_rows, equity)
+    not_real = ''              # why a strategy that MAY trade real money did not, this time
     if blocked is None:
-        info = level(name, equity)
         try:
             row = sc.place_simple_trade(name, symbol, info['stake'], exit_plan, ctx, info['level'], why)
             live_rows.append(row)
             return 'live'
         except sc.Option3Preflight as e:
+            not_real = str(e)
             print(f'  [{name}] {symbol}: real trade not possible ({e}) — paper instead')
         except Exception as e:
             print(f'  [{name}] {symbol}: real trade failed ({e})')
             return None                        # coins were sold back and the owner told; no paper twin
-    elif not blocked.startswith('paper') and not blocked.startswith('off'):
+    elif on_live_rung:
+        not_real = blocked
         print(f'  [{name}] {symbol}: no real trade ({blocked}) — paper instead')
     if paper_cap is not None and len(paper.open_trades(name)) >= paper_cap:
+        if not_real:
+            print(f'  [{name}] {symbol}: and the paper slots are full — signal not recorded')
         return None
+    # The reason goes into the Telegram message. On 14-15 Nov 2026 four signals of a
+    # strategy on a real-money trial arrived marked PAPER with no explanation, because
+    # the monthly loss limit was tripped; the owner had to ask why.
+    plan = why + (f'\n⚠️ Not a real trade this time: {not_real}' if not_real else '')
     return 'paper' if paper.open_trade(name, symbol, price, PAPER_STAKE_USDT, paper_params['kind'],
-                                       paper_params['params'], ctx, plan=why,
+                                       paper_params['params'], ctx, plan=plan,
                                        notify=paper_params.get('notify', True)) else None
 
 
@@ -457,7 +467,11 @@ def digest_lines():
     lines = []
     for k, v in levels().items():
         st = v['stats']
-        rec = (f"{st['n']} trades since {EVIDENCE_SINCE[5:10].replace('-', '/')} ({st['n_live']} real), "
-               f"{st['mean']:+.2f}% avg" if st['n'] else 'no trades yet')
-        lines.append(f"• {sc.STRATEGY_LABEL.get(k, k)}: {_level_text(k, v['level'], v['stake'])} · {rec}")
+        rec = (f"{st['n']} closed since {EVIDENCE_SINCE[5:10].replace('-', '/')} ({st['n_live']} real), "
+               f"{st['mean']:+.2f}% avg" if st['n'] else 'none closed yet')
+        n_real = (sc._SCAN_INFO.get('open_live_by') or {}).get(k, 0)
+        n_paper = len(paper.open_trades(k))
+        parts = [x for x in (f'{n_real} real' if n_real else '', f'{n_paper} paper' if n_paper else '') if x]
+        open_ = (' · open now: ' + ', '.join(parts)) if parts else ''
+        lines.append(f"• {sc.STRATEGY_LABEL.get(k, k)}: {_level_text(k, v['level'], v['stake'])} · {rec}{open_}")
     return lines

@@ -195,7 +195,7 @@ Telegram report are there so someone looks.
 | Limit | Value | What it does |
 |---|---|---|
 | `RISK_PER_TRADE_PCT` | 1.0 | A stop-out may cost at most 1% of the whole account, so the stop distance sets the size: ~26% of the account at a 3.8% stop, ~14% at 7%. Applied on top of the 45–60% ladder; it can only shrink a position. |
-| `MAX_30D_LOSS_PCT` | 6.0 | When closed live trades of the last 30 days have lost more than 6% of the account, new live trades stop until the losses age out. Open trades are still managed. |
+| `MAX_30D_LOSS_PCT` | 6.0 | When closed live trades of the last 30 days have lost more than 6% of the account, new live trades stop until the losses age out. Open trades are still managed. Counts real trades since 2026-11-11 only (`LOSS_LIMIT_SINCE`): the dip strategy's October losses had tripped it before the ladder existed and were silently turning the crash rebound's real trades into paper ones (CHANGELOG 2026-11-16). While it is tripped, the daily report says so and every PAPER message says why it was not real. |
 | `MAX_OPEN_TRADES` | 3 | Unchanged. |
 | `MAX_SL_PER_DAY` | 3 | Unchanged (circuit breaker, dip only). |
 | `TRIAL_STAKE_USDT` | 20 | Size of every trade on a trial rung. |

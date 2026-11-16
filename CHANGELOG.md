@@ -3,6 +3,51 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-11-16 — The monthly loss limit was silently turning the crash rebound's real trades into paper ones
+
+**What happened.** The market fell hard on 14-15 Nov (BTC about $74k to $65k) and the crash
+rebound fired four times: FET, ONDO, PEPE, CFX. All four arrived on Telegram marked PAPER,
+although the strategy had been on a real-money trial since 11 Nov. The owner asked why.
+
+**Cause.** `MAX_30D_LOSS_PCT` (added 2026-11-10): no new real trades while the real trades
+of the last 30 days have lost more than 6% of the account. The window still held the dip
+strategy's October losses, -$29.61, which trips the limit on any account under about $494.
+So the limit was already tripped on the day the owner chose real trading for the crash
+rebound, and nobody was told: not by the changelog entry of 11 Nov, not by the Telegram
+line-up ("trades REAL money, $20 a trade"), not by the daily report. The routing did what
+it was written to do (`strategies._open`: blocked, so paper instead) and printed the reason
+only to the VPS log.
+
+**Decision (the owner's, asked directly).** The limit guards the strategies trading now.
+`LOSS_LIMIT_SINCE = '2026-11-11'`: real trades closed before the ladder began do not count.
+Everything real from that day on counts, for every strategy, and from 11 Dec the window is
+a plain rolling 30 days again. The limit itself (6%) and the crash rebound's own 5% budget
+are unchanged.
+
+**So it cannot be silent again.**
+- A PAPER message from a strategy that is allowed real money now says why this one was not
+  real: "Not a real trade this time: only $8.00 USDT free", or the loss limit's own text.
+- The daily report says "Real trades are paused: ..." while the limit is tripped, and each
+  strategy's line shows what it has open now, real and paper.
+
+**First evidence from the journal of refusals** (added 2026-11-10; read with the public key):
+in five days the BTC regime filter refused 106 dip setups. Graded 24h later: 54 would have
+hit their stop first, 42 their target, 10 neither. On the crash day itself, 43 to 18. With
+stops wider than targets that is a clear net loss avoided - the first direct measurement,
+on live signals, that the filter earns its keep.
+
+Tests: `tests/test_strategies.py` 35 -> 42 (the window starts on 11 Nov and rolls again
+later; the limit itself unchanged; the reason in the PAPER message, and none for a strategy
+that is simply on paper; the daily lines). Every other suite unchanged and passing.
+
+### On the VPS
+
+```powershell
+Stop-ScheduledTask -TaskName "OKX-SignalChecker"; Get-Process python -EA SilentlyContinue | ? Path -like 'C:\OKXAI\*' | Stop-Process -Force
+cd C:\OKXAI; git pull
+Start-ScheduledTask -TaskName "OKX-SignalChecker"
+```
+
 ## 2026-11-11 — The strategy ladder: crash rebound trades real money now, every strategy moves up or down by itself
 
 The owner did not want to wait weeks or months for paper results: "something I can use now

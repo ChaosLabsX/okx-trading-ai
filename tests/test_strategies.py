@@ -14,6 +14,8 @@ import signal_checker as sc
 import paper
 import strategies as S
 
+REAL_LIVE_PAUSED = sc.live_paused          # the real one; section 5 replaces it with a stub
+
 N = 0
 
 
@@ -144,7 +146,7 @@ sc.place_simple_trade = fake_place
 paper._on = lambda: True
 paper.open_trades = lambda strategy=None: [t for t in papered if strategy in (None, t['strategy'])]
 paper.open_trade = lambda strategy, symbol, price, amount, kind, params, ctx=None, plan='', notify=True: \
-    papered.append({'strategy': strategy, 'symbol': symbol, 'params': params}) or papered[-1]
+    papered.append({'strategy': strategy, 'symbol': symbol, 'params': params, 'plan': plan}) or papered[-1]
 S.oi_change_24h = lambda coin, chg: -22.0
 sc.live_paused = lambda equity: None
 sc.OKX_API_KEY = sc.OKX_SECRET_KEY = sc.OKX_PASSPHRASE = 'x'
@@ -174,6 +176,8 @@ S._CACHE.update(at=0, levels={})
 log = flush([])
 ok(not placed and len(papered) == S.FLUSH_PAPER_MAX and 'paper instead' in log,
    'monthly loss limit hit: no real trades, the signals are paper-traded')
+ok(all('Not a real trade this time: live trades lost $20 in the last 30 days' in p['plan'] for p in papered),
+   'and each PAPER message says WHY it was not a real trade (the owner had to ask on 2026-11-16)')
 sc.live_paused = lambda equity: None
 
 placed.clear(); papered.clear()
@@ -181,6 +185,8 @@ sc.STRATEGY_MODE['flush'] = 'paper'
 S._CACHE.update(at=0, levels={})
 flush([])
 ok(not placed and len(papered) == S.FLUSH_PAPER_MAX, 'flush set to paper by hand: paper only')
+ok(not any('Not a real trade' in p['plan'] for p in papered),
+   'a strategy that is simply on paper carries no such note')
 sc.STRATEGY_MODE['flush'] = 'auto'
 
 placed.clear(); papered.clear()
@@ -189,6 +195,8 @@ sc.place_simple_trade = refuse
 S._CACHE.update(at=0, levels={})
 flush([])
 ok(not placed and len(papered) == S.FLUSH_PAPER_MAX, 'not enough USDT for a real trade: paper instead')
+ok(all('Not a real trade this time: only $8.00 USDT free' in p['plan'] for p in papered),
+   'and the message says so ("only $8.00 USDT free")')
 def blow(*a, **k): raise Exception('protective stop failed — position sold back')
 sc.place_simple_trade = blow
 papered.clear()
@@ -242,8 +250,49 @@ S._CACHE.update(at=0, levels={})
 st = S.status()
 ok(st['strategies']['flush']['level'] == 'trial' and st['bar']['min_trades'] == 30 and st['trial_stake'] == 20.0,
    'status row carries each rung, stake and record, and the bar')
+papered[:] = [{'strategy': 'flush', 'symbol': 'A-USDT'}, {'strategy': 'flush', 'symbol': 'B-USDT'}]
+sc._SCAN_INFO['open_live_by'] = {'flush': 1}
+lines = S.digest_lines()
+ok(any('Crash rebound' in x and 'open now: 1 real, 2 paper' in x for x in lines),
+   'daily report shows what is open now, real and paper')
+papered.clear(); sc._SCAN_INFO.clear()
 lines = S.digest_lines()
 ok(len(lines) == 3 and any('Crash rebound: trades REAL money, $20 a trade (trial)' in x for x in lines),
    'daily report: one line per strategy')
+
+# ── 8. the monthly loss limit counts real trades since the ladder began, not before ──
+urls = []
+
+
+class _R:
+    status_code = 200
+    def json(self): return [{'net_pnl_usdt': -4.0}, {'net_pnl_usdt': 1.5}]
+
+
+real_get = sc.requests.get
+sc.requests.get = lambda url, **k: urls.append(url) or _R()
+
+
+class _Clock(sc.datetime):
+    at = None
+    @classmethod
+    def now(cls, tz=None):
+        return cls.at
+
+
+real_dt = sc.datetime
+sc.datetime = _Clock
+_Clock.at = real_dt(2026, 11, 16, 4, 0, tzinfo=timezone.utc)
+ok(sc._loss_30d() == -2.5 and 'closed_at=gte.2026-11-11T00:00:00Z' in urls[-1],
+   "16 Nov: the window starts on 11 Nov, so the dip strategy's October losses no longer pause real trades")
+_Clock.at = real_dt(2027, 1, 20, 4, 0, tzinfo=timezone.utc)
+sc._loss_30d()
+ok('closed_at=gte.2026-12-21T04:00:00Z' in urls[-1], 'later on it is a plain rolling 30 days again')
+sc.datetime, sc.requests.get = real_dt, real_get
+real_loss = sc._loss_30d
+sc._loss_30d = lambda: -19.0
+ok('lost $19.00' in (REAL_LIVE_PAUSED(300.0) or '') and REAL_LIVE_PAUSED(400.0) is None,
+   'the limit itself is unchanged: $19 lost pauses a $300 account (6% = $18), not a $400 one')
+sc._loss_30d = real_loss
 
 print(f'ALL PASSED ({N} checks)')
