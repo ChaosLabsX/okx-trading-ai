@@ -15,7 +15,7 @@ the wrapper, so coverage is continuous.
 main()
  └─ loop every 60s for ~4min:
      ├─ run_scan(cache)            # signals → filters → ranking → trade (live) or paper trade → Telegram
-     │    └─ paper.flush_scan / paper.trend_scan     # the paper-only strategies
+     │    └─ strategies.flush_scan / trend_scan / surge_scan   # real or paper, by their rung
      ├─ monitor_option3_trades()   # exit detection for all open LIVE trades (see OPTION3 doc)
      ├─ paper.monitor(cache)       # steps open PAPER trades against real 1-minute candles
      ├─ write_bot_status(cache)    # first scan and last: the row the dashboard's status strip reads
@@ -33,8 +33,9 @@ strategy.** On `paper` it runs unchanged up to the moment an order would be sent
 open paper trades stand in for open live ones wherever a rail counts positions (open-trade
 cap, correlation guard, circuit breaker). On `trial` the AI's size is capped at $20.
 
-The crash-rebound (`flush`) and `trend` strategies run after the dip scan
-(`strategies.flush_scan`, `strategies.trend_scan`). On a live rung they open real
+The crash-rebound (`flush`), `trend` and `surge` strategies run after the dip scan
+(`strategies.flush_scan`, `strategies.trend_scan`, `strategies.surge_scan`; surge is held
+on paper by hand). On a live rung they open real
 positions through `place_simple_trade` — market buy, a −30% protective stop on OKX, a row
 in `option3_trades` with their `strategy` — and `monitor_simple_trades` exits them (after
 48h, or when the daily trend ends). Otherwise they paper-trade.

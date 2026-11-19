@@ -20,6 +20,7 @@ const STRATEGY_INFO = {
   dip:   { name: 'Dip buy', what: 'STRONG BUY signal + 30m reversal + AI advisor. The original strategy.' },
   flush: { name: 'Crash rebound', what: 'Coin down 8%+ in a day while futures open interest collapses 15%+ (forced selling). Buy, hold 48h, protective stop −30%.' },
   trend: { name: 'Trend (majors)', what: 'The 12 largest coins, each held while 2% above its 50-day average.' },
+  surge: { name: 'BTC surge leaders', what: 'BTC up 1.5%+ in one hour: buy the 5 coins that rose most in that hour, hold 24h. Paper only (a faint lead, being tested).' },
 };
 
 const GATE_INFO = {

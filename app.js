@@ -2104,7 +2104,7 @@ function renderPerf() {
     byStrat[st].n += 1;
     byStrat[st].pct += +t.amount_usdt > 0 ? (+t.net_pnl_usdt || 0) / +t.amount_usdt * 100 : 0;
   }
-  const stratNames = { dip: 'Dip buy', flush: 'Crash rebound', trend: 'Trend (majors)' };
+  const stratNames = { dip: 'Dip buy', flush: 'Crash rebound', trend: 'Trend (majors)', surge: 'BTC surge leaders' };
   const exitLabels = {
     tp_trail: '🏁 TP + trailing', sl: '🔴 Stop loss', break_even: '⚪ Break-even',
     be_stop: '🛡️ Break-even stop',

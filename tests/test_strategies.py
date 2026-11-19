@@ -132,6 +132,13 @@ cache['_levels']['dip'] = 'trial'                     # pretend dip was on trial
 S._CACHE['at'] = 0
 S.announce(cache, 300.0)
 ok(len(TG) == 1 and 'Dip buy: trial → paper' in TG[0] and '📉' in TG[0], 'a demotion is announced with its reason')
+sc.STRATEGY_MODE['surge'] = 'paper'                   # an update adds a strategy
+S._CACHE['at'] = 0; TG.clear()
+S.announce(cache, 300.0)
+ok(len(TG) == 1 and 'New strategy: BTC surge leaders' in TG[0] and 'paper only' in TG[0] and '📉' not in TG[0],
+   'a strategy added by an update is announced as NEW, not as a demotion')
+del sc.STRATEGY_MODE['surge']; cache['_levels'].pop('surge', None)
+S._CACHE['at'] = 0
 
 # ── 5. routing a flush signal: real order on trial, paper otherwise ───────────
 placed, papered = [], []

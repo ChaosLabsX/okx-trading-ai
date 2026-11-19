@@ -64,7 +64,7 @@ Tested against a simulated OKX that refuses what the real one refuses
 (`tests/test_live_simple.py`, 27 checks): every failure above, the owner's own coins never
 sold, and the recorded P&L equal to the account's real balance change.
 
-## 2. The three strategies and their evidence
+## 2. The strategies and their evidence
 
 All figures are **after costs** (0.10% fee per side, plus 0.05% slippage per side in the
 lab tests: 0.30% per round trip).
@@ -145,6 +145,29 @@ of holding (+34% to +50% a year against +46%) with a worst drawdown of 40–65% 
 market a trend rule gets whipsawed. It is the one rule here with eight years behind it,
 and it is slow — a handful of trades per coin per year.
 
+### `surge` — BTC jumps, buy the coins leading it → PAPER ONLY, set by hand (2026-11-19)
+
+**Rule:** right after each hourly candle closes, if BTC closed that hour up 1.5% or more,
+compare every liquid coin on the scan list over the same hour and buy the 5 that rose
+most. Hold 24 hours, then sell; protective stop −30% as for crash rebound. One signal per
+24 hours (as tested). Needs at least 10 coins to compare. An hour that closed more than
+20 minutes ago is ignored, so a worker that was down never trades a stale signal.
+
+**Why it is here:** on 2026-11-19 the owner asked for new ideas tested before any change.
+Seven were tested (`research/lab_exp9.py`, table in section 3) and none passed. This was
+the only faint lead: after costs, +0.62% a trade on 2022–23 (137 signals) and +0.72% on
+2024–26 (159), t 1.0 and 1.5. Not proven: it was one of 18 variants of that idea, and
+the 2024–26 coin list knows which coins survived. Its own opposite — buying the coins
+that had NOT moved yet, the idea actually being tested — lost money.
+
+**Why paper only:** `STRATEGY_MODE['surge'] = 'paper'` holds it there whatever its record,
+by the owner's choice. Its trades count in the ladder's statistics like any other, so the
+Strategies tab shows whether it would pass the bar; switching it to `'auto'` would let
+the ladder promote it. Expect about 5 signals a month (25 paper trades), clustered five
+at a time on one day each, so the record is about 5 independent days a month: months,
+not weeks, before it can say anything. Telegram: one message per signal, one when its
+five trades have closed.
+
 ## 3. Tested and rejected — do not re-test without a new idea
 
 | Idea | Result | Where |
@@ -155,6 +178,16 @@ and it is slow — a handful of trades per coin per year.
 | Daily breakouts on alts | Same: an artefact of the coin list | `lab_exp3.txt` |
 | Funding-rate extremes, long/short ratio, taker flow as entry signals | No significant effect | `lab_exp5.txt` |
 | 24 variations of the dip rule's stops, targets, filters | Not robust (2026-11-03) | `exp4.txt`, `exp5.txt` |
+| Switching the dip rule's BTC downtrend filter off | Still negative per trade (−0.51%), 4.5× the trades: about 4× the total loss. The live journal agrees: of 118 refusals (11–17 Nov) 56 would have lost, 45 won | `lab_exp1.txt` ("any regime") |
+| Looser crash-rebound thresholds (fall 5%, OI 0–10%) for more signals | Good on 2024–26, fails on 2022–23 | `lab_exp6.txt` vs `lab_exp6_oos_2022-2023.txt` |
+| Selling short (1x swap) the 12 largest coins below their trend line | Lost in 2019–2023 with every rule (−6% to −15% a year), paid only in the bear years 2022 and 2026; 40–70% drawdowns | `lab_exp8.txt` |
+| Holding BTC only at its "best hours" (21–24 UTC, published) or best weekday | The 20–23 UTC window is up in both periods (about +0.07% a day) but one round trip a day costs 0.16–0.30%. Weekday: Mon/Wed up and Thu down in both periods, too small after costs | `lab_exp9.txt` §1 |
+| Funding carry: own the coin and short its perpetual when funding is high | Works but small: +1–3% a year on the position, about 0% in 2025–26, before the extra margin it ties up | `lab_exp9.txt` §2 |
+| Buying last week's (or day's) 5 worst coins of the top 20/50 (short-term reversal, a published result) | −0.5% to −2.4% per hold, worse than the basket, on a point-in-time universe 2023–26 | `lab_exp9.txt` §3 |
+| Buying BTC on extreme fear (Fear & Greed ≤ 10–25), hold 30/90 days | No better than buying on any day; 4–18 separate trades per period, so no conclusion is possible either way | `lab_exp9.txt` §4 |
+| Volatility breakout (Larry Williams, k 0.3/0.5/0.7, with/without trend filters), 12 majors | Paid only in the 2018–21 bull; lost in 2024–26 in every variant | `lab_exp9.txt` §5 |
+| Short squeeze: price up ≥ 8–15% in 24h while open interest falls | Positive 2022–23, negative 2024–26 | `lab_exp9.txt` §6 |
+| After BTC jumps, buy the alts that lagged | Laggards do not catch up (−0.1% to −0.7% per trade). Only faint signal of the whole study: the 5 alts that rose MOST after BTC +1.5% in an hour, held 24h, +0.6% / +0.7% in both periods, but not statistically solid (t 1.0 / 1.5) | `lab_exp9.txt` §7 |
 
 The momentum result is the one to remember. A coin list written in 2026 already knows
 which coins survived and grew; any "buy what is going up" test on that list is graded on

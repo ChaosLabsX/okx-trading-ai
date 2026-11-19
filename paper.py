@@ -19,7 +19,8 @@ change or cancel an order: it never calls an OKX private endpoint.
 Exit models:
   option3  the dip strategy's: stop on everything, half sold at the target, stop to
            break-even at 70% of the way, trailing stop on the rest (step_option3)
-  hold     buy, sell after N hours; optional far stop (step_hold) - the flush strategy
+  hold     buy, sell after N hours; optional far stop (step_hold) - flush and surge.
+           params['notify_close'] False: no Telegram per close (surge sends one for the group)
   rule     held until a daily rule says sell (strategies.trend_scan closes it)
 """
 import time
@@ -266,7 +267,7 @@ def monitor(cache):
             if st.get('pending_exit'):
                 # The trade already ended on an earlier pass but the result could not be
                 # saved. The exit is a fact, not something to recompute from later candles.
-                if close_trade(t, st['pending_exit'], st):
+                if close_trade(t, st['pending_exit'], st, notify=(t.get('params') or {}).get('notify_close', True)):
                     store.pop(key, None)
                 continue
             before = (st['phase'], st['at_be'])
@@ -278,7 +279,7 @@ def monitor(cache):
                 out = step_hold(entry, t['params'], st, candles, opened_ms, bar_ms)
             store[key] = st
             if out:
-                if close_trade(t, out, st):
+                if close_trade(t, out, st, notify=(t.get('params') or {}).get('notify_close', True)):
                     store.pop(key, None)
                 else:
                     st['pending_exit'] = out       # kept in the cache file; retried next pass

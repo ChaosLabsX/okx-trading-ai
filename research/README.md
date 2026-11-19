@@ -49,6 +49,8 @@ round trip, the stop wins a bar that touches both.
 | `lab_exp4.py` | 14 simple daily trend rules on the 12 largest coins of Jan 2023, 2018–2026 | About the return of holding, half the drawdown; lost in 2025–26 |
 | `fetch_derivs.py`, `lab_exp5.py` | Do open interest, funding, long/short ratio, taker flow mark the dips worth buying? | Only open interest: a fall with collapsing open interest rebounds |
 | `lab_exp6.py` | Stress test of that: thresholds, holding time, stops, who and when, portfolio. Run again on 2022–2023 data never used to choose the rule → `lab_exp6_oos_2022-2023.txt` | Strong on 2024–26 (+3.7%/trade), weak on 2022–23 (+1.2%, not significant). Paper only |
+| `lab_exp8.py` | Sell short (1x swap) the 12 largest coins while they are below their trend line? 2019–2026 | **No.** Lost in 2019–2023 with every rule; paid only in 2022 and 2026 |
+| `lab_exp9.py` | Seven outside ideas (2026-11-19): time of day / weekday, funding carry, weekly losers, Fear & Greed, volatility breakout, short squeeze, BTC-leads-alts. Each on two periods → `lab_exp9.txt` | **None passes.** Details in docs/STRATEGIES.md section 3 |
 
 ```bash
 python research/fetch_bars.py 1h 2024-01-01 2026-11-10      # ~3 min, 82 MB, git-ignored

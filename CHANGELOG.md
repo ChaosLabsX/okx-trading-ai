@@ -3,6 +3,42 @@
 Every meaningful change to the app, newest first. Kept so a future developer (human or AI)
 can trace what was done and why without digging through git history.
 
+## 2026-11-19 — Seven new ideas tested; one faint lead added as a paper-only strategy
+
+**Why.** About 20 days without a real trade. The owner asked whether switching off the BTC
+downtrend filter would help, then for new ideas, tested before anything changes.
+
+**Tested, all rejected** (details in docs/STRATEGIES.md section 3):
+- BTC downtrend filter off for the dip rule: still loses per trade, about 4x the total loss
+  (`lab_exp1.txt`). The live journal agrees: of 118 refusals 11-17 Nov, 56 would have
+  lost and 45 won.
+- Selling short the 12 largest coins below their trend line (`research/lab_exp8.py`):
+  lost in 2019-2023 with every rule, paid only in 2022 and 2026.
+- Seven outside ideas (`research/lab_exp9.py`, two periods each): time of day / weekday,
+  funding carry, weekly losers, Fear & Greed, volatility breakout, short squeeze, buying
+  the alts that lag a BTC jump. None passes.
+
+**Added: `surge`, paper only** (owner's choice). BTC up 1.5%+ in an hour: buy the 5 coins
+that rose most in that hour, hold 24h, −30% protective stop. The one faint lead of the
+study: +0.6% / +0.7% a trade after costs in both periods, not statistically solid. Held on
+paper by `STRATEGY_MODE['surge'] = 'paper'`; one Telegram per signal and one with the
+results. `paper.monitor` gained `params['notify_close']` so a group of five closes as one
+message; `announce()` now reports a strategy added by an update as new instead of as a
+demotion. Dashboard: name and description in the Strategies tab.
+
+Tests: `tests/test_paper.py` 40 -> 53 (the signal, the five picks, liquidity, cooldown,
+stale hours, too few coins, one message per signal and per result, quiet closes);
+`tests/test_strategies.py` 42 -> 43 (a new strategy is announced as new). All other
+suites unchanged and passing.
+
+### On the VPS
+
+```powershell
+Stop-ScheduledTask -TaskName "OKX-SignalChecker"; Get-Process python -EA SilentlyContinue | ? Path -like 'C:\OKXAI\*' | Stop-Process -Force
+cd C:\OKXAI; git pull
+Start-ScheduledTask -TaskName "OKX-SignalChecker"
+```
+
 ## 2026-11-16 — The monthly loss limit was silently turning the crash rebound's real trades into paper ones
 
 **What happened.** The market fell hard on 14-15 Nov (BTC about $74k to $65k) and the crash

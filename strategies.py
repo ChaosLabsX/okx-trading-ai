@@ -1,6 +1,6 @@
 r"""
-Strategies: which of them trade real money, how much, and the rules of the two that are
-not the dip rule (flush, trend).
+Strategies: which of them trade real money, how much, and the rules of the ones that are
+not the dip rule (flush, trend, surge).
 
 Every strategy sits on one rung of a ladder, recomputed from its own record every run:
 
@@ -43,14 +43,14 @@ import paper
 
 # ── The ladder ───────────────────────────────────────────────────────────────
 TRIAL_STAKE_USDT = 20.0
-FULL_STAKE_PCT   = {'flush': 10.0, 'trend': 8.0}   # of the whole account, per trade
+FULL_STAKE_PCT   = {'flush': 10.0, 'trend': 8.0, 'surge': 4.0}   # of the whole account, per trade
 LOSS_BUDGET_PCT  = 5.0
 EVIDENCE_SINCE   = '2026-11-10T00:00:00Z'
 MIN_TRADES       = 30
 MIN_PF           = 1.3
 SE_MULT          = 1.3
 FULL_MIN_LIVE    = 10
-LIVE_MAX_OPEN    = {'flush': 4, 'trend': 12}
+LIVE_MAX_OPEN    = {'flush': 4, 'trend': 12, 'surge': 5}
 LEVEL_TTL_SECS   = 5 * 60
 
 # ── flush: buy forced selling ────────────────────────────────────────────────
@@ -70,6 +70,21 @@ FLUSH_OI_LOOKUPS  = 10        # open-interest lookups per scan (OKX allows 5 per
 TREND_COINS = ['BTC', 'ETH', 'BNB', 'XRP', 'ADA', 'DOGE', 'SOL', 'LTC', 'TRX', 'DOT', 'AVAX', 'LINK']
 TREND_EMA   = 50
 TREND_BAND  = 0.02
+
+# ── surge: BTC jumps, buy the coins leading the move ────────────────────────
+# When BTC closes an hour up SURGE_BTC_PCT or more, buy the SURGE_PICKS coins that rose
+# most in that same hour, hold SURGE_HOLD_HOURS, sell. Added 2026-11-19 at the owner's
+# request, ON PAPER ONLY (STRATEGY_MODE 'paper'): it was the one faint lead among seven
+# ideas tested that day (research/lab_exp9.py section 7): +0.6% a trade after costs on
+# 2022-23 and +0.7% on 2024-26, but t 1.0 / 1.5 and one of 18 variants tried, so it may
+# be luck. Paper builds a live record at no cost; switching it to 'auto' would let the
+# ladder promote it like the others.
+SURGE_BTC_PCT    = 1.5
+SURGE_PICKS      = 5
+SURGE_HOLD_HOURS = 24
+SURGE_COOLDOWN_H = 24        # one signal per holding period, as tested
+SURGE_MIN_COINS  = 10        # fewer comparable coins than this: no signal (as tested)
+SURGE_FRESH_MIN  = 20        # act only on an hour that closed this recently: no stale signal after an outage
 
 PAPER_STAKE_USDT = paper.STAKE_USDT
 
@@ -227,6 +242,10 @@ def announce(cache, equity=None):
             continue
         info = levels(equity)[k]
         st, name = info['stats'], sc.STRATEGY_LABEL.get(k, k)
+        if k not in prev:                      # added by an update: news, not a promotion or demotion
+            sc.send_telegram(f"🆕 <b>New strategy: {name}</b>\nIt {_level_text(k, lvl, info['stake'])}.\n"
+                             f"📋 {info['reason']}")
+            continue
         record = (f"{st['n']} trades ({st['n_live']} real), {st['mean']:+.2f}% a trade on average"
                   if st['n'] else 'no trades yet')
         up = LEVELS_ORDER.index(lvl) > LEVELS_ORDER.index(prev.get(k, 'paper'))
@@ -443,6 +462,125 @@ def trend_scan(cache, equity=None, live_rows=None):
     if done:
         mem['day'] = day
         print(f'  [Trend] daily check done')
+
+
+# ── surge ─────────────────────────────────────────────────────────────────────
+def _hour_rows(symbol, limit=3):
+    """Finished 1H candles of `symbol`, newest first, as (open_ms, close, base_volume)."""
+    r = requests.get(f'{sc.OKX_BASE}/api/v5/market/candles?instId={symbol}&bar=1H&limit={limit}', timeout=10)
+    r.raise_for_status()
+    d = r.json()
+    if d.get('code') != '0':
+        raise ValueError(f"OKX {d.get('code')}: {d.get('msg', '')}")
+    return [(int(c[0]), float(c[4]), float(c[5])) for c in d.get('data') or [] if len(c) < 9 or c[8] != '0']
+
+
+def _hour_move(rows, ts):
+    """(return of the hour that opened at `ts`, close to close; its volume), or None."""
+    by = {r[0]: r for r in rows}
+    if ts not in by or ts - 3_600_000 not in by or by[ts - 3_600_000][1] <= 0:
+        return None
+    return by[ts][1] / by[ts - 3_600_000][1] - 1, by[ts][2]
+
+
+def _surge_report(mem):
+    """Once every trade of the last signal has closed: one Telegram with all their results."""
+    g = mem.get('group')
+    if not g or any((t.get('params') or {}).get('group') == g for t in paper.open_trades('surge')):
+        return
+    rows = paper._db('GET', f'paper_trades?strategy=eq.surge&params->>group=eq.{g}'
+                            f'&closed_at=not.is.null&select=symbol,net_pct')
+    if not isinstance(rows, list):
+        return                                    # database unreachable: try again next scan
+    mem.pop('group', None)
+    if not rows:
+        return
+    pcts = [float(r.get('net_pct') or 0) for r in rows]
+    avg = sum(pcts) / len(pcts)
+    sc.send_telegram(
+        f"📝 <b>PAPER — BTC surge: results after {SURGE_HOLD_HOURS}h</b>\n"
+        + '\n'.join(f"{'🟢' if p > 0 else '🔴'} {r['symbol'].replace('-USDT', '')} {p:+.2f}%" for r, p in zip(rows, pcts))
+        + f"\nAverage {avg:+.2f}% a trade after fees.\n<i>Simulated. No real money was in these trades.</i>")
+
+
+def surge_scan(tickers, cache, equity=None, live_rows=None):
+    """
+    Once per hour, right after the hourly candle closes: did BTC rise SURGE_BTC_PCT in
+    that hour? One candle request for BTC; the other coins are only fetched when it did
+    (and the cooldown allows a signal) - a few times a month.
+    """
+    if sc.STRATEGY_MODE.get('surge', 'off') == 'off' or not tickers or not paper._on():
+        return
+    live_rows = live_rows if live_rows is not None else []
+    mem = cache.setdefault('_surge', {})
+    _surge_report(mem)
+    now = time.time()
+    if now - mem.get('signal_at', 0) < SURGE_COOLDOWN_H * 3600:
+        return
+    btc = _hour_rows('BTC-USDT')
+    if not btc:
+        return
+    ts = btc[0][0]                                 # the newest FINISHED hour
+    if mem.get('checked') == ts:
+        return
+    mem['checked'] = ts
+    if now * 1000 - (ts + 3_600_000) > SURGE_FRESH_MIN * 60_000:
+        return                                     # that hour closed too long ago (outage): no stale signal
+    move = _hour_move(btc, ts)
+    if move is None or move[0] * 100 < SURGE_BTC_PCT:
+        return
+    rb = move[0] * 100
+    held = {t['symbol'] for t in paper.open_trades('surge')} | \
+           {t['symbol'] for t in live_rows if t.get('strategy') == 'surge'}
+    movers = []
+    for sym in sc.SYMBOLS:
+        t = tickers.get(sym)
+        if sym == 'BTC-USDT' or not t or t.get('vol', 0) < sc.MIN_OKX_VOL_24H_USDT:
+            continue
+        try:
+            m = _hour_move(_hour_rows(sym), ts)
+        except Exception as e:
+            print(f'  [Surge] {sym}: candles unavailable ({e})')
+            continue
+        if m is not None and m[1] > 0:
+            movers.append((m[0] * 100, sym, t['last']))
+        time.sleep(0.06)                           # OKX allows 40 candle requests per 2s
+    hour = datetime.fromtimestamp(ts / 1000 + 3600, timezone.utc).strftime('%H:%M')
+    if len(movers) < SURGE_MIN_COINS:
+        print(f'  [Surge] BTC {rb:+.2f}% in the hour to {hour} UTC, but only {len(movers)} coins to compare: no signal')
+        return
+    movers.sort(reverse=True)
+    mem['signal_at'] = now
+    bought = []
+    for pct, sym, last in movers:
+        if len(bought) >= SURGE_PICKS:
+            break
+        if sym in held:
+            continue
+        why = f'🚀 BTC {rb:+.2f}% in the hour to {hour} UTC; {sym.replace("-USDT", "")} {pct:+.2f}% in the same hour'
+        got = _open('surge', sym, last, live_rows, equity,
+                    {'kind': 'hold', 'hold_hours': SURGE_HOLD_HOURS},
+                    {'kind': 'hold', 'notify': False,
+                     'params': {'hold_hours': SURGE_HOLD_HOURS, 'stop_pct': sc.DISASTER_STOP_PCT,
+                                'group': ts, 'notify_close': False}},
+                    {'btc_1h': round(rb, 2), 'coin_1h': round(pct, 2), 'rank': len(bought) + 1,
+                     'compared': len(movers), 'btc_chg_24h': _chg(tickers.get('BTC-USDT'))},
+                    why + f'\n⏱ Plan: hold {SURGE_HOLD_HOURS}h, then sell. Protective stop −{sc.DISASTER_STOP_PCT:g}%.')
+        if got:
+            bought.append(f"{sym.replace('-USDT', '')} {pct:+.2f}%{' (REAL)' if got == 'live' else ''}")
+    print(f'  [Surge] BTC {rb:+.2f}% in the hour to {hour} UTC: bought {", ".join(bought) or "nothing"}')
+    if not bought:
+        return
+    mem['group'] = ts
+    real = any('(REAL)' in b for b in bought)
+    sc.send_telegram(
+        f"{'🚀' if real else '📝'} <b>{'' if real else 'PAPER — '}BTC surge</b>\n"
+        f"BTC rose {rb:+.2f}% in the hour to {hour} UTC. Bought the {len(bought)} coins that rose most in that hour:\n"
+        + '\n'.join(f'• {b}' for b in bought)
+        + f"\n⏱ Plan: hold {SURGE_HOLD_HOURS}h, then sell (protective stop −{sc.DISASTER_STOP_PCT:g}%). "
+          f"One message with the results when they close.\n"
+        + ('<i>Coins marked (REAL) use real money; the rest are paper.</i>' if real
+           else '<i>Paper trades: testing an idea, no real money involved.</i>'))
 
 
 # ── Reporting ────────────────────────────────────────────────────────────────

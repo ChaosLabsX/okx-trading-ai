@@ -52,8 +52,8 @@
 > **Strategies and the ladder (2026-11-10 / 11-11).** Everything on this page about placing
 > trades describes the `dip` strategy on a live rung. It is currently on `paper`, where
 > step 3 below records a simulated trade in `paper_trades` (`paper.py`) instead of calling
-> `place_option3_trade()`. Two more strategies run beside it: the crash rebound (`flush`,
-> on a $20 real-money trial) and `trend` (paper). Their real positions are simpler — one
+> `place_option3_trade()`. Three more strategies run beside it: the crash rebound (`flush`,
+> on a $20 real-money trial), `trend` (paper) and `surge` (paper only, set by hand). Their real positions are simpler — one
 > market buy, one −30% protective stop, an exit the bot makes — and live in
 > `option3_trades` too, told apart by the `strategy` column; the Option 3 code reads
 > `strategy=dip` rows only. Each strategy's rung is set by its own record

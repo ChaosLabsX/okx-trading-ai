@@ -60,6 +60,8 @@ class World:
                 for part in q.split('&'):
                     if part.startswith('strategy=eq.'): out = [r for r in out if r.get('strategy') == part[12:]]
                     if part.startswith('exit_reason=eq.'): out = [r for r in out if r.get('exit_reason') == part[15:]]
+                    if part.startswith('params->>group=eq.'):
+                        out = [r for r in out if str((r.get('params') or {}).get('group')) == part[18:]]
                 return Resp(200, list(out))
             if method == 'POST':
                 new = json if isinstance(json, list) else [json]
@@ -277,6 +279,102 @@ with quiet():
     strategies.trend_scan(cache)
 ok(W.db['paper_trades'][0]['exit_reason'] == 'rule' and W.db['paper_trades'][0]['net_pct'] < 0
    and 'Sold (trend ended): BTC' in W.telegram[-1], 'and sells it after a daily close 2% below')
+
+# ── 5b. surge: BTC +1.5% in an hour, buy the 5 coins that rose most, paper only ──
+H_MS = 3_600_000
+now_ms = int(time.time() * 1000)
+last_hr = (now_ms // H_MS - 1) * H_MS                  # the newest FINISHED hour (it closed this hour)
+ALTS = [f'A{i:02d}-USDT' for i in range(12)]
+strategies.SURGE_FRESH_MIN = 61                       # the test may run late in an hour; staleness is tested below
+sc.SYMBOLS = ['BTC-USDT'] + ALTS
+sc.STRATEGY_MODE = {'dip': 'paper', 'flush': 'paper', 'trend': 'paper', 'surge': 'paper'}
+strategies._CACHE.update(at=0, levels={})
+tickers = {s: {'last': 10.0, 'open24h': 10.0, 'vol': 5e6} for s in sc.SYMBOLS}
+tickers['A11-USDT']['vol'] = 1e5                       # the hour's biggest mover, but too thin to trade
+
+
+def hour(inst, prev, last, t=None):
+    t = last_hr if t is None else t
+    W.candles[(inst, '1H')] = [(t - H_MS, prev, prev, prev, prev), (t, prev, last, prev, last)]
+
+
+def surge(cache):
+    W.calls.clear()
+    with quiet():
+        strategies.surge_scan(tickers, cache)
+    return sum('/market/candles' in u for _, u in W.calls)
+
+
+hour('BTC-USDT', 100.0, 101.0)                         # +1.0%: no signal
+for i, s in enumerate(ALTS):
+    hour(s, 10.0, 10.0 * (1 + i / 100))                # A00 +0% ... A11 +11%
+W.db['paper_trades'] = []; paper._OPEN = None; W.telegram.clear()
+cache = {}
+n_req = surge(cache)
+ok(not W.db['paper_trades'] and n_req == 1, 'BTC +1.0% in the hour: no signal, and only BTC\'s candles were fetched')
+ok(surge(cache) == 1 and cache['_surge']['checked'] == last_hr, 'and that hour is not looked at twice')
+
+hour('BTC-USDT', 100.0, 101.6)                         # +1.6%
+cache = {}
+n_req = surge(cache)
+got = [r['symbol'] for r in W.db['paper_trades']]
+ok(got == ['A10-USDT', 'A09-USDT', 'A08-USDT', 'A07-USDT', 'A06-USDT'] and n_req == 12,
+   f'BTC +1.6%: the 5 liquid coins that rose most in that hour are bought, strongest first: {got}')
+r0 = W.db['paper_trades'][0]
+ok(r0['strategy'] == 'surge' and r0['kind'] == 'hold'
+   and r0['params'] == {'hold_hours': 24, 'stop_pct': sc.DISASTER_STOP_PCT, 'group': last_hr, 'notify_close': False}
+   and r0['entry_context']['rank'] == 1 and abs(r0['entry_context']['coin_1h'] - 10.0) < 1e-6,
+   'as 24h paper holds with the -30% protective stop, grouped by the signal hour')
+ok(len(W.telegram) == 1 and 'PAPER — BTC surge' in W.telegram[0] and 'A10 +10.00%' in W.telegram[0]
+   and 'no real money' in W.telegram[0], 'ONE Telegram for the whole signal, marked PAPER (not five)')
+ok(surge(cache) == 0 and len(W.db['paper_trades']) == 5, 'next scan: cooldown, no new trades and no candle requests')
+
+# the five close (as paper.monitor would): ONE results message, then nothing more
+for r, p in zip(W.db['paper_trades'], (2.0, -1.0, 0.5, 3.0, 0.5)):
+    r.update(closed_at='2026-11-20T15:00:00+00:00', net_pct=p, exit_reason='time')
+paper._OPEN = []
+W.telegram.clear()
+surge(cache)
+ok(len(W.telegram) == 1 and 'results after 24h' in W.telegram[0] and 'Average +1.00% a trade' in W.telegram[0]
+   and 'A10 +2.00%' in W.telegram[0], 'when all five have closed: one message with every result and the average')
+surge(cache)
+ok(len(W.telegram) == 1 and 'group' not in cache['_surge'], 'and only once')
+
+# an old hour (the worker was down when it closed) never triggers a late trade
+cache = {}
+hour('BTC-USDT', 100.0, 103.0, t=last_hr - 3 * H_MS)
+W.db['paper_trades'] = []; paper._OPEN = None
+surge(cache)
+ok(not W.db['paper_trades'], 'BTC +3% in an hour that closed 3h ago (worker was down): no stale signal')
+
+# too few coins to compare: no signal
+hour('BTC-USDT', 100.0, 101.6)
+sc.SYMBOLS = ['BTC-USDT'] + ALTS[:6]
+cache = {}
+surge(cache)
+ok(not W.db['paper_trades'] and 'signal_at' not in cache['_surge'], 'fewer than 10 coins to compare: no signal (as tested)')
+
+# set off: not even BTC is fetched
+sc.STRATEGY_MODE['surge'] = 'off'
+ok(surge({}) == 0, "STRATEGY_MODE 'off': nothing is fetched")
+sc.STRATEGY_MODE['surge'] = 'paper'
+
+# monitor: a surge trade closes WITHOUT its own Telegram; a flush trade still sends one
+opened = now_ms - 25 * H_MS
+ots = time.strftime('%Y-%m-%dT%H:%M:%S+00:00', time.gmtime(opened / 1000))
+W.db['paper_trades'] = [
+    {'id': 21, 'strategy': 'surge', 'symbol': 'A01-USDT', 'kind': 'hold', 'opened_at': ots, 'entry_price': 10.0,
+     'amount_usdt': 100.0, 'params': {'hold_hours': 24, 'stop_pct': 30.0, 'group': 1, 'notify_close': False}, 'state': {}},
+    {'id': 22, 'strategy': 'flush', 'symbol': 'A02-USDT', 'kind': 'hold', 'opened_at': ots, 'entry_price': 10.0,
+     'amount_usdt': 100.0, 'params': {'hold_hours': 24, 'stop_pct': 30.0}, 'state': {}}]
+base15 = opened // 900_000 * 900_000
+for s in ('A01-USDT', 'A02-USDT'):
+    W.candles[(s, '15m')] = [(base15 + 900_000 * k, 10, 10.3, 9.9, 10.2) for k in range(1, 100)]
+paper._OPEN = None; W.telegram.clear()
+with quiet():
+    paper.monitor({})
+ok(all(r.get('exit_reason') == 'time' for r in W.db['paper_trades']), 'both held their 24h and closed')
+ok(len(W.telegram) == 1 and '[flush]' in W.telegram[0], 'only the flush close sent its own message; surge waits for its group')
 
 # ── 6. run_scan: paper mode never reaches the order code ──────────────────────
 import signal_checker as live                      # same module object; alias for readability

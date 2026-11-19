@@ -34,3 +34,6 @@ research/derivs_*/
 
 # Static layout preview written by tests/test_dashboard_bot.js --preview
 tests/_preview/
+
+# Fear & Greed history downloaded by research/lab_exp9.py
+research/fng.json

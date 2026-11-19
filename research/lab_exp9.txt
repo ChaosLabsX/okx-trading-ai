@@ -1,0 +1,224 @@
+=== 1. TIME OF DAY / DAY OF WEEK ===
+Claim (Quantpedia, 2015-2022 data): BTC earns most between 21:00 and 24:00 UTC.
+
+average return of each UTC hour, basis points (1 bp = 0.01%):
+hour      BTC 2022-23      BTC 2024-26      ETH 2022-23      ETH 2024-26
+00               +1.1             -0.3             +3.3             -0.6
+01               -3.3             -1.5             -4.5             -2.4
+02               -1.0             +1.0             -2.6             +0.6
+03               -0.7             +0.9             -0.3             +3.4
+04               +1.0             +0.6             +0.3             +1.8
+05               +1.1             +0.3             +1.1             +0.8
+06               -0.9             -0.0             -1.3             -1.2
+07               +1.0             -0.4             +1.6             -0.2
+08               +0.7             +3.0             -1.9             +2.9
+09               -0.7             +1.3             -0.8             +2.1
+10               +2.7             -0.7             +2.6             -2.0
+11               +0.3             +1.8             +2.2             +2.4
+12               +0.3             -0.4             +1.1             -1.0
+13               -2.7             -2.4             -2.9             -4.9
+14               +2.2             +0.6             +1.0             -1.8
+15               +0.2             +1.4             +0.2             -0.8
+16               -0.7             -1.4             -0.3             -1.0
+17               -3.6             +2.7             -2.5             +2.6
+18               +1.2             -1.3             +2.5             -3.6
+19               -1.5             -1.3             -1.2             +0.7
+20               +5.4             +0.6             +4.3             +0.1
+21               -2.3             +3.4             -4.9             +6.7
+22               +3.9             +3.2             +3.9             +3.7
+23               -0.9             -2.6             -0.8             -3.2
+BTC: does the hour pattern of 2022-23 repeat in 2024-26? correlation +0.15 (1 = same, 0 = unrelated)
+
+hold BTC / 5 majors only inside a window, every day; per-day result, then a year of it:
+  21:00-24:00 (published)      2022-23 BTC       gross   +0.7 bp/day =    +2%/yr   after 0.30% costs  -107%/yr   after 0.16% (limit orders)   -56%/yr
+  21:00-24:00 (published)      2022-23 5 majors  gross   -2.8 bp/day =   -10%/yr   after 0.30% costs  -120%/yr   after 0.16% (limit orders)   -69%/yr
+  21:00-24:00 (published)      2024-26 BTC       gross   +4.0 bp/day =   +14%/yr   after 0.30% costs   -95%/yr   after 0.16% (limit orders)   -44%/yr
+  21:00-24:00 (published)      2024-26 5 majors  gross   +3.9 bp/day =   +14%/yr   after 0.30% costs   -95%/yr   after 0.16% (limit orders)   -44%/yr
+  20:00 +3h (best of 2022-23)  2022-23 BTC       gross   +6.9 bp/day =   +25%/yr   after 0.30% costs   -84%/yr   after 0.16% (limit orders)   -33%/yr
+  20:00 +3h (best of 2022-23)  2022-23 5 majors  gross   +3.8 bp/day =   +14%/yr   after 0.30% costs   -95%/yr   after 0.16% (limit orders)   -44%/yr
+  20:00 +3h (best of 2022-23)  2024-26 BTC       gross   +7.1 bp/day =   +26%/yr   after 0.30% costs   -84%/yr   after 0.16% (limit orders)   -32%/yr
+  20:00 +3h (best of 2022-23)  2024-26 5 majors  gross   +6.8 bp/day =   +25%/yr   after 0.30% costs   -85%/yr   after 0.16% (limit orders)   -33%/yr
+
+BTC average return by weekday (UTC), %:
+  2018-2022: Mon +0.28  Tue -0.06  Wed +0.30  Thu -0.30  Fri +0.28  Sat +0.22  Sun -0.11
+  2023-2026: Mon +0.40  Tue +0.02  Wed +0.41  Thu -0.33  Fri +0.20  Sat +0.03  Sun +0.21
+  best weekday in 2018-22 was Wed; holding only on Wed in 2023-26: +0.41%/week before costs, +0.11% after, +17% in total
+
+=== 2. FUNDING CARRY: own the coin AND short its perpetual (no bet on price) ===
+Earns the funding that perpetual longs pay shorts. Costs: 4 trades per round trip (spot 0.10% + perp 0.05% fee, 0.05% slippage each) = 0.50% of the position.
+
+-- 2022-23: 27 coins
+   simply holding the hedge all the time: funding earned +2.1%/yr on average (BTC +6.0%, ETH +4.5%); worst coin -18.4%
+   in when last 3 days pay > 10%/yr, out under 3%/yr: portfolio +0.8%/yr, max dd 1.9%, time in 45% | 22:-2% 23:+3% | best TIA +29%/yr, worst TRX -2%/yr
+   in when last 3 days pay > 20%/yr, out under 5%/yr: portfolio +1.4%/yr, max dd 0.1%, time in 15% | 22:+0% 23:+3% | best TIA +29%/yr, worst BCH -0%/yr
+   in when last 3 days pay > 30%/yr, out under 10%/yr: portfolio +0.8%/yr, max dd 0.0%, time in 10% | 22:+0% 23:+2% | best TIA +29%/yr, worst BNB -0%/yr
+-- 2024-26: 30 coins
+   simply holding the hedge all the time: funding earned +3.9%/yr on average (BTC +6.9%, ETH +6.9%); worst coin -12.4%
+   in when last 3 days pay > 10%/yr, out under 3%/yr: portfolio +2.5%/yr, max dd 2.5%, time in 36% | 24:+10% 25:-1% 26:-1% | best ONDO +8%/yr, worst ENA -4%/yr
+   in when last 3 days pay > 20%/yr, out under 5%/yr: portfolio +3.1%/yr, max dd 0.2%, time in 14% | 24:+9% 25:+0% 26:+0% | best ONDO +9%/yr, worst ENA -0%/yr
+   in when last 3 days pay > 30%/yr, out under 10%/yr: portfolio +2.4%/yr, max dd 0.2%, time in 9% | 24:+7% 25:+0% 26:+0% | best ONDO +9%/yr, worst BNB -0%/yr
+   (per $ of coin held; the short needs margin on top, so per $ of capital it is roughly 2/3 to 1/2 of this)
+
+=== 3. WEEKLY LOSERS: buy last week's worst coins, hold a week ===
+Literature: short-term reversal, strongest in past losers. Universe = every Binance USDT pair (delisted ones included), only the N most traded of the previous 30 days.
+
+-- top 50 coins, look back 7d, hold 7d (183 rebalances, 2023-05 -> 2026-11):
+   losers 5         avg  -2.42% per hold  t  -2.7  CAGR   -81%  max dd 100% | 23:-26% 24:-51% 25:-95% 26:-84%
+   winners 5        avg  -2.61% per hold  t  -3.1  CAGR   -82%  max dd 100% | 23:-59% 24:-55% 25:-93% 26:-82%
+   all (benchmark)  avg  -0.45% per hold  t  -0.6  CAGR   -40%  max dd  91% | 23:+23% 24:+11% 25:-71% 26:-57%
+-- top 50 coins, look back 1d, hold 1d (1287 rebalances, 2023-05 -> 2026-11):
+   losers 5         avg  -0.65% per hold  t  -4.5  CAGR   -94%  max dd 100% | 23:-79% 24:-86% 25:-98% 26:-95%
+   winners 5        avg  -0.47% per hold  t  -3.3  CAGR   -89%  max dd 100% | 23:-58% 24:-91% 25:-89% 26:-90%
+   all (benchmark)  avg  -0.08% per hold  t  -0.7  CAGR   -42%  max dd  92% | 23:+26% 24:-3% 25:-73% 26:-56%
+-- top 50 coins, look back 3d, hold 3d (429 rebalances, 2023-05 -> 2026-11):
+   losers 5         avg  -0.98% per hold  t  -2.5  CAGR   -80%  max dd 100% | 23:-59% 24:-36% 25:-90% 26:-87%
+   winners 5        avg  -0.82% per hold  t  -2.0  CAGR   -76%  max dd  99% | 23:-40% 24:-37% 25:-94% 26:-74%
+   all (benchmark)  avg  -0.22% per hold  t  -0.7  CAGR   -42%  max dd  92% | 23:+18% 24:+2% 25:-70% 26:-58%
+-- top 20 coins, look back 7d, hold 7d (183 rebalances, 2023-05 -> 2026-11):
+   losers 5         avg  -1.03% per hold  t  -1.2  CAGR   -59%  max dd  95% | 23:-19% 24:-22% 25:-81% 26:-62%
+   winners 5        avg  -0.54% per hold  t  -0.6  CAGR   -46%  max dd  91% | 23:-4% 24:-42% 25:-51% 26:-57%
+   all (benchmark)  avg  -0.20% per hold  t  -0.3  CAGR   -30%  max dd  83% | 23:+19% 24:+13% 25:-55% 26:-52%
+-- top 20 coins, look back 1d, hold 1d (1287 rebalances, 2023-05 -> 2026-11):
+   losers 5         avg  -0.45% per hold  t  -3.6  CAGR   -86%  max dd 100% | 23:-74% 24:-68% 25:-90% 26:-89%
+   winners 5        avg  -0.36% per hold  t  -3.1  CAGR   -81%  max dd 100% | 23:-51% 24:-70% 25:-87% 26:-84%
+   all (benchmark)  avg  -0.04% per hold  t  -0.4  CAGR   -32%  max dd  85% | 23:+7% 24:+12% 25:-58% 26:-49%
+-- top 20 coins, look back 3d, hold 3d (429 rebalances, 2023-05 -> 2026-11):
+   losers 5         avg  -0.72% per hold  t  -2.0  CAGR   -71%  max dd  99% | 23:-50% 24:-31% 25:-79% 26:-82%
+   winners 5        avg  -0.43% per hold  t  -1.2  CAGR   -57%  max dd  95% | 23:-23% 24:-42% 25:-70% 26:-62%
+   all (benchmark)  avg  -0.14% per hold  t  -0.4  CAGR   -34%  max dd  85% | 23:+8% 24:+4% 25:-56% 26:-53%
+   (losers/winners pay 0.30% per round trip; the benchmark is shown before costs)
+
+=== 4. FEAR & GREED: buy BTC on extreme fear (alternative.me index, daily since 2018-02) ===
+index known for 100% of days since 2018-02-01; days at or under 10: 69, under 20: 421
+
+-- 2018-2022
+   any day, hold 30d (the yardstick): avg +3.8%  up 51% of the time
+   fear <= 10, hold 30d:  9 separate trades  avg   +7.6%  win 44%  worst -14%  best +53%
+   fear <= 15, hold 30d: 18 separate trades  avg   +7.2%  win 67%  worst -29%  best +43%
+   fear <= 20, hold 30d: 28 separate trades  avg   +2.7%  win 50%  worst -28%  best +41%
+   fear <= 25, hold 30d: 34 separate trades  avg   +3.5%  win 59%  worst -43%  best +45%
+   any day, hold 90d (the yardstick): avg +15.6%  up 49% of the time
+   fear <= 10, hold 90d:  7 separate trades  avg  +10.4%  win 71%  worst -24%  best +66%
+   fear <= 15, hold 90d: 10 separate trades  avg   -0.6%  win 40%  worst -44%  best +76%
+   fear <= 20, hold 90d: 13 separate trades  avg   -6.1%  win 46%  worst -50%  best +23%
+   fear <= 25, hold 90d: 13 separate trades  avg   -6.4%  win 38%  worst -50%  best +23%
+-- 2023-2026
+   any day, hold 30d (the yardstick): avg +4.0%  up 58% of the time
+   fear <= 10, hold 30d:  5 separate trades  avg   -3.5%  win 20%  worst -10%  best +4%
+   fear <= 15, hold 30d:  7 separate trades  avg   -1.1%  win 29%  worst -12%  best +18%
+   fear <= 20, hold 30d: 10 separate trades  avg   +1.1%  win 50%  worst -24%  best +24%
+   fear <= 25, hold 30d: 14 separate trades  avg   +0.4%  win 57%  worst -24%  best +34%
+   any day, hold 90d (the yardstick): avg +11.9%  up 61% of the time
+   fear <= 10, hold 90d:  4 separate trades  avg   +9.7%  win 75%  worst -28%  best +27%
+   fear <= 15, hold 90d:  4 separate trades  avg   +8.4%  win 75%  worst -33%  best +27%
+   fear <= 20, hold 90d:  5 separate trades  avg  +10.5%  win 80%  worst -31%  best +27%
+   fear <= 25, hold 90d:  6 separate trades  avg   +6.4%  win 50%  worst -22%  best +64%
+
+=== 5. VOLATILITY BREAKOUT (Larry Williams): buy when price clears open + k x yesterday's range, sell at the next day's open ===
+12 majors (largest in Jan 2023, so no hindsight), daily bars 2018 -> 2026.
+
+k 0.3  filter: none
+   2018-2023    n 12617 days 1987  avg  +0.06%  med  -0.34%  win  44%  PF  1.04  t  -7.1  worst  -39.9%
+   2024-2026    n  7470 days  985  avg  -0.22%  med  -0.38%  win  42%  PF  0.83  t  -7.1  worst  -29.2%
+   12-coin portfolio by year: 18:-20% 19:+11% 20:+61% 21:+201% 22:-74% 23:+2% 24:-22% 25:-61% 26:-30%
+k 0.3  filter: open above 5-day average
+   2018-2023    n  6529 days 1489  avg  +0.14%  med  -0.38%  win  44%  PF  1.09  t  -2.1  worst  -39.9%
+   2024-2026    n  3651 days  784  avg  -0.15%  med  -0.40%  win  42%  PF  0.89  t  -4.5  worst  -25.6%
+   12-coin portfolio by year: 18:+100% 19:+58% 20:+19% 21:+278% 22:-60% 23:+26% 24:+28% 25:-61% 26:-44%
+k 0.3  filter: coin above 50-day EMA
+   2018-2023    n  6203 days 1454  avg  +0.22%  med  -0.34%  win  45%  PF  1.14  t  -2.4  worst  -39.9%
+   2024-2026    n  3326 days  764  avg  -0.19%  med  -0.37%  win  42%  PF  0.86  t  -5.7  worst  -25.6%
+   12-coin portfolio by year: 18:+1% 19:+31% 20:+57% 21:+217% 22:-66% 23:+12% 24:-12% 25:-69% 26:-41%
+k 0.5  filter: none
+   2018-2023    n  8424 days 1749  avg  +0.15%  med  -0.28%  win  45%  PF  1.10  t  -5.2  worst  -33.7%
+   2024-2026    n  5103 days  892  avg  -0.14%  med  -0.36%  win  42%  PF  0.88  t  -6.8  worst  -30.0%
+   12-coin portfolio by year: 18:+36% 19:+36% 20:+71% 21:+182% 22:-62% 23:-6% 24:+13% 25:-48% 26:-17%
+k 0.5  filter: open above 5-day average
+   2018-2023    n  4493 days 1276  avg  +0.30%  med  -0.24%  win  46%  PF  1.20  t  -0.3  worst  -33.7%
+   2024-2026    n  2566 days  665  avg  -0.09%  med  -0.33%  win  44%  PF  0.93  t  -3.5  worst  -27.0%
+   12-coin portfolio by year: 18:+94% 19:+100% 20:+93% 21:+277% 22:-29% 23:+8% 24:+31% 25:-49% 26:-16%
+k 0.5  filter: coin above 50-day EMA
+   2018-2023    n  4220 days 1215  avg  +0.35%  med  -0.25%  win  47%  PF  1.23  t  -0.9  worst  -33.7%
+   2024-2026    n  2285 days  646  avg  -0.10%  med  -0.31%  win  43%  PF  0.92  t  -4.8  worst  -27.0%
+   12-coin portfolio by year: 18:+18% 19:+38% 20:+58% 21:+215% 22:-57% 23:+3% 24:+12% 25:-42% 26:-22%
+k 0.7  filter: none
+   2018-2023    n  5784 days 1510  avg  +0.27%  med  -0.22%  win  46%  PF  1.20  t  -3.8  worst  -36.6%
+   2024-2026    n  3490 days  780  avg  -0.03%  med  -0.28%  win  43%  PF  0.97  t  -5.4  worst  -30.8%
+   12-coin portfolio by year: 18:+38% 19:+40% 20:+99% 21:+124% 22:-44% 23:-1% 24:+15% 25:-19% 26:-8%
+k 0.7  filter: open above 5-day average
+   2018-2023    n  3190 days 1083  avg  +0.45%  med  -0.10%  win  48%  PF  1.33  t  +0.3  worst  -36.6%
+   2024-2026    n  1812 days  559  avg  +0.04%  med  -0.20%  win  46%  PF  1.04  t  -1.5  worst  -28.4%
+   12-coin portfolio by year: 18:+64% 19:+85% 20:+156% 21:+120% 22:-22% 23:+13% 24:+36% 25:-20% 26:-6%
+k 0.7  filter: coin above 50-day EMA
+   2018-2023    n  2944 days 1033  avg  +0.52%  med  -0.08%  win  48%  PF  1.36  t  -0.5  worst  -36.6%
+   2024-2026    n  1591 days  537  avg  +0.01%  med  -0.20%  win  45%  PF  1.01  t  -3.2  worst  -28.4%
+   12-coin portfolio by year: 18:-6% 19:+42% 20:+105% 21:+151% 22:-45% 23:+3% 24:+24% 25:-26% 26:-10%
+benchmark, simply holding all 12: 18:-69% 19:+54% 20:+254% 21:+1127% 22:-70% 23:+142% 24:+101% 25:-31% 26:-26%
+
+=== 6. SHORT SQUEEZE: price up hard in 24h while open interest FALLS (shorts forced out) ===
+The mirror of crash rebound. Bought at the next hour's open, sold 24h / 48h later.
+
+-- 2022-23: 27 coins
+   up >= 8% (any), hold 24h                           n  1921 days  498  avg  -0.16%  med  -0.99%  win  42%  PF  0.94  t  -3.3  worst  -35.5%
+   up >= 8%, OI down >= 10% (squeeze), hold 24h       n   214 days   97  avg  +0.28%  med  -0.89%  win  44%  PF  1.11  t  +0.3  worst  -16.8%
+   up >= 8%, OI down >= 20% (hard squeeze), hold 24h  n    49 days   23  avg  +1.74%  med  -0.01%  win  49%  PF  1.84  t  +1.7  worst  -10.5%
+   up >= 8%, OI up >= 15% (new longs pile in), hold 24h n   523 days  339  avg  +0.41%  med  -0.70%  win  45%  PF  1.16  t  +0.9  worst  -28.9%
+   up >= 15%, OI down >= 10%, hold 24h                n    78 days   34  avg  +0.27%  med  -2.05%  win  42%  PF  1.09  t  +1.2  worst  -15.1%
+   up >= 8% (any), hold 48h                           n  1916 days  497  avg  +0.44%  med  -0.78%  win  45%  PF  1.14  t  -1.6  worst  -44.8%
+   up >= 8%, OI down >= 10% (squeeze), hold 48h       n   214 days   97  avg  +1.45%  med  -1.02%  win  44%  PF  1.55  t  +1.7  worst  -16.4%
+   up >= 8%, OI down >= 20% (hard squeeze), hold 48h  n    49 days   23  avg  +2.08%  med  +0.14%  win  51%  PF  1.90  t  +1.3  worst  -13.6%
+   up >= 8%, OI up >= 15% (new longs pile in), hold 48h n   523 days  339  avg  +1.27%  med  -0.79%  win  45%  PF  1.41  t  +2.1  worst  -31.9%
+   up >= 15%, OI down >= 10%, hold 48h                n    78 days   34  avg  +1.22%  med  -1.48%  win  42%  PF  1.39  t  +2.3  worst  -15.5%
+-- 2024-26: 30 coins
+   up >= 8% (any), hold 24h                           n  3736 days  716  avg  +0.03%  med  -0.79%  win  44%  PF  1.01  t  -3.7  worst  -27.5%
+   up >= 8%, OI down >= 10% (squeeze), hold 24h       n   218 days   92  avg  -0.46%  med  -1.25%  win  42%  PF  0.83  t  +0.2  worst  -20.6%
+   up >= 8%, OI down >= 20% (hard squeeze), hold 24h  n    35 days   15  avg  -2.09%  med  -2.70%  win  26%  PF  0.40  t  -1.1  worst  -12.4%
+   up >= 8%, OI up >= 15% (new longs pile in), hold 24h n   508 days  339  avg  +0.17%  med  -1.09%  win  42%  PF  1.06  t  +0.7  worst  -24.4%
+   up >= 15%, OI down >= 10%, hold 24h                n    73 days   32  avg  -1.74%  med  -3.33%  win  33%  PF  0.51  t  +0.9  worst  -11.6%
+   up >= 8% (any), hold 48h                           n  3736 days  716  avg  +0.38%  med  -0.68%  win  46%  PF  1.12  t  -2.5  worst  -28.4%
+   up >= 8%, OI down >= 10% (squeeze), hold 48h       n   218 days   92  avg  -0.64%  med  -2.06%  win  38%  PF  0.82  t  -0.2  worst  -19.9%
+   up >= 8%, OI down >= 20% (hard squeeze), hold 48h  n    35 days   15  avg  -1.89%  med  -2.75%  win  29%  PF  0.53  t  +0.1  worst  -13.8%
+   up >= 8%, OI up >= 15% (new longs pile in), hold 48h n   508 days  339  avg  +0.22%  med  -1.44%  win  43%  PF  1.06  t  +0.7  worst  -29.6%
+   up >= 15%, OI down >= 10%, hold 48h                n    73 days   32  avg  -2.21%  med  -3.27%  win  30%  PF  0.51  t  +0.1  worst  -21.2%
+
+=== 7. BTC LEADS, ALTS FOLLOW: after BTC jumps, buy the 5 alts that moved least ===
+-- 2022-23: 26 alts
+   BTC +2.0% in 4h, hold 12h: 5 laggards        n   221 days  202  avg  -0.28%  med  -0.14%  win  47%  PF  0.79  t  -1.2  worst  -17.2%
+   BTC +2.0% in 4h, hold 12h: 5 leaders         n   221 days  202  avg  -0.15%  med  -0.22%  win  48%  PF  0.91  t  -0.5  worst  -20.1%
+   BTC +2.0% in 4h, hold 12h: all alts          n   221 days  202  avg  -0.19%  med  -0.12%  win  48%  PF  0.87  t  -0.7  worst  -16.8%
+   BTC +2.0% in 4h, hold 24h: 5 laggards        n   173 days  173  avg  -0.45%  med  -0.28%  win  47%  PF  0.75  t  -1.2  worst  -33.5%
+   BTC +2.0% in 4h, hold 24h: 5 leaders         n   173 days  173  avg  +0.24%  med  +0.26%  win  55%  PF  1.10  t  +0.5  worst  -27.7%
+   BTC +2.0% in 4h, hold 24h: all alts          n   173 days  173  avg  -0.10%  med  +0.36%  win  52%  PF  0.95  t  -0.2  worst  -31.3%
+   BTC +3.0% in 4h, hold 12h: 5 laggards        n    98 days   90  avg  -0.13%  med  +0.23%  win  53%  PF  0.90  t  -0.3  worst  -16.1%
+   BTC +3.0% in 4h, hold 12h: 5 leaders         n    98 days   90  avg  +0.16%  med  +0.76%  win  56%  PF  1.08  t  +0.3  worst  -20.1%
+   BTC +3.0% in 4h, hold 12h: all alts          n    98 days   90  avg  -0.03%  med  +0.51%  win  57%  PF  0.98  t  -0.1  worst  -17.6%
+   BTC +3.0% in 4h, hold 24h: 5 laggards        n    83 days   83  avg  -0.58%  med  -0.05%  win  48%  PF  0.72  t  -1.1  worst  -24.6%
+   BTC +3.0% in 4h, hold 24h: 5 leaders         n    83 days   83  avg  +0.26%  med  +0.55%  win  53%  PF  1.09  t  +0.3  worst  -27.7%
+   BTC +3.0% in 4h, hold 24h: all alts          n    83 days   83  avg  -0.33%  med  -0.20%  win  49%  PF  0.86  t  -0.5  worst  -24.2%
+   BTC +1.5% in 1h, hold 12h: 5 laggards        n   169 days  158  avg  +0.05%  med  +0.03%  win  51%  PF  1.04  t  +0.1  worst  -15.3%
+   BTC +1.5% in 1h, hold 12h: 5 leaders         n   169 days  158  avg  +0.11%  med  +0.07%  win  51%  PF  1.06  t  +0.2  worst  -21.8%
+   BTC +1.5% in 1h, hold 12h: all alts          n   169 days  158  avg  -0.01%  med  +0.08%  win  50%  PF  1.00  t  -0.1  worst  -16.8%
+   BTC +1.5% in 1h, hold 24h: 5 laggards        n   137 days  137  avg  +0.08%  med  +0.31%  win  51%  PF  1.05  t  +0.2  worst  -20.0%
+   BTC +1.5% in 1h, hold 24h: 5 leaders         n   137 days  137  avg  +0.62%  med  +0.93%  win  55%  PF  1.27  t  +1.0  worst  -29.2%
+   BTC +1.5% in 1h, hold 24h: all alts          n   137 days  137  avg  +0.22%  med  +0.61%  win  58%  PF  1.12  t  +0.5  worst  -25.0%
+-- 2024-26: 76 alts
+   BTC +2.0% in 4h, hold 12h: 5 laggards        n   257 days  239  avg  -0.28%  med  -0.27%  win  44%  PF  0.77  t  -1.8  worst  -12.5%
+   BTC +2.0% in 4h, hold 12h: 5 leaders         n   257 days  239  avg  -0.01%  med  -0.25%  win  46%  PF  0.99  t  -0.4  worst  -12.0%
+   BTC +2.0% in 4h, hold 12h: all alts          n   257 days  239  avg  -0.08%  med  +0.01%  win  51%  PF  0.94  t  -0.7  worst  -10.4%
+   BTC +2.0% in 4h, hold 24h: 5 laggards        n   218 days  218  avg  -0.67%  med  -1.07%  win  39%  PF  0.65  t  -2.4  worst  -16.2%
+   BTC +2.0% in 4h, hold 24h: 5 leaders         n   218 days  218  avg  -0.74%  med  -0.45%  win  47%  PF  0.73  t  -1.9  worst  -14.4%
+   BTC +2.0% in 4h, hold 24h: all alts          n   218 days  218  avg  -0.42%  med  -0.57%  win  45%  PF  0.79  t  -1.4  worst  -11.7%
+   BTC +3.0% in 4h, hold 12h: 5 laggards        n    98 days   94  avg  -0.08%  med  -0.07%  win  48%  PF  0.92  t  -0.7  worst   -5.9%
+   BTC +3.0% in 4h, hold 12h: 5 leaders         n    98 days   94  avg  +0.56%  med  +0.10%  win  50%  PF  1.40  t  +0.9  worst  -12.1%
+   BTC +3.0% in 4h, hold 12h: all alts          n    98 days   94  avg  +0.34%  med  +0.35%  win  56%  PF  1.38  t  +0.9  worst   -7.0%
+   BTC +3.0% in 4h, hold 24h: 5 laggards        n    90 days   90  avg  -0.19%  med  -0.70%  win  39%  PF  0.88  t  -0.5  worst   -9.4%
+   BTC +3.0% in 4h, hold 24h: 5 leaders         n    90 days   90  avg  +0.14%  med  -0.33%  win  44%  PF  1.07  t  +0.2  worst  -17.8%
+   BTC +3.0% in 4h, hold 24h: all alts          n    90 days   90  avg  +0.22%  med  +0.07%  win  53%  PF  1.14  t  +0.5  worst   -8.7%
+   BTC +1.5% in 1h, hold 12h: 5 laggards        n   182 days  172  avg  -0.25%  med  -0.20%  win  47%  PF  0.80  t  -1.2  worst  -11.1%
+   BTC +1.5% in 1h, hold 12h: 5 leaders         n   182 days  172  avg  +0.30%  med  +0.14%  win  51%  PF  1.17  t  +0.6  worst  -17.2%
+   BTC +1.5% in 1h, hold 12h: all alts          n   182 days  172  avg  +0.14%  med  +0.26%  win  54%  PF  1.11  t  +0.3  worst  -16.0%
+   BTC +1.5% in 1h, hold 24h: 5 laggards        n   159 days  159  avg  +0.19%  med  -0.21%  win  45%  PF  1.14  t  +0.6  worst  -13.7%
+   BTC +1.5% in 1h, hold 24h: 5 leaders         n   159 days  159  avg  +0.72%  med  +0.12%  win  50%  PF  1.36  t  +1.5  worst  -10.7%
+   BTC +1.5% in 1h, hold 24h: all alts          n   159 days  159  avg  +0.55%  med  +0.38%  win  54%  PF  1.39  t  +1.6  worst  -10.7%
+
+exit 0

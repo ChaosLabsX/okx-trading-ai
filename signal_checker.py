@@ -214,11 +214,14 @@ STRATEGY_MODE = {
     'dip':   'auto',
     'flush': 'auto',    # crash rebound: buy a fall with collapsing open interest, hold 48h
     'trend': 'auto',    # daily trend on the 12 largest coins
+    'surge': 'paper',   # BTC +1.5% in an hour: buy the 5 coins leading it, hold 24h. Owner's
+                        # choice 2026-11-19: paper only, a faint lead (research/lab_exp9.py s7)
 }
 STRATEGY_START = {      # the rung an 'auto' strategy stands on until its record moves it
     'dip':   'paper',
     'flush': 'trial',   # owner's choice, 2026-11-11: real money now, $20 a trade
     'trend': 'paper',
+    'surge': 'paper',
 }
 
 # What the AI is told it has to spend when 'dip' is on paper and the real balance cannot
@@ -4133,7 +4136,8 @@ def run_scan(cache, warm_up=False):
     # next decision in the same scan (caps, one coin per strategy).
     if not warm_up and not TEST_MODE:
         for name, call in (('flush', lambda: _strategies().flush_scan(tickers, cache, equity_known, all_live)),
-                           ('trend', lambda: _strategies().trend_scan(cache, equity_known, all_live))):
+                           ('trend', lambda: _strategies().trend_scan(cache, equity_known, all_live)),
+                           ('surge', lambda: _strategies().surge_scan(tickers, cache, equity_known, all_live))):
             try:
                 call()
             except Exception as e:
@@ -4283,11 +4287,11 @@ def write_bot_status(cache, started):
 # average from +3.7% to +1.4% per trade and -20% to +1.9%. At -30% it fired on 3 of 205
 # flushes in 2024-26 and 7 of 201 in 2022-23 and cost almost nothing (+3.2%). Risk is
 # held by SIZE instead: a trial trade is $20, so the worst the stop allows is about $6.
-SIMPLE_STRATEGIES = ('flush', 'trend')
+SIMPLE_STRATEGIES = ('flush', 'trend', 'surge')
 DISASTER_STOP_PCT = 30.0
 SIMPLE_DEFAULT_HOLD_H = 48          # flush rows carry their own hold time; this is the fallback
 SIMPLE_RETRY_SECS = 10 * 60         # after a failed exit, wait this long before trying again
-STRATEGY_LABEL = {'dip': 'Dip buy', 'flush': 'Crash rebound', 'trend': 'Trend (majors)'}
+STRATEGY_LABEL = {'dip': 'Dip buy', 'flush': 'Crash rebound', 'trend': 'Trend (majors)', 'surge': 'BTC surge leaders'}
 
 
 def _is_option3(t):
